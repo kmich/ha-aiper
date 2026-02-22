@@ -1,0 +1,26 @@
+# Example Lovelace dashboard snippet for Aiper (0.7.0)
+# Paste into a view or dashboard (YAML mode). Replace entity_ids with your device entities.
+
+type: vertical-stack
+cards:
+  - type: picture
+    image: /local/aiper/scuba_x1.png
+    tap_action:
+      action: none
+
+  - type: entities
+    title: Aiper
+    show_header_toggle: false
+    entities:
+      - entity: select.REPLACE_ME_cleaning_mode
+        name: Mode
+      - entity: select.REPLACE_ME_clean_path
+        name: Clean path
+      - entity: sensor.REPLACE_ME_status
+        name: Status
+      - entity: sensor.REPLACE_ME_battery
+        name: Battery
+      - entity: sensor.REPLACE_ME_total_cleaning_time
+        name: Total cleaning time
+      - entity: sensor.REPLACE_ME_total_cleaning_time_minutes
+        name: Total cleaning time (min)

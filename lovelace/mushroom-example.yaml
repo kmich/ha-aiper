@@ -1,0 +1,25 @@
+# Mushroom-style example (requires Mushroom cards)
+type: vertical-stack
+cards:
+  - type: custom:mushroom-title-card
+    title: Aiper
+    subtitle: Mode + Clean path
+
+  - type: custom:mushroom-entity-card
+    entity: select.REPLACE_ME_cleaning_mode
+    name: Mode
+
+  - type: custom:mushroom-entity-card
+    entity: select.REPLACE_ME_clean_path
+    name: Clean path
+
+  - type: grid
+    columns: 2
+    square: false
+    cards:
+      - type: custom:mushroom-entity-card
+        entity: sensor.REPLACE_ME_status
+        name: Status
+      - type: custom:mushroom-entity-card
+        entity: sensor.REPLACE_ME_battery
+        name: Battery

@@ -1,0 +1,7 @@
+{
+  "name": "Aiper Pool Cleaner",
+  "content_in_root": false,
+  "render_readme": true,
+  "zip_release": true,
+  "homeassistant": "2024.6.0"
+}

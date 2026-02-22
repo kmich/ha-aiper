@@ -1,0 +1,83 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Aiper Account",
+        "description": "Enter your Aiper app credentials.",
+        "data": {
+          "username": "Email / Phone",
+          "password": "Password",
+          "region": "Region"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Aiper",
+        "description": "Please re-enter your password for {username}.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Aiper servers",
+      "invalid_auth": "Invalid username or password",
+      "unknown": "An unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "This account is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Aiper Options",
+        "description": "Optional settings for polling, offline command behavior, and MQTT real-time updates (beta).",
+        "data": {
+          "enable_mqtt": "Enable MQTT (beta)",
+          "mqtt_debug": "MQTT debug logging (beta)",
+          "queue_offline_commands": "Queue commands while device is offline (advanced)",
+          "poll_interval": "Polling interval (seconds)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": {
+        "name": "Battery"
+      },
+      "status": {
+        "name": "Status"
+      },
+      "temperature": {
+        "name": "Water Temperature"
+      },
+      "warning": {
+        "name": "Warning"
+      }
+    },
+    "binary_sensor": {
+      "online": {
+        "name": "Online"
+      },
+      "in_water": {
+        "name": "In Water"
+      },
+      "warning": {
+        "name": "Warning Active"
+      },
+      "solar_charging": {
+        "name": "Solar Charging"
+      },
+      "bluetooth": {
+        "name": "Bluetooth"
+      },
+      "wifi": {
+        "name": "WiFi Connected"
+      },
+      "linked": {
+        "name": "Device Linked"
+      }
+    }
+  }
+}

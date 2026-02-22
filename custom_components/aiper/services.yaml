@@ -1,0 +1,23 @@
+send_at_command:
+  name: Send AT command
+  description: |
+    Sends a raw AT command to the device over the MQTT downChan topic.
+
+    This is intended for reverse-engineering and debugging. Commands are sent
+    as a Machine command with a `cmd` field (e.g. AT+MODE=2). If you omit the
+    `AT+` prefix, it will be added automatically.
+  fields:
+    sn:
+      name: Device serial number
+      description: Serial number (SN) of the device. If omitted, the first discovered device is used.
+      example: "T1B50900024"
+      required: false
+      selector:
+        text:
+    command:
+      name: Command
+      description: AT command to send.
+      example: "AT+MODE=2"
+      required: true
+      selector:
+        text:
