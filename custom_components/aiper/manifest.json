@@ -1,4 +1,4 @@
-﻿{
+{
   "domain": "aiper",
   "name": "Aiper Pool Cleaner",
   "codeowners": [
@@ -14,5 +14,5 @@
     "certifi>=2024.0.0",
     "requests>=2.31.0"
   ],
-  "version": "0.7.1"
+  "version": "0.7.2"
 }
