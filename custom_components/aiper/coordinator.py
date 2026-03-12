@@ -336,12 +336,12 @@ def _parse_cleaning_history(raw: Any) -> tuple[int | None, float | None, list[di
         before SECONDS, because Aiper's totals are commonly minute-based.
         """
         if v is None:
-            return []
+            return []  # ← CRITICAL: Return empty list instead of None
         if isinstance(v, str):
             s = v.strip().lower()
             n = _num(s)
             if n is None:
-                return []
+                return []  # ← CRITICAL: Return empty list instead of None
             if 'hour' in s or s.endswith('h'):
                 return [n]
             if 'min' in s:
@@ -349,7 +349,17 @@ def _parse_cleaning_history(raw: Any) -> tuple[int | None, float | None, list[di
             if 'sec' in s or s.endswith('s'):
                 return [n / 3600.0]
             # ambiguous numeric string: prefer minutes, then seconds, then hours
+            return [n / 60.0, n / 3600.0, n]  # ← Return list, not None
+
+        # ← Add handling for numeric types
+        try:
+            n = float(v)
+            if n <= 0:
+                return []  # ← CRITICAL: Return empty list for invalid values
+            # ambiguous numeric: prefer minutes, then seconds, then hours
             return [n / 60.0, n / 3600.0, n]
+        except (TypeError, ValueError):
+            return []  # ← CRITICAL: Return empty list on conversion error
 
     COUNT_KEYS = (
         'totalNumberOfCleanings',
