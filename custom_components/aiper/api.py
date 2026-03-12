@@ -183,46 +183,46 @@ class AiperApi:
 
         return payload
 
-def _rest_wait(self) -> None:
-    """Throttle REST calls to reduce cloud load and avoid rate limits."""
-    with self._rest_lock:
-        now = time.time()
-        if now < self._rest_next_allowed:
-            time.sleep(self._rest_next_allowed - now)
-        self._rest_next_allowed = time.time() + self._rest_min_interval
+    def _rest_wait(self) -> None:
+        """Throttle REST calls to reduce cloud load and avoid rate limits."""
+        with self._rest_lock:
+            now = time.time()
+            if now < self._rest_next_allowed:
+                time.sleep(self._rest_next_allowed - now)
+            self._rest_next_allowed = time.time() + self._rest_min_interval
 
-def _request_with_backoff(self, method: str, url: str, *, headers: dict, json_body: dict | None = None, data: Any = None, timeout: int = 30):
-    """Perform a REST request with limited retries/backoff on 429/5xx."""
-    max_attempts = 4
-    delay = 1.0
-    last_exc = None
-    for attempt in range(1, max_attempts + 1):
-        self._rest_wait()
-        try:
-            resp = self._session.request(
-                method.upper(),
-                url,
-                headers=headers,
-                json=json_body,
-                data=data,
-                timeout=timeout,
-            )
-            # Only raise for HTTP-level failures; app-level errors are often HTTP 200
-            if resp.status_code in (429, 500, 502, 503, 504):
-                raise Exception(f"HTTP {resp.status_code}")
-            resp.raise_for_status()
-            return resp
-        except Exception as err:
-            last_exc = err
-            # Backoff only for likely transient / throttling errors
-            msg = str(err).lower()
-            transient = any(k in msg for k in ("429", "500", "502", "503", "504", "timeout", "tempor", "connection", "reset", "refused"))
-            if attempt >= max_attempts or not transient:
-                break
-            # jitter
-            time.sleep(delay + random.uniform(0, 0.3))
-            delay = min(delay * 2.0, 8.0)
-    raise last_exc if last_exc else Exception("Request failed")
+    def _request_with_backoff(self, method: str, url: str, *, headers: dict, json_body: dict | None = None, data: Any = None, timeout: int = 30):
+        """Perform a REST request with limited retries/backoff on 429/5xx."""
+        max_attempts = 4
+        delay = 1.0
+        last_exc = None
+        for attempt in range(1, max_attempts + 1):
+            self._rest_wait()
+            try:
+                resp = self._session.request(
+                    method.upper(),
+                    url,
+                    headers=headers,
+                    json=json_body,
+                    data=data,
+                    timeout=timeout,
+                )
+                # Only raise for HTTP-level failures; app-level errors are often HTTP 200
+                if resp.status_code in (429, 500, 502, 503, 504):
+                    raise Exception(f"HTTP {resp.status_code}")
+                resp.raise_for_status()
+                return resp
+            except Exception as err:
+                last_exc = err
+                # Backoff only for likely transient / throttling errors
+                msg = str(err).lower()
+                transient = any(k in msg for k in ("429", "500", "502", "503", "504", "timeout", "tempor", "connection", "reset", "refused"))
+                if attempt >= max_attempts or not transient:
+                    break
+                # jitter
+                time.sleep(delay + random.uniform(0, 0.3))
+                delay = min(delay * 2.0, 8.0)
+        raise last_exc if last_exc else Exception("Request failed")
 
     def _call_plain(
         self,
