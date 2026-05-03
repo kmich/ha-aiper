@@ -99,7 +99,7 @@ jobs:
         run: uv run --frozen .github/scripts/check_version_state.py
 
       - name: Create release
-        if: ${{ steps.version.outputs.release_needed == 'true' }}
+        if: ${{ steps.version.outputs.release_candidate == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
