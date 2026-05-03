@@ -92,6 +92,21 @@ git commit -m "Release X.Y.Z"
 git push origin main
 ```
 
+Wait for the `main` push Validation workflow to complete before creating or
+pushing the release tag. This prevents the tag-triggered Release workflow from
+publishing an artifact before the commit has passed validation.
+
+Find and watch the validation run for the release commit:
+
+```bash
+git rev-parse HEAD
+gh run list -R filmackay/ha-aiper --workflow Validation --branch main --limit 10 --json databaseId,headSha,status,conclusion,url
+gh run watch -R filmackay/ha-aiper RUN_ID --exit-status
+```
+
+If Validation fails, do not tag. Inspect logs, fix the issue, amend or create a
+new release commit as appropriate, push `main`, and wait for Validation again.
+
 Create and push an annotated tag:
 
 ```bash
