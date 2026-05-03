@@ -15,8 +15,8 @@ permissions:
   contents: read
 
 jobs:
-  quality:
-    name: Quality
+  pipeline:
+    name: CI/CD Pipeline
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -33,10 +33,6 @@ jobs:
           enable-cache: true
           python-version: "3.14"
 
-      - name: UV Dependencies
-        id: sync-uv
-        run: uv sync --locked --group dev
-
       - name: Hassfest
         id: hassfest
         uses: home-assistant/actions/hassfest@master
@@ -49,6 +45,10 @@ jobs:
           category: integration
           ignore: brands
         continue-on-error: true
+
+      - name: UV Dependencies
+        id: sync-uv
+        run: uv sync --locked --group dev
 
       - name: Ruff
         id: ruff
