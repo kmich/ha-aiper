@@ -13,6 +13,7 @@ from custom_components.aiper.coordinator import AiperDataUpdateCoordinator
 def _bare_coordinator() -> AiperDataUpdateCoordinator:
     coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
     coordinator._shadow_data = {}
+    coordinator._consumables_cache = {}
     coordinator._devices = {
         "SN123": {
             "sn": "SN123",

@@ -8,7 +8,7 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 
 from .api import AiperApi
@@ -141,7 +141,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
     @staticmethod
-    @config_entries.callback
+    @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> OptionsFlowHandler:
         return OptionsFlowHandler(config_entry)
 

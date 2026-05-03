@@ -380,7 +380,7 @@ class AiperApi:
             if self._is_success(payload):
                 result = payload.get("data", {}) or {}
                 new_token = result.get("token")
-                if new_token:
+                if isinstance(new_token, str) and new_token:
                     self._token = new_token
                     self._session.headers["token"] = self._token
                     _LOGGER.info("Token refreshed successfully")

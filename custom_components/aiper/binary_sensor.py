@@ -11,12 +11,13 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import AiperDataUpdateCoordinator
+from .profiles import Capability, has_capability
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -26,6 +27,7 @@ class AiperBinarySensorEntityDescription(BinarySensorEntityDescription):
     value_fn: Callable[[dict], bool | None]
     available_fn: Callable[[dict], bool] = lambda x: True
     enabled_default: bool = True
+    capability: Capability | None = None
 
 
 
@@ -145,6 +147,7 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[AiperBinarySensorEntityDescription, ...] = (
         device_class=BinarySensorDeviceClass.MOISTURE,
         value_fn=_is_in_water,
         enabled_default=True,
+        capability=Capability.IN_WATER,
     ),
     AiperBinarySensorEntityDescription(
         key="solar_charging",
@@ -154,6 +157,7 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[AiperBinarySensorEntityDescription, ...] = (
         value_fn=lambda data: data.get("shadow", {}).get("machine", {}).get("solar_status") == 1,
         available_fn=lambda data: data.get("shadow", {}).get("machine", {}).get("solar_status") is not None,
         enabled_default=False,  # MQTT-only
+        capability=Capability.SOLAR_CHARGING,
     ),
     AiperBinarySensorEntityDescription(
         key="bluetooth",
@@ -162,6 +166,7 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[AiperBinarySensorEntityDescription, ...] = (
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         value_fn=lambda data: False if _is_online(data) is False else data.get("shadow", {}).get("netstat", {}).get("ble") == 1,
         enabled_default=False,  # MQTT-only
+        capability=Capability.BLUETOOTH,
     ),
     AiperBinarySensorEntityDescription(
         key="wifi",
@@ -183,6 +188,7 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[AiperBinarySensorEntityDescription, ...] = (
             or data.get("shadow", {}).get("machine", {}).get("link") is not None
         ),
         enabled_default=False,  # MQTT-only
+        capability=Capability.DEVICE_LINK,
     ),
 )
 
@@ -200,6 +206,8 @@ async def async_setup_entry(
     if coordinator.data:
         for sn, device_data in coordinator.data.items():
             for description in BINARY_SENSOR_DESCRIPTIONS:
+                if description.capability and not has_capability(device_data, description.capability):
+                    continue
                 entities.append(
                     AiperBinarySensor(
                         coordinator=coordinator,

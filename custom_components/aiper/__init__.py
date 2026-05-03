@@ -308,16 +308,16 @@ async def _migrate_select_unique_ids(
         if not sn or sn not in targets:
             continue
         kind = _kind_for_entry(e)
-        if not kind:
+        if kind is None:
             continue
         groups.setdefault((sn, kind), []).append(e)
 
-    for (sn, kind), ents in groups.items():
+    for (sn, group_kind), ents in groups.items():
         if not ents:
             continue
-        ents_sorted = sorted(ents, key=lambda x: _preference(x, kind))
+        ents_sorted = sorted(ents, key=lambda x: _preference(x, group_kind))
         primary = ents_sorted[0]
-        target_uid = targets[sn][kind]
+        target_uid = targets[sn][group_kind]
 
         # Remove any entity already using the target unique_id that isn't our primary.
         dup = by_uid.get(target_uid)

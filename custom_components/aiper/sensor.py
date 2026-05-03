@@ -11,15 +11,15 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, UnitOfTemperature
+from homeassistant.const import EntityCategory, PERCENTAGE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
-from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, STATUS_MAP, MODE_MAP, CLEAN_PATH_MAP
 from .coordinator import AiperDataUpdateCoordinator
+from .profiles import Capability, has_capability
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -29,6 +29,7 @@ class AiperSensorEntityDescription(SensorEntityDescription):
     value_fn: Callable[[dict], Any]
     available_fn: Callable[[dict], bool] = lambda x: True
     enabled_default: bool = True
+    capability: Capability | None = None
 
 
 
@@ -142,20 +143,24 @@ def _get_status(data: dict) -> str:
 
 def _get_mode(data: dict) -> str:
     """Get cleaning mode from device data."""
+    raw_mode_map = data.get("_ha_mode_map")
+    mode_map: dict[Any, Any] = raw_mode_map if isinstance(raw_mode_map, dict) else {}
+
+    def _label(mode: Any) -> str:
+        mode_id = _coerce_int(mode)
+        if mode_id is None:
+            return f"Mode {mode}" if mode is not None else "Unknown"
+        return mode_map.get(mode_id) or MODE_MAP.get(mode_id, f"Mode {mode_id}")
+
     # Check for mode in device data
     if "cleanMode" in data:
-        mode = data.get("cleanMode")
-        mode_id = _coerce_int(mode)
-        return MODE_MAP.get(mode_id, f"Mode {mode}") if mode_id is not None else f"Mode {mode}"
+        return _label(data.get("cleanMode"))
     if "mode" in data:
-        mode = data.get("mode")
-        mode_id = _coerce_int(mode)
-        return MODE_MAP.get(mode_id, f"Mode {mode}") if mode_id is not None else f"Mode {mode}"
+        return _label(data.get("mode"))
     # Fallback to shadow data (from MQTT)
     shadow_mode = data.get("shadow", {}).get("machine", {}).get("mode")
     if shadow_mode is not None:
-        mode_id = _coerce_int(shadow_mode)
-        return MODE_MAP.get(mode_id, f"Mode {shadow_mode}") if mode_id is not None else f"Mode {shadow_mode}"
+        return _label(shadow_mode)
     return "Unknown"
 
 
@@ -385,6 +390,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         value_fn=lambda data: data.get("shadow", {}).get("machine", {}).get("temp"),
         available_fn=lambda data: data.get("shadow", {}).get("machine", {}).get("temp") is not None,
         enabled_default=False,  # MQTT-only until proven via REST
+        capability=Capability.WATER_TEMPERATURE,
     ),
     AiperSensorEntityDescription(
         key="warning",
@@ -544,6 +550,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         value_fn=_get_clean_path,
         available_fn=lambda data: _get_clean_path(data) is not None,
         enabled_default=False,
+        capability=Capability.CLEAN_PATH,
     ),
     AiperSensorEntityDescription(
         key="ota_state",
@@ -564,6 +571,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         value_fn=lambda data: (c := _find_consumable(data, "roller", "brush")) and c.get("remaining_hours"),
         available_fn=lambda data: (c := _find_consumable(data, "roller", "brush")) is not None and c.get("remaining_hours") is not None,
         enabled_default=True,
+        capability=Capability.ROLLER_BRUSH,
     ),
     AiperSensorEntityDescription(
         key="roller_brush_percent",
@@ -575,6 +583,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         value_fn=lambda data: (c := _find_consumable(data, "roller", "brush")) and c.get("percent_left"),
         available_fn=lambda data: (c := _find_consumable(data, "roller", "brush")) is not None and c.get("percent_left") is not None,
         enabled_default=True,
+        capability=Capability.ROLLER_BRUSH,
     ),
     AiperSensorEntityDescription(
         key="roller_brush_last_replacement",
@@ -584,6 +593,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         value_fn=lambda data: (c := _find_consumable(data, "roller", "brush")) and c.get("last_replacement"),
         available_fn=lambda data: (c := _find_consumable(data, "roller", "brush")) is not None and c.get("last_replacement") is not None,
         enabled_default=False,
+        capability=Capability.ROLLER_BRUSH,
     ),
     AiperSensorEntityDescription(
         key="micromesh_remaining",
@@ -594,6 +604,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         value_fn=lambda data: (c := _find_consumable(data, "micromesh")) and c.get("remaining_hours"),
         available_fn=lambda data: (c := _find_consumable(data, "micromesh")) is not None and c.get("remaining_hours") is not None,
         enabled_default=True,
+        capability=Capability.MICROMESH_FILTER,
     ),
     AiperSensorEntityDescription(
         key="micromesh_percent",
@@ -605,6 +616,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         value_fn=lambda data: (c := _find_consumable(data, "micromesh")) and c.get("percent_left"),
         available_fn=lambda data: (c := _find_consumable(data, "micromesh")) is not None and c.get("percent_left") is not None,
         enabled_default=True,
+        capability=Capability.MICROMESH_FILTER,
     ),
     AiperSensorEntityDescription(
         key="micromesh_last_replacement",
@@ -614,6 +626,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         value_fn=lambda data: (c := _find_consumable(data, "micromesh")) and c.get("last_replacement"),
         available_fn=lambda data: (c := _find_consumable(data, "micromesh")) is not None and c.get("last_replacement") is not None,
         enabled_default=False,
+        capability=Capability.MICROMESH_FILTER,
     ),
     AiperSensorEntityDescription(
         key="tread_remaining",
@@ -624,6 +637,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         value_fn=lambda data: (c := _find_consumable(data, "caterpillar")) and c.get("remaining_hours"),
         available_fn=lambda data: (c := _find_consumable(data, "caterpillar")) is not None and c.get("remaining_hours") is not None,
         enabled_default=True,
+        capability=Capability.CATERPILLAR_TREAD,
     ),
     AiperSensorEntityDescription(
         key="tread_percent",
@@ -635,6 +649,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         value_fn=lambda data: (c := _find_consumable(data, "caterpillar")) and c.get("percent_left"),
         available_fn=lambda data: (c := _find_consumable(data, "caterpillar")) is not None and c.get("percent_left") is not None,
         enabled_default=True,
+        capability=Capability.CATERPILLAR_TREAD,
     ),
     AiperSensorEntityDescription(
         key="tread_last_replacement",
@@ -644,6 +659,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         value_fn=lambda data: (c := _find_consumable(data, "caterpillar")) and c.get("last_replacement"),
         available_fn=lambda data: (c := _find_consumable(data, "caterpillar")) is not None and c.get("last_replacement") is not None,
         enabled_default=False,
+        capability=Capability.CATERPILLAR_TREAD,
     ),
     AiperSensorEntityDescription(
         key="propeller_last_maintenance",
@@ -653,6 +669,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         value_fn=lambda data: (c := _find_consumable(data, "propeller")) and c.get("last_replacement"),
         available_fn=lambda data: (c := _find_consumable(data, "propeller")) is not None and c.get("last_replacement") is not None,
         enabled_default=True,
+        capability=Capability.PROPELLER_MAINTENANCE,
     ),
 )
 
@@ -670,6 +687,8 @@ async def async_setup_entry(
     if coordinator.data:
         for sn, device_data in coordinator.data.items():
             for description in SENSOR_DESCRIPTIONS:
+                if description.capability and not has_capability(device_data, description.capability):
+                    continue
                 entities.append(
                     AiperSensor(
                         coordinator=coordinator,

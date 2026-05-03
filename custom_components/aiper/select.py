@@ -18,7 +18,7 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
@@ -27,9 +27,9 @@ from .const import (
     CONF_QUEUE_OFFLINE_COMMANDS,
     MODE_MAP,
     CLEAN_PATH_MAP,
-    SCUBA_MODEL_MARKERS,
 )
 from .coordinator import AiperDataUpdateCoordinator
+from .profiles import Capability, has_capability
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -85,14 +85,13 @@ def _device_model(dev: dict[str, Any]) -> str:
 
 
 def _supports_clean_path(dev: dict[str, Any]) -> bool:
-    """Return whether the Scuba clean-path control should be exposed."""
-    model = _device_model(dev).lower()
-    return any(marker in model for marker in SCUBA_MODEL_MARKERS)
+    """Return whether the clean-path control should be exposed."""
+    return has_capability(dev, Capability.CLEAN_PATH)
 
 
 def _supports_mode_control(dev: dict[str, Any]) -> bool:
     """Return whether mode control has enough evidence to be exposed."""
-    return _supports_clean_path(dev) or bool(dev.get("_ha_supported_modes_explicit"))
+    return has_capability(dev, Capability.MODE_SELECT)
 
 
 class AiperSelectBase(CoordinatorEntity[AiperDataUpdateCoordinator], SelectEntity):
@@ -210,6 +209,7 @@ class AiperCleaningModeSelect(AiperSelectBase):
         sn: str,
         name: str,
         supported_mode_ids: list[int],
+        mode_map: dict[int, str],
         mqtt_enabled: bool,
     ) -> None:
         # MQTT is required to change the mode.
@@ -225,9 +225,15 @@ class AiperCleaningModeSelect(AiperSelectBase):
         )
         # Build options list from supported IDs.
         self._mode_ids: list[int] = []
+        self._mode_map = {}
+        for key, value in (mode_map or {}).items():
+            try:
+                self._mode_map[int(key)] = str(value)
+            except Exception:
+                continue
         options: list[str] = []
         for mid in supported_mode_ids:
-            label = MODE_MAP.get(mid)
+            label = self._mode_map.get(mid) or MODE_MAP.get(mid) or f"Mode {mid}"
             if label and label not in options:
                 self._mode_ids.append(int(mid))
                 options.append(label)
@@ -260,14 +266,14 @@ class AiperCleaningModeSelect(AiperSelectBase):
         mid = self._get_current_mode_id()
         if mid is None:
             return None
-        return MODE_MAP.get(mid)
+        return self._mode_map.get(mid) or MODE_MAP.get(mid) or f"Mode {mid}"
 
     async def async_select_option(self, option: str) -> None:
         self._raise_if_control_blocked()
 
         # Map label -> id
         mode_id = None
-        for mid, label in MODE_MAP.items():
+        for mid, label in self._mode_map.items():
             if label == option:
                 mode_id = int(mid)
                 break
@@ -437,10 +443,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             if not isinstance(supported, list) or not supported:
                 # fallback to known modes
                 supported = sorted(MODE_MAP.keys())
+            mode_map = dev.get("_ha_mode_map")
+            if not isinstance(mode_map, dict):
+                mode_map = {mode_id: MODE_MAP.get(mode_id, f"Mode {mode_id}") for mode_id in supported}
 
             if _supports_clean_path(dev):
                 entities.append(AiperCleanPathSelect(coordinator, entry, sn, name))
             if _supports_mode_control(dev):
-                entities.append(AiperCleaningModeSelect(coordinator, entry, sn, name, supported, mqtt_enabled))
+                entities.append(AiperCleaningModeSelect(coordinator, entry, sn, name, supported, mode_map, mqtt_enabled))
 
     async_add_entities(entities)

@@ -20,6 +20,7 @@ from .const import (
     DOMAIN,
     MODE_MAP,
 )
+from .profiles import derive_device_profile
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1031,6 +1032,19 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if getattr(self, "_listeners", None):
             self._schedule_refresh()
 
+    def _apply_device_profile(self, sn: str) -> None:
+        """Derive and store family/capability metadata for a device."""
+        device = self._devices.setdefault(sn, {})
+        profile_input = {
+            **device,
+            "shadow": self._shadow_data.get(sn, {}),
+            "_ha_consumables": self._consumables_cache.get(sn) or device.get("_ha_consumables") or [],
+        }
+        profile = derive_device_profile(profile_input)
+        device["_ha_profile_family"] = profile.family.value
+        device["_ha_capabilities"] = sorted(capability.value for capability in profile.capabilities)
+        device["_ha_mode_map"] = profile.mode_map
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API."""
         try:
@@ -1340,6 +1354,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         self.set_clean_path_cache(sn, val)
                     self._last_clean_path_fetch[sn] = now
                 self._devices[sn]["_ha_clean_path"] = self._clean_path_cache.get(sn)
+                self._apply_device_profile(sn)
 
             # Expire pending commands (UI hints)
             for _sn in list(self._command_state.keys()):
@@ -1672,6 +1687,8 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     device["_ha_fw_mcu"] = ota.get("subver")
             device["_ha_last_seen"] = dt_util.utcnow()
             self._devices[sn] = device
+
+        self._apply_device_profile(sn)
 
         # Merge shadow into current coordinator data and notify listeners.
         if self.data is not None:

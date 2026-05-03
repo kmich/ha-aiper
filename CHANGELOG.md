@@ -14,6 +14,7 @@ This changelog tracks local modernization work intended for a future pull reques
 - Added Australia as a first-class region option backed by the Asia/Pacific Aiper API.
 - Added a Surfer S2 propeller maintenance timestamp sensor when the consumables endpoint reports propeller maintenance data.
 - Added AWS IoT Device SDK v2 MQTT transport for SigV4 WebSocket notifications.
+- Added model-family and capability profiles for Aiper's Scuba X1, Surfer S2, Shark devices.
 
 ### Changed
 
@@ -26,6 +27,7 @@ This changelog tracks local modernization work intended for a future pull reques
 - Replaced the legacy `AWSIoTPythonSDK` dependency with `awsiotsdk`.
 - Made MQTT the primary live-state update path when enabled, with REST polling retained as fallback and slow metadata reconciliation.
 - Updated the integration manifest IoT class to `cloud_push`.
+- Switched model-specific entity and select setup to profile capabilities instead of scattered model-name checks.
 
 ### Fixed
 

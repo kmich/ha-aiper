@@ -14,6 +14,7 @@ dependencies = [
 dev = [
     "homeassistant",
     "mypy",
+    "pyright>=1.1.409",
     "pytest",
     "pytest-homeassistant-custom-component",
     "pyyaml",
@@ -37,3 +38,6 @@ select = ["E4", "E7", "E9", "F"]
 python_version = "3.14"
 strict = false
 ignore_missing_imports = true
+
+[tool.pyright]
+reportIncompatibleVariableOverride = "none"
