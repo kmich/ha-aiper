@@ -46,22 +46,6 @@ def test_credentials_use_region_environment_when_cli_region_missing(monkeypatch:
     assert region == "asia"
 
 
-def test_cleaning_history_candidate_bodies_use_current_cloud_contract() -> None:
-    """The history probe should only use the body shape accepted by current cloud APIs."""
-    assert aiper_probe.cleaning_history_candidate_bodies("SN123") == [{
-        "sn": "SN123",
-        "pageNum": 1,
-        "pageSize": 20,
-    }]
-
-
-def test_consumables_candidate_bodies_use_current_cloud_contract() -> None:
-    """The consumables probe should only use the body shape accepted by current cloud APIs."""
-    bodies = aiper_probe.consumables_candidate_bodies({"equipmentId": "E123"}, "SN123")
-
-    assert bodies == [{"sn": "SN123"}]
-
-
 def test_region_from_iot_endpoint() -> None:
     """MQTT auth probe should derive AWS region from AWS IoT endpoint hosts."""
     assert aiper_probe._region_from_iot_endpoint("abc.iot.eu-central-1.amazonaws.com") == "eu-central-1"
@@ -119,10 +103,11 @@ def test_clean_path_query_candidates_cover_legacy_variants() -> None:
         "envelope": "encrypted",
     } in candidates
     assert {
-        "path": "/surfer/swimming/v2/getCleanPathSettingBySn",
+        "path": "/swimming/v2/getCleanPathSettingBySn",
         "body": {"sn": "SN123"},
         "envelope": "plain",
     } in candidates
+    assert all(not candidate["path"].startswith("/surfer/") for candidate in candidates)
 
 
 def test_clean_path_at_commands_match_legacy_control_variants() -> None:
@@ -135,26 +120,3 @@ def test_clean_path_at_commands_match_legacy_control_variants() -> None:
         "AT+SETPATH=0",
     ]
 
-
-def test_payload_summary_reports_history_page_shape() -> None:
-    """History probe output should make successful body variants easy to compare."""
-    summary = aiper_probe._payload_summary(
-        {
-            "code": "200",
-            "successful": True,
-            "data": {
-                "list": [{"id": 1}, {"id": 2}],
-                "pageNum": 1,
-                "pageSize": 20,
-                "total": 2,
-            },
-        }
-    )
-
-    assert summary["code"] == "200"
-    assert summary["successful"] is True
-    assert summary["record_key"] == "list"
-    assert summary["record_count"] == 2
-    assert summary["pageNum"] == 1
-    assert summary["pageSize"] == 20
-    assert summary["total"] == 2

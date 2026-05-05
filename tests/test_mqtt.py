@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from custom_components.aiper.api import AiperApi
-from custom_components.aiper.const import TOPIC_READ, TOPIC_SHADOW_GET_REQUEST, TOPIC_SHADOW_UPDATE, TOPIC_WRITE
+from custom_components.aiper.const import MqttTopic
 
 
 class FakeMqttTransport:
@@ -34,7 +34,7 @@ class FakeMqttTransport:
 
 
 def _api_with_fake_mqtt() -> tuple[AiperApi, FakeMqttTransport]:
-    api = AiperApi("user@example.com", "secret", "asia")
+    api = AiperApi("user@example.com", "secret", "asia", async_session=cast(Any, object()))
     transport = FakeMqttTransport()
     api._mqtt_client = transport
     api._mqtt_connected = True
@@ -49,7 +49,7 @@ async def test_subscribe_device_normalizes_transport_messages() -> None:
 
     assert await api.subscribe_device("SN123", lambda sn, payload: events.append((sn, payload))) is True
 
-    topic = TOPIC_READ.format(sn="SN123")
+    topic = MqttTopic.READ.format(sn="SN123")
     message = {
         "type": "Machine",
         "data": {
@@ -87,9 +87,9 @@ async def test_shadow_publish_uses_transport() -> None:
     assert await api.request_shadow("SN123") is True
     assert await api.publish_shadow_desired("SN123", {"Machine": {"status": 1}}) is True
 
-    assert transport.published[0] == (TOPIC_SHADOW_GET_REQUEST.format(sn="SN123"), "", 1)
+    assert transport.published[0] == (MqttTopic.SHADOW_GET_REQUEST.format(sn="SN123"), "", 1)
     assert transport.published[1] == (
-        TOPIC_SHADOW_UPDATE.format(sn="SN123"),
+        MqttTopic.SHADOW_UPDATE.format(sn="SN123"),
         '{"state":{"desired":{"Machine":{"status":1}}}}',
         1,
     )
@@ -103,7 +103,7 @@ async def test_downchan_command_publishes_plain_payload() -> None:
     assert await api.send_command("SN123", "Machine", {"status": 1}) is True
 
     assert len(transport.published) == 1
-    assert transport.published[0][0] == TOPIC_WRITE.format(sn="SN123")
+    assert transport.published[0][0] == MqttTopic.WRITE.format(sn="SN123")
     assert '"status":1' in str(transport.published[0][1])
 
 
@@ -116,11 +116,11 @@ async def test_mqtt_paths_use_transport() -> None:
     assert await api.publish_shadow_desired("SN123", {"Machine": {"status": 1}}) is True
     assert await api.send_command("SN123", "Machine", {"status": 1}) is True
 
-    assert transport.published[0] == (TOPIC_SHADOW_GET_REQUEST.format(sn="SN123"), "", 1)
+    assert transport.published[0] == (MqttTopic.SHADOW_GET_REQUEST.format(sn="SN123"), "", 1)
     assert transport.published[1] == (
-        TOPIC_SHADOW_UPDATE.format(sn="SN123"),
+        MqttTopic.SHADOW_UPDATE.format(sn="SN123"),
         '{"state":{"desired":{"Machine":{"status":1}}}}',
         1,
     )
-    assert transport.published[2][0] == TOPIC_WRITE.format(sn="SN123")
+    assert transport.published[2][0] == MqttTopic.WRITE.format(sn="SN123")
     assert '"status":1' in str(transport.published[2][1])

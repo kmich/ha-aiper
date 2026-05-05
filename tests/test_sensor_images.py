@@ -7,6 +7,7 @@ from typing import cast
 
 from custom_components.aiper.coordinator import AiperDataUpdateCoordinator
 from custom_components.aiper.sensor import AiperSensor, SENSOR_DESCRIPTIONS
+from custom_components.aiper.state import normalize_device_state
 
 
 def _description(key: str):
@@ -20,7 +21,9 @@ def test_status_sensor_uses_device_model_image_url() -> None:
     sensor._sn = "SN123"
     sensor.coordinator = cast(
         AiperDataUpdateCoordinator,
-        SimpleNamespace(data={"SN123": {"deviceModelUrl": "https://static.example.test/surfer-s2.png"}}),
+        SimpleNamespace(
+            data={"SN123": normalize_device_state({"deviceModelUrl": "https://static.example.test/surfer-s2.png"})}
+        ),
     )
 
     assert sensor.entity_picture == "https://static.example.test/surfer-s2.png"
@@ -33,7 +36,9 @@ def test_non_status_sensors_do_not_duplicate_device_model_image_url() -> None:
     sensor._sn = "SN123"
     sensor.coordinator = cast(
         AiperDataUpdateCoordinator,
-        SimpleNamespace(data={"SN123": {"deviceModelUrl": "https://static.example.test/surfer-s2.png"}}),
+        SimpleNamespace(
+            data={"SN123": normalize_device_state({"deviceModelUrl": "https://static.example.test/surfer-s2.png"})}
+        ),
     )
 
     assert sensor.entity_picture is None

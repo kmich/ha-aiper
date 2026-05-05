@@ -10,15 +10,19 @@ def test_surfer_profile_exposes_verified_controls_without_mode_select() -> None:
     profile = derive_device_profile(
         {
             "model": "Surfer_S2",
-            "_ha_supported_mode_ids": [1, 2, 3, 4, 5],
-            "_ha_supported_modes_explicit": False,
-            "_ha_consumables": [{"name": "Propeller"}],
+            "supported_mode_ids": [1, 2, 3, 4, 5],
+            "supported_modes_explicit": False,
+            "consumables": [
+                {"name": "Propeller"},
+                {"name": "Roller Brush"},
+                {"name": "MicroMesh Filter"},
+                {"name": "Caterpillar Tread"},
+            ],
         }
     )
 
     assert profile.family is DeviceFamily.SURFER
-    assert Capability.PROPELLER_MAINTENANCE in profile.capabilities
-    assert Capability.RUN_CONTROL in profile.capabilities
+    assert Capability.RUNNING_CONTROL in profile.capabilities
     assert Capability.CLEAN_PATH not in profile.capabilities
     assert Capability.CLEANING_MODE_SELECT not in profile.capabilities
     assert profile.mode_map[0] == "Off"
@@ -31,8 +35,8 @@ def test_scuba_profile_gets_scuba_controls_and_labels() -> None:
     profile = derive_device_profile(
         {
             "model": "Scuba_X1",
-            "_ha_supported_mode_ids": [1, 2, 3, 4, 5],
-            "_ha_supported_modes_explicit": False,
+            "supported_mode_ids": [1, 2, 3, 4, 5],
+            "supported_modes_explicit": False,
         }
     )
 
@@ -43,13 +47,27 @@ def test_scuba_profile_gets_scuba_controls_and_labels() -> None:
     assert profile.mode_map[5] == "Scheduled"
 
 
+def test_scuba_profile_defaults_modes_by_family() -> None:
+    """Scuba defaults are family-specific, not a coordinator fallback."""
+    profile = derive_device_profile({"model": "Scuba_X1"})
+
+    assert Capability.CLEANING_MODE_SELECT in profile.capabilities
+    assert profile.mode_map == {
+        1: "Smart",
+        2: "Floor",
+        3: "Wall",
+        4: "Waterline",
+        5: "Scheduled",
+    }
+
+
 def test_surfer_mode_evidence_stays_read_only() -> None:
-    """Surfer mode IDs describe run context, not selectable cleaning modes."""
+    """Surfer mode IDs describe cleaning context, not selectable cleaning modes."""
     profile = derive_device_profile(
         {
             "model": "Surfer_S2",
-            "_ha_supported_mode_ids": [1, 5],
-            "_ha_supported_modes_explicit": True,
+            "supported_mode_ids": [1, 5],
+            "supported_modes_explicit": True,
         }
     )
 
@@ -62,11 +80,33 @@ def test_shark_explicit_mode_evidence_enables_cleaning_mode_control() -> None:
     profile = derive_device_profile(
         {
             "model": "Shark_X",
-            "_ha_supported_mode_ids": [1, 2],
-            "_ha_supported_modes_explicit": True,
+            "supported_mode_ids": [1, 2],
+            "supported_modes_explicit": True,
         }
     )
 
     assert profile.family is DeviceFamily.SHARK
     assert Capability.CLEANING_MODE_SELECT in profile.capabilities
     assert profile.mode_map == {1: "Mode 1", 2: "Mode 2"}
+
+
+def test_explicit_device_mode_ids_can_be_outside_known_cleaning_mode_labels() -> None:
+    """Profiles preserve explicit device IDs even when the label enum is incomplete."""
+    profile = derive_device_profile(
+        {
+            "model": "Shark_X",
+            "supported_mode_ids": [7],
+            "supported_modes_explicit": True,
+        }
+    )
+
+    assert Capability.CLEANING_MODE_SELECT in profile.capabilities
+    assert profile.mode_map == {7: "Mode 7"}
+
+
+def test_unknown_profile_does_not_invent_modes() -> None:
+    """Unknown models stay read-only until payload evidence identifies modes."""
+    profile = derive_device_profile({"model": "Mystery"})
+
+    assert Capability.CLEANING_MODE_SELECT not in profile.capabilities
+    assert profile.mode_map == {}

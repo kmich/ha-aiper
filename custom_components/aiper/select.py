@@ -1,10 +1,8 @@
-
 """Select platform for Aiper integration.
 
 Design goals (community-friendly):
 - Device-reported state is authoritative (no optimistic select state).
-- Control entities become unavailable when the device is offline, unless the
-  user explicitly enables offline queueing (advanced option).
+- Control entities become unavailable when the device is explicitly offline.
 - Robust, explicit error handling to avoid taking the whole integration down
   on a single denied/failed command.
 """
@@ -22,77 +20,50 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    DOMAIN,
-    CONF_ENABLE_MQTT,
-    CONF_QUEUE_OFFLINE_COMMANDS,
-    MODE_MAP,
     CLEAN_PATH_MAP,
+    DOMAIN,
+    mode_label,
 )
 from .controller import AiperDeviceController
 from .coordinator import AiperDataUpdateCoordinator
-from .profiles import Capability, has_capability
+from .profiles import Capability
+from .state import DeviceState, state_has_capability
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def _coerce_bool(val: Any) -> bool | None:
-    if val is None:
+def _coerce_int(val: Any) -> int | None:
+    if isinstance(val, bool) or val is None:
         return None
-    if isinstance(val, bool):
+    if isinstance(val, int):
         return val
-    if isinstance(val, (int, float)):
-        return bool(int(val))
-    if isinstance(val, str):
-        s = val.strip().lower()
-        if s in {"true", "on", "yes", "1"}:
-            return True
-        if s in {"false", "off", "no", "0"}:
-            return False
+    if isinstance(val, float):
+        return int(val)
+    if isinstance(val, str) and val.strip().lstrip("-").isdigit():
+        return int(val.strip())
     return None
 
 
 def _device_online(coordinator: AiperDataUpdateCoordinator, sn: str) -> bool | None:
-    """Best-effort online indicator.
-
-    Preference order:
-      1) REST-derived authoritative state (_ha_online)
-      2) Shadow netstat.online
-    """
-    try:
-        dev = (coordinator.data or {}).get(sn) or {}
-        rest = _coerce_bool(dev.get("_ha_online"))
-        if rest is not None:
-            return rest
-    except Exception:
-        pass
-
-    try:
-        netstat = coordinator.get_netstat(sn) or {}
-        mqtt = _coerce_bool(netstat.get("online"))
-        return mqtt
-    except Exception:
+    """Return the normalized online state for control availability."""
+    dev = (coordinator.data or {}).get(sn)
+    if dev is None:
         return None
+    try:
+        value = dev["online"].value
+    except KeyError:
+        return None
+    return value if isinstance(value, bool) else None
 
 
-def _device_model(dev: dict[str, Any]) -> str:
-    """Return the most specific model string available."""
-    return str(
-        dev.get("model")
-        or dev.get("deviceModel")
-        or dev.get("modelName")
-        or dev.get("productName")
-        or "Aiper Pool Cleaner"
-    )
-
-
-def _supports_clean_path(dev: dict[str, Any]) -> bool:
+def _supports_clean_path(dev: DeviceState) -> bool:
     """Return whether the clean-path control should be exposed."""
-    return has_capability(dev, Capability.CLEAN_PATH)
+    return state_has_capability(dev, Capability.CLEAN_PATH)
 
 
-def _supports_mode_control(dev: dict[str, Any]) -> bool:
+def _supports_mode_control(dev: DeviceState) -> bool:
     """Return whether mode control has enough evidence to be exposed."""
-    return has_capability(dev, Capability.CLEANING_MODE_SELECT)
+    return state_has_capability(dev, Capability.CLEANING_MODE_SELECT)
 
 
 class AiperSelectBase(CoordinatorEntity[AiperDataUpdateCoordinator], SelectEntity):
@@ -105,7 +76,6 @@ class AiperSelectBase(CoordinatorEntity[AiperDataUpdateCoordinator], SelectEntit
         self,
         coordinator: AiperDataUpdateCoordinator,
         controller: AiperDeviceController,
-        entry: ConfigEntry,
         sn: str,
         key: str,
         name: str,
@@ -116,7 +86,6 @@ class AiperSelectBase(CoordinatorEntity[AiperDataUpdateCoordinator], SelectEntit
     ) -> None:
         super().__init__(coordinator)
         self.controller = controller
-        self._config_entry = entry
         self._sn = sn
         self._key = key
         self._attr_name = name
@@ -127,15 +96,15 @@ class AiperSelectBase(CoordinatorEntity[AiperDataUpdateCoordinator], SelectEntit
 
     @property
     def device_info(self) -> DeviceInfo:
-        dev = (self.coordinator.data or {}).get(self._sn) or {}
-        model = _device_model(dev)
-        sw = dev.get("_ha_fw_main") or dev.get("firmwareVersion")
+        dev = (self.coordinator.data or {})[self._sn]
+        device_info = dev["device_info"]
+        device_info_attrs = device_info.attributes
         return {
             "identifiers": {(DOMAIN, self._sn)},
-            "name": dev.get("name") or dev.get("deviceName") or self._sn,
+            "name": str(device_info.value or self._sn),
             "manufacturer": "Aiper",
-            "model": model,
-            "sw_version": sw,
+            "model": device_info_attrs.get("model"),
+            "sw_version": device_info_attrs.get("sw_version"),
         }
 
     @property
@@ -150,16 +119,11 @@ class AiperSelectBase(CoordinatorEntity[AiperDataUpdateCoordinator], SelectEntit
         if not self._requires_online:
             return True
 
-        allow_offline = bool(self._config_entry.options.get(CONF_QUEUE_OFFLINE_COMMANDS, False))
-        if allow_offline:
-            return True
-
         online = _device_online(self.coordinator, self._sn)
         return online is not False
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        dev = (self.coordinator.data or {}).get(self._sn) or {}
         attrs: dict[str, Any] = {}
 
         online = _device_online(self.coordinator, self._sn)
@@ -167,39 +131,17 @@ class AiperSelectBase(CoordinatorEntity[AiperDataUpdateCoordinator], SelectEntit
             attrs["device_online"] = online
 
         attrs["mqtt_connected"] = self.coordinator.api.is_mqtt_connected()
-        attrs["allow_offline_commands"] = bool(self._config_entry.options.get(CONF_QUEUE_OFFLINE_COMMANDS, False))
-
-        # Diagnostic command tracking
-        try:
-            cmd = self.coordinator.get_command_state(self._sn)
-            if cmd:
-                attrs["pending_commands"] = cmd.get("pending")
-                attrs["last_commands"] = cmd.get("last")
-        except Exception:
-            pass
-
-        # Last seen (best-effort)
-        last_seen = dev.get("_ha_last_seen")
-        if last_seen is not None:
-            try:
-                attrs["last_seen"] = last_seen.isoformat() if hasattr(last_seen, "isoformat") else str(last_seen)
-            except Exception:
-                attrs["last_seen"] = str(last_seen)
 
         return attrs
 
     def _raise_if_control_blocked(self) -> None:
-        allow_offline = bool(self._config_entry.options.get(CONF_QUEUE_OFFLINE_COMMANDS, False))
         online = _device_online(self.coordinator, self._sn)
 
         if self._requires_mqtt and not self.coordinator.api.is_mqtt_connected():
             raise HomeAssistantError("Aiper MQTT connection is not available; cannot send this command.")
 
-        if self._requires_online and not allow_offline and online is False:
-            raise HomeAssistantError(
-                "Device is offline; controls are disabled. "
-                "Enable 'Queue commands while device is offline' in the integration options to allow scheduling."
-            )
+        if self._requires_online and online is False:
+            raise HomeAssistantError("Device is offline; controls are disabled.")
 
 
 class AiperCleaningModeSelect(AiperSelectBase):
@@ -209,18 +151,15 @@ class AiperCleaningModeSelect(AiperSelectBase):
         self,
         coordinator: AiperDataUpdateCoordinator,
         controller: AiperDeviceController,
-        entry: ConfigEntry,
         sn: str,
         name: str,
         supported_mode_ids: list[int],
         mode_map: dict[int, str],
-        mqtt_enabled: bool,
     ) -> None:
         # MQTT is required to change the mode.
         super().__init__(
             coordinator,
             controller,
-            entry,
             sn,
             "mode_selection",
             f"{name} Cleaning mode",
@@ -238,40 +177,22 @@ class AiperCleaningModeSelect(AiperSelectBase):
                 continue
         options: list[str] = []
         for mid in supported_mode_ids:
-            label = self._mode_map.get(mid) or MODE_MAP.get(mid) or f"Mode {mid}"
+            label = self._mode_map.get(mid) or mode_label(mid)
             if label and label not in options:
                 self._mode_ids.append(int(mid))
                 options.append(label)
         self._attr_options = options
 
     def _get_current_mode_id(self) -> int | None:
-        # Prefer shadow Machine.mode
-        st = self.coordinator.get_machine_state(self._sn) or {}
-        m = st.get("mode")
-        if isinstance(m, int):
-            return m
-        if isinstance(m, str) and m.isdigit():
-            return int(m)
-
-        # Fallback to REST info if present
-        dev = (self.coordinator.data or {}).get(self._sn) or {}
-        info = dev.get("info") or {}
-        if isinstance(info, dict):
-            for k in ("mode", "workMode"):
-                mode_value = info.get(k)
-                if mode_value is not None:
-                    try:
-                        return int(mode_value)
-                    except Exception:
-                        continue
-        return None
+        dev = (self.coordinator.data or {})[self._sn]
+        return _coerce_int(dev["mode"].attributes.get("code"))
 
     @property
     def current_option(self) -> str | None:
         mid = self._get_current_mode_id()
         if mid is None:
             return None
-        return self._mode_map.get(mid) or MODE_MAP.get(mid) or f"Mode {mid}"
+        return self._mode_map.get(mid) or mode_label(mid)
 
     async def async_select_option(self, option: str) -> None:
         self._raise_if_control_blocked()
@@ -294,7 +215,7 @@ class AiperCleaningModeSelect(AiperSelectBase):
         if not result.ok:
             if not self.coordinator.api.is_mqtt_connected():
                 raise HomeAssistantError(
-                    "Failed to set cleaning mode: MQTT is not connected. Enable MQTT in the Aiper integration options."
+                    "Failed to set cleaning mode: MQTT is not connected."
                 )
             raise HomeAssistantError(f"Failed to set cleaning mode: {result.reason or 'device rejected the command'}")
 
@@ -314,14 +235,12 @@ class AiperCleanPathSelect(AiperSelectBase):
         self,
         coordinator: AiperDataUpdateCoordinator,
         controller: AiperDeviceController,
-        entry: ConfigEntry,
         sn: str,
         name: str,
     ) -> None:
         super().__init__(
             coordinator,
             controller,
-            entry,
             sn,
             "clean_path",
             f"{name} Clean path",
@@ -333,18 +252,9 @@ class AiperCleanPathSelect(AiperSelectBase):
 
     @property
     def current_option(self) -> str | None:
-        val = self.coordinator.get_clean_path(self._sn)
-        if val is None:
-            return None
-        try:
-            iv = int(val)
-        except Exception:
-            return None
-
-        label = CLEAN_PATH_MAP.get(iv)
-        if label is None:
-            # If the device reports an unexpected ID, expose it without breaking the UI.
-            label = f"Path {iv}"
+        dev = (self.coordinator.data or {})[self._sn]
+        label = dev["clean_path"].value
+        if label is not None and label not in CLEAN_PATH_MAP.values():
             try:
                 opts = list(self._attr_options or [])
                 if label not in opts:
@@ -352,21 +262,7 @@ class AiperCleanPathSelect(AiperSelectBase):
                     self._attr_options = opts
             except Exception:
                 pass
-        return label
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        attrs = dict(super().extra_state_attributes)
-        try:
-            shadow = getattr(self.coordinator, "_shadow_data", {}).get(self._sn) or {}
-            if isinstance(shadow, dict):
-                mach = shadow.get("machine") or {}
-                dm = shadow.get("desired_machine") or {}
-                attrs["clean_path_reported_raw"] = (mach.get("cleanPath") if isinstance(mach, dict) else None)
-                attrs["clean_path_desired_raw"] = (dm.get("cleanPath") if isinstance(dm, dict) else None)
-        except Exception:
-            pass
-        return attrs
+        return str(label) if label is not None else None
 
     async def async_select_option(self, option: str) -> None:
         self._raise_if_control_blocked()
@@ -388,15 +284,16 @@ class AiperCleanPathSelect(AiperSelectBase):
         if path_id is None:
             raise HomeAssistantError(f"Invalid clean path: {option}")
 
-        cur = self.coordinator.get_clean_path(self._sn)
-        if cur is not None and int(cur) == path_id:
+        dev = (self.coordinator.data or {})[self._sn]
+        cur = _coerce_int(dev["clean_path"].attributes.get("code"))
+        if cur is not None and cur == path_id:
             return
 
         result = await self.controller.set_clean_path(self._sn, path_id)
         if not result.ok:
             if not self.coordinator.api.is_mqtt_connected():
                 raise HomeAssistantError(
-                    "Failed to set clean path: cloud control is unavailable because MQTT is not connected. Enable MQTT in the Aiper integration options."
+                    "Failed to set clean path: cloud control is unavailable because MQTT is not connected."
                 )
             raise HomeAssistantError(f"Failed to set clean path: {result.reason or 'device rejected the command'}")
 
@@ -421,26 +318,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     coordinator: AiperDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     controller: AiperDeviceController = hass.data[DOMAIN][entry.entry_id]["controller"]
 
-    # Determine if MQTT is enabled for cleaning-mode command availability.
-    mqtt_enabled = bool(entry.options.get(CONF_ENABLE_MQTT)) if CONF_ENABLE_MQTT in entry.options else True
-
     entities: list[SelectEntity] = []
     if coordinator.data:
         for sn, dev in coordinator.data.items():
-            name = dev.get("name") or dev.get("deviceName") or dev.get("productName") or sn
-            supported = dev.get("_ha_supported_mode_ids")
+            device_info = dev["device_info"]
+            name = str(device_info.value or sn)
+            mode_options = dev["mode_options"]
+            supported = mode_options.value
             if not isinstance(supported, list) or not supported:
-                # fallback to known modes
-                supported = sorted(MODE_MAP.keys())
-            mode_map = dev.get("_ha_mode_map")
+                continue
+            supported_ids = [int(mode_id) for mode_id in supported]
+            mode_map = mode_options.attributes.get("mode_map")
             if not isinstance(mode_map, dict):
-                mode_map = {mode_id: MODE_MAP.get(mode_id, f"Mode {mode_id}") for mode_id in supported}
+                mode_map = {mode_id: mode_label(mode_id) for mode_id in supported_ids}
 
             if _supports_clean_path(dev):
-                entities.append(AiperCleanPathSelect(coordinator, controller, entry, sn, name))
+                entities.append(AiperCleanPathSelect(coordinator, controller, sn, name))
             if _supports_mode_control(dev):
                 entities.append(
-                    AiperCleaningModeSelect(coordinator, controller, entry, sn, name, supported, mode_map, mqtt_enabled)
+                    AiperCleaningModeSelect(coordinator, controller, sn, name, supported_ids, mode_map)
                 )
 
     async_add_entities(entities)

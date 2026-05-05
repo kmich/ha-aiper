@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from custom_components.aiper.api import AiperApi
 
 
+def _api() -> AiperApi:
+    return AiperApi("user@example.com", "secret", "asia", async_session=cast(Any, object()))
+
+
 @pytest.mark.asyncio
 async def test_surfer_clean_path_query_uses_verified_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     """Surfer query should use the verified encrypted endpoint and sn-only body."""
-    api = AiperApi("user@example.com", "secret", "asia")
+    api = _api()
     api._devices["SN123"] = {"model": "Surfer_S2"}
     calls: list[tuple[str, Any]] = []
 
@@ -44,7 +48,7 @@ async def test_surfer_clean_path_query_uses_verified_contract(monkeypatch: pytes
 @pytest.mark.asyncio
 async def test_surfer_clean_path_update_uses_verified_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     """Surfer update should persist cleanPath and apply AT+AUTO only."""
-    api = AiperApi("user@example.com", "secret", "asia")
+    api = _api()
     api._devices["SN123"] = {"model": "Surfer_S2"}
     calls: list[tuple[str, Any]] = []
 

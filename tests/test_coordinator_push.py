@@ -1,4 +1,4 @@
-"""Tests for MQTT push-primary coordinator behavior."""
+"""Tests for MQTT coordinator behavior."""
 
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from custom_components.aiper.coordinator import AiperDataUpdateCoordinator
+from custom_components.aiper.state import normalize_device_state
 
 
 def _bare_coordinator() -> AiperDataUpdateCoordinator:
     coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
-    coordinator._shadow_data = {}
     coordinator._consumables_cache = {}
     coordinator._devices = {
         "SN123": {
@@ -22,22 +22,23 @@ def _bare_coordinator() -> AiperDataUpdateCoordinator:
             "battLevel": 10,
             "machineStatus": 128,
             "mode": 1,
-            "_ha_online": False,
+            "online": False,
         }
     }
     coordinator._last_online = {"SN123": False}
-    coordinator._push_primary = True
-    coordinator.data = {"SN123": dict(coordinator._devices["SN123"])}
+    coordinator._command_state = {}
+    coordinator.data = {"SN123": normalize_device_state(dict(coordinator._devices["SN123"]))}
 
     def _set_updated_data(data):
         coordinator.data = data
 
     coordinator.async_set_updated_data = _set_updated_data
+    coordinator.async_update_listeners = lambda: None
     return coordinator
 
 
-def test_shadow_update_promotes_live_state_in_push_primary_mode() -> None:
-    """MQTT shadow data should become the primary entity state."""
+def test_shadow_update_promotes_live_state() -> None:
+    """MQTT reported data should update normalized entity state."""
     coordinator = _bare_coordinator()
 
     coordinator._on_shadow_update(
@@ -55,39 +56,23 @@ def test_shadow_update_promotes_live_state_in_push_primary_mode() -> None:
     )
 
     device = coordinator.data["SN123"]
-    assert device["battLevel"] == 70
-    assert device["machineStatus"] == 1
-    assert device["running"] is True
-    assert device["mode"] == 5
-    assert device["_ha_online"] is True
-    assert device["wifiName"] == "Mackay"
-    assert device["wifiRssi"] == -79
-    assert device["_ha_fw_main"] == "V7.1.0"
-    assert device["_ha_fw_mcu"] == "V1.0.7.1,V1.0.6.0"
-    assert device["shadow"]["machine"]["cap"] == 70
-
-
-def test_set_push_primary_switches_update_interval() -> None:
-    """Coordinator should switch between push reconciliation and REST fallback polling."""
-    coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
-    coordinator._push_reconcile_interval = timedelta(hours=1)
-    coordinator._normal_interval = timedelta(seconds=120)
-    coordinator._fast_poll_until = dt_util.utcnow()
-    coordinator.update_interval = None
-
-    coordinator.set_push_primary(True)
-    assert coordinator._push_primary is True
-    assert coordinator._fast_poll_until is None
-    assert coordinator.update_interval == timedelta(hours=1)
-
-    coordinator.set_push_primary(False)
-    assert coordinator._push_primary is False
-    assert coordinator.update_interval == timedelta(seconds=120)
+    raw_device = coordinator._devices["SN123"]
+    assert raw_device["battLevel"] == 10
+    assert raw_device["machineStatus"] == 128
+    assert device["running"].value is True
+    assert device["mode"].attributes == {"code": 5}
+    assert device["mode"].value == "Scheduled"
+    assert device["online"].value is True
+    assert device["battery"].value == 70
+    assert device["wifi"].value is True
+    assert device["wifi_signal"].value == -79
+    assert device["main_version"].value == "V7.1.0"
+    assert device["mcu_version"].value == "V1.0.7.1,V1.0.6.0"
 
 
 @pytest.mark.asyncio
-async def test_push_primary_refresh_skips_live_rest_polling(hass: HomeAssistant) -> None:
-    """Scheduled push-primary refreshes should not poll live device state."""
+async def test_scheduled_refresh_skips_live_rest_polling(hass: HomeAssistant) -> None:
+    """Scheduled refreshes should not poll REST live device state."""
 
     class FakeApi:
         def get_devices(self):
@@ -99,42 +84,86 @@ async def test_push_primary_refresh_skips_live_rest_polling(hass: HomeAssistant)
         def get_device_info(self, sn):
             raise AssertionError("live info should not be polled")
 
-        async def query_clean_path_setting(self, sn):
-            raise AssertionError("devices without clean-path support should not poll clean-path REST")
-
     now = dt_util.utcnow()
     coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
     coordinator.hass = hass
     coordinator.api = cast(Any, FakeApi())
-    coordinator._push_primary = True
     coordinator._devices = {
         "SN123": {
             "sn": "SN123",
             "name": "Unknown Aiper",
             "model": "Unknown_Model",
             "status_data": {"online": False},
-            "info": {"mainVersion": "old"},
-            "_ha_online": False,
+            "info": {"mainFirmwareVersion": "old"},
+            "online": False,
         }
     }
-    coordinator._shadow_data = {"SN123": {"netstat": {"online": 1}, "machine": {"cap": 70}}}
     coordinator._last_online = {"SN123": False}
-    coordinator._last_fast_trigger = None
-    coordinator._fast_poll_until = None
     coordinator.update_interval = timedelta(hours=1)
-    coordinator._history_refresh = timedelta(hours=6)
-    coordinator._consumables_refresh = timedelta(hours=24)
-    coordinator._clean_path_refresh = timedelta(hours=6)
-    coordinator._last_history_fetch = {"SN123": now}
-    coordinator._last_consumables_fetch = {"SN123": now}
-    coordinator._last_clean_path_fetch = {}
-    coordinator._history_cache = {"SN123": {"total_count": 1, "total_hours": 2.0, "records": []}}
+    coordinator._metadata_refresh = timedelta(hours=24)
+    coordinator._last_metadata_fetch = {"SN123": now}
     coordinator._consumables_cache = {"SN123": []}
     coordinator._clean_path_cache = {}
     coordinator._command_state = {}
+    coordinator.data = {
+        "SN123": normalize_device_state(
+            {
+                **coordinator._devices["SN123"],
+                "online": True,
+                "battLevel": 70,
+            }
+        )
+    }
 
     data = await coordinator._async_update_data()
 
-    assert data["SN123"]["_ha_online"] is True
-    assert data["SN123"]["shadow"]["machine"]["cap"] == 70
-    assert data["SN123"]["_ha_clean_path"] is None
+    assert coordinator._devices["SN123"]["online"] is True
+    assert data["SN123"]["online"].value is True
+    assert data["SN123"]["battery"].value == 70
+    assert coordinator._devices["SN123"]["clean_path"] is None
+
+
+def test_pending_running_intent_confirms_from_reported_status() -> None:
+    """Running intent should clear when MQTT reports matching running state."""
+    coordinator = _bare_coordinator()
+    coordinator.note_command_sent("SN123", "running", True, source="test")
+
+    assert coordinator.get_pending_command_target("SN123", "running") is True
+
+    coordinator._confirm_pending_commands("SN123", {"status": 129})
+
+    assert coordinator.get_pending_command_target("SN123", "running") is None
+    assert coordinator.get_command_state("SN123")["last"]["running"]["result"] == "confirmed"
+
+
+def test_pending_stopped_intent_confirms_from_idle_status() -> None:
+    """Stopped intent should clear when MQTT reports an idle base status."""
+    coordinator = _bare_coordinator()
+    coordinator.note_command_sent("SN123", "running", False, source="test")
+
+    assert coordinator.get_pending_command_target("SN123", "running") is False
+
+    coordinator._confirm_pending_commands("SN123", {"status": 128})
+
+    assert coordinator.get_pending_command_target("SN123", "running") is None
+    assert coordinator.get_command_state("SN123")["last"]["running"]["result"] == "confirmed"
+
+
+def test_pending_running_intent_expires() -> None:
+    """Running intent should not outlive the coordinator pending timeout."""
+    coordinator = _bare_coordinator()
+    coordinator._command_state = {
+        "SN123": {
+            "pending": {
+                "running": {
+                    "target": True,
+                    "since": (dt_util.utcnow() - timedelta(seconds=coordinator.PENDING_TIMEOUT_SECONDS + 1)).isoformat(),
+                    "source": "test",
+                }
+            },
+            "last": {},
+        }
+    }
+
+    assert coordinator.get_pending_command_target("SN123", "running") is None
+    assert coordinator.get_command_state("SN123")["last"]["running"]["result"] == "timeout"

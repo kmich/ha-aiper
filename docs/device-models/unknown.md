@@ -20,7 +20,6 @@ Unknown devices receive only the shared baseline capabilities:
 - status
 - warning
 - wifi
-- history
 - firmware
 - MQTT shadow
 - bluetooth diagnostics
@@ -50,7 +49,7 @@ The model string used for classification is selected from:
 - Whether clean-path exists.
 - Whether the device publishes state through normal shadow report topics, X9
   app-report topics, or model-specific topics not yet known.
-- Whether history, consumables, and device-info payloads have familiar shapes.
+- Whether consumables and device-info payloads have familiar shapes.
 
 ## At Risk
 

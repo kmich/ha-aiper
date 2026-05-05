@@ -4,8 +4,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from custom_components.aiper.const import CleaningMode
+
 from .api import AiperApi
-from .profiles import Capability, has_capability
+from .profiles import Capability
+from .state import state_has_capability
 
 if TYPE_CHECKING:
     from .coordinator import AiperDataUpdateCoordinator
@@ -44,9 +47,9 @@ class AiperDeviceController:
             reason=f"device does not advertise {capability.value}",
         )
 
-    async def set_cleaning_mode(self, sn: str, mode: int) -> AiperCommandResult:
+    async def set_cleaning_mode(self, sn: str, mode: int | CleaningMode) -> AiperCommandResult:
         """Set a selectable cleaning mode."""
-        if not has_capability(self._device(sn), Capability.CLEANING_MODE_SELECT):
+        if not state_has_capability(self._device(sn), Capability.CLEANING_MODE_SELECT):
             return self._unsupported("cleaning_mode", mode, Capability.CLEANING_MODE_SELECT)
 
         self.coordinator.note_command_sent(sn, "cleaning_mode", mode, source="controller")
@@ -65,28 +68,28 @@ class AiperDeviceController:
         return AiperCommandResult(ok=True, command="cleaning_mode", target=mode)
 
     async def set_running(self, sn: str, running: bool) -> AiperCommandResult:
-        """Start or stop a device that supports a simple run control."""
-        if not has_capability(self._device(sn), Capability.RUN_CONTROL):
-            return self._unsupported("run", running, Capability.RUN_CONTROL)
+        """Start or stop device operation."""
+        if not state_has_capability(self._device(sn), Capability.RUNNING_CONTROL):
+            return self._unsupported("running", running, Capability.RUNNING_CONTROL)
 
-        self.coordinator.note_command_sent(sn, "run", running, source="controller")
+        self.coordinator.note_command_sent(sn, "running", running, source="controller")
         try:
-            ok = await self.api.set_surfer_running(sn, running)
+            ok = await self.api.set_running(sn, running)
         except Exception as err:
             reason = str(err)
-            self.coordinator.note_command_failed(sn, "run", running, reason=reason, source="controller")
-            return AiperCommandResult(ok=False, command="run", target=running, reason=reason)
+            self.coordinator.note_command_failed(sn, "running", running, reason=reason, source="controller")
+            return AiperCommandResult(ok=False, command="running", target=running, reason=reason)
 
         if not ok:
             reason = "device rejected"
-            self.coordinator.note_command_failed(sn, "run", running, reason=reason, source="controller")
-            return AiperCommandResult(ok=False, command="run", target=running, reason=reason)
+            self.coordinator.note_command_failed(sn, "running", running, reason=reason, source="controller")
+            return AiperCommandResult(ok=False, command="running", target=running, reason=reason)
 
-        return AiperCommandResult(ok=True, command="run", target=running)
+        return AiperCommandResult(ok=True, command="running", target=running)
 
     async def set_clean_path(self, sn: str, clean_path: int) -> AiperCommandResult:
         """Set a device clean-path preference."""
-        if not has_capability(self._device(sn), Capability.CLEAN_PATH):
+        if not state_has_capability(self._device(sn), Capability.CLEAN_PATH):
             return self._unsupported("clean_path", clean_path, Capability.CLEAN_PATH)
 
         self.coordinator.note_command_sent(sn, "clean_path", clean_path, source="controller")

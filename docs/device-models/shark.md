@@ -20,7 +20,6 @@ shared capabilities:
 - status
 - warning
 - wifi
-- history
 - firmware
 - MQTT shadow
 - bluetooth diagnostics
@@ -47,8 +46,7 @@ default.
 
 ## Unknown
 
-- Whether Shark devices use the same REST history and consumables contracts as
-  Surfer S2.
+- Whether Shark devices use the same REST consumables contract as Surfer S2.
 - Whether Shark devices publish to normal `shadow/report`, X9-style `app/report`,
   or both.
 - Whether Shark controls are REST, MQTT down-channel AT commands, shadow desired

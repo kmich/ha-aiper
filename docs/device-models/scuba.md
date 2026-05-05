@@ -27,7 +27,7 @@ The Scuba profile currently enables these capabilities:
 - caterpillar tread maintenance, when consumables expose caterpillar data
 
 Scuba is currently the only family with default cleaning-mode select exposure.
-Surfer S2 verification showed `Machine.mode` is run context, and Shark has no
+Surfer S2 verification showed `Machine.mode` is cleaning context, and Shark has no
 cleaning-mode evidence yet.
 
 The Scuba mode map is currently:
@@ -70,7 +70,6 @@ Query endpoint families still present for non-Surfer devices:
 - `/swimming/v2/queryCleanPathSetting`
 - `/swimming/v2/getCleanPathSetting`
 - `/swimming/v2/getCleanPathSettingBySn`
-- `/surfer...` prefixed variants retained only by legacy code
 
 Update endpoint families still present for non-Surfer devices:
 
@@ -80,7 +79,6 @@ Update endpoint families still present for non-Surfer devices:
 - `/network/cleanPathSetting`
 - `/swimming/v2/updateCleanPathSetting`
 - `/swimming/v2/setCleanPathSetting`
-- `/surfer...` prefixed variants retained only by legacy code
 
 Clean-path update body variants still present for non-Surfer devices:
 
@@ -136,7 +134,6 @@ Run a Scuba contract verification process:
 
 ```bash
 uv run tools/aiper_probe.py snapshot --sn <sn>
-uv run tools/aiper_probe.py history --sn <sn>
 uv run tools/aiper_probe.py consumables --sn <sn>
 uv run tools/aiper_probe.py contract-verify --sn <sn> --allow-control
 ```

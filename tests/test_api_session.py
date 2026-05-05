@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from custom_components.aiper import api as api_module
 from custom_components.aiper.api import AiperApi, AiperSessionConflict
+
+
+def _api() -> AiperApi:
+    return AiperApi("user@example.com", "secret", "asia", async_session=cast(Any, object()))
 
 
 class FakeEncryption:
@@ -27,7 +31,7 @@ class FakeEncryption:
 @pytest.mark.asyncio
 async def test_session_conflict_reauthenticates_and_retries_once(monkeypatch: pytest.MonkeyPatch) -> None:
     """A transient 402 should trigger one login and then retry the request."""
-    api = AiperApi("user@example.com", "secret", "asia")
+    api = _api()
     responses = [
         {"code": "402", "successful": False, "message": "Your account is already being used"},
         {"code": "200", "successful": True, "data": [{"sn": "SN123"}]},
@@ -62,7 +66,7 @@ async def test_session_conflict_reauthenticates_and_retries_once(monkeypatch: py
 @pytest.mark.asyncio
 async def test_persistent_session_conflict_enters_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
     """A repeated 402 should raise and avoid immediate follow-up requests."""
-    api = AiperApi("user@example.com", "secret", "asia")
+    api = _api()
     responses = [
         {"code": "402", "successful": False, "message": "Your account is already being used"},
         {"code": "402", "successful": False, "message": "Your account is already being used"},

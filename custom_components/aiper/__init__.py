@@ -12,9 +12,13 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.entity_registry import RegistryEntryDisabler
 
-from .const import DOMAIN, CONF_ENABLE_MQTT, CONF_MQTT_DEBUG, CONF_POLL_INTERVAL, DEFAULT_SCAN_INTERVAL, CONF_HISTORY_REFRESH_HOURS, CONF_CONSUMABLES_REFRESH_HOURS, CONF_CLEAN_PATH_REFRESH_HOURS, DEFAULT_HISTORY_REFRESH_HOURS, DEFAULT_CONSUMABLES_REFRESH_HOURS, DEFAULT_CLEAN_PATH_REFRESH_HOURS
+from .const import (
+    CONF_METADATA_REFRESH_HOURS,
+    CONF_MQTT_DEBUG,
+    DEFAULT_METADATA_REFRESH_HOURS,
+    DOMAIN,
+)
 from .controller import AiperDeviceController
 from .coordinator import AiperDataUpdateCoordinator
 from .api import AiperApi
@@ -37,25 +41,8 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     return True
 
 
-def _mqtt_enabled(entry: ConfigEntry) -> bool:
-    """Return whether MQTT is enabled.
-
-    Backwards-compatible default: if the option has never been set, we assume
-    MQTT is enabled. This preserves behavior from earlier versions where MQTT
-    was always used for control/state.
-    """
-    if CONF_ENABLE_MQTT in entry.options:
-        return bool(entry.options.get(CONF_ENABLE_MQTT))
-    return True
-
-
 async def _options_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle options updates by reloading the config entry.
-
-    Polling interval changes require a coordinator restart. Reloading the
-    entry is the most reliable approach, and also re-applies MQTT enable/
-    debug options consistently.
-    """
+    """Handle options updates by reloading the config entry."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 
@@ -99,36 +86,6 @@ async def async_remove_config_entry_device(
     return True
 
 
-def _is_mqtt_only_unique_id(unique_id: str) -> bool:
-    """Return True if a unique_id corresponds to an MQTT-only entity."""
-    mqtt_only_suffixes = (
-        "_in_water",
-        "_warning",
-        "_solar_charging",
-        "_bluetooth",
-        "_linked",
-        "_temperature",
-    )
-    return unique_id.endswith(mqtt_only_suffixes)
-
-
-async def _disable_mqtt_only_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Disable MQTT-only entities to avoid clutter when MQTT is not enabled."""
-    if _mqtt_enabled(entry):
-        return
-    ent_reg = er.async_get(hass)
-    entries = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
-
-    for ent in entries:
-        mqtt_only = _is_mqtt_only_unique_id(ent.unique_id or "")
-
-        if mqtt_only and ent.disabled_by is None:
-            ent_reg.async_update_entity(
-                ent.entity_id,
-                disabled_by=RegistryEntryDisabler.INTEGRATION,
-            )
-
-
 async def _cleanup_legacy_entities(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -137,7 +94,7 @@ async def _cleanup_legacy_entities(
     """Remove legacy entities that are no longer provided.
 
     Earlier test builds exposed entities that are now intentionally removed:
-    - Legacy switch/vacuum controls from before model-specific run support
+    - Legacy switch/vacuum controls from before model-specific cleaning support
     - A duplicate "cleaning mode" sensor (superseded by the select)
 
     Home Assistant keeps orphaned entities in the entity registry, so we
@@ -147,10 +104,10 @@ async def _cleanup_legacy_entities(
     entries = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
 
     # Remove switch/vacuum entities from earlier builds while preserving the
-    # verified model-specific run switch.
+    # verified model-specific running switch.
     for ent in entries:
         uid = ent.unique_id or ""
-        if ent.domain == "vacuum" or (ent.domain == "switch" and not uid.endswith("_run")):
+        if ent.domain == "vacuum" or (ent.domain == "switch" and not uid.endswith("_running")):
             _LOGGER.info("Removing legacy Aiper %s entity: %s", ent.domain, ent.entity_id)
             ent_reg.async_remove(ent.entity_id)
 
@@ -244,7 +201,7 @@ async def _migrate_select_unique_ids(
     def _kind_for_entry(e: er.RegistryEntry) -> str | None:
         uid = (e.unique_id or "").lower()
         eid = (e.entity_id or "").lower()
-        if "clean_path" in uid or "_clean_path" in eid:
+        if "clean_path" in uid or "clean_path" in eid:
             return "path"
         if (
             "mode_selection" in uid
@@ -276,7 +233,7 @@ async def _migrate_select_unique_ids(
             elif eid.endswith("_cleaning_mode"):
                 score = 1
         elif kind == "path":
-            if eid.endswith("_clean_path"):
+            if eid.endswith("clean_path"):
                 score = 0
 
         if suffixed:
@@ -328,48 +285,6 @@ async def _migrate_select_unique_ids(
 
 
 
-async def _enable_previously_disabled_entities(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    serial_numbers: list[str],
-) -> None:
-    """Enable entities that were shipped as disabled-by-default in earlier builds.
-
-    Home Assistant keeps the disabled/enabled choice in the entity registry.
-    If a previous test build created entities with `entity_registry_enabled_default=False`,
-    they will remain disabled even if we later flip the default.
-
-    We only re-enable entities that were disabled by the integration itself,
-    not ones the user explicitly disabled.
-    """
-    ent_reg = er.async_get(hass)
-    entries = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
-
-    # Keys we now want enabled by default.
-    keys_to_enable = {
-        "last_cleaning_mode",
-        "last_cleaning_start",
-        "last_cleaning_duration",
-        "ip_address",
-        "ap_hotspot",
-        "bluetooth_name",
-        "roller_brush_remaining",
-        "roller_brush_percent",
-        "micromesh_remaining",
-        "micromesh_percent",
-        "tread_remaining",
-        "tread_percent",
-    }
-
-    want_uids = {f"{sn}_{k}" for sn in serial_numbers for k in keys_to_enable}
-
-    for ent in entries:
-        uid = ent.unique_id or ""
-        if uid in want_uids and ent.disabled_by == RegistryEntryDisabler.INTEGRATION:
-            _LOGGER.info("Enabling Aiper entity (was disabled-by-default in earlier build): %s", ent.entity_id)
-            ent_reg.async_update_entity(ent.entity_id, disabled_by=None)
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Aiper from a config entry."""
     hass.data.setdefault(DOMAIN, {})
@@ -389,16 +304,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.error("Failed to login to Aiper: %s", err)
         raise ConfigEntryNotReady from err
 
-    enable_mqtt = _mqtt_enabled(entry)
-    scan_interval = int(entry.options.get(CONF_POLL_INTERVAL, DEFAULT_SCAN_INTERVAL))
     coordinator = AiperDataUpdateCoordinator(
         hass,
         api,
-        scan_interval=scan_interval,
-        history_refresh_hours=entry.options.get(CONF_HISTORY_REFRESH_HOURS, DEFAULT_HISTORY_REFRESH_HOURS),
-        consumables_refresh_hours=entry.options.get(CONF_CONSUMABLES_REFRESH_HOURS, DEFAULT_CONSUMABLES_REFRESH_HOURS),
-        clean_path_refresh_hours=entry.options.get(CONF_CLEAN_PATH_REFRESH_HOURS, DEFAULT_CLEAN_PATH_REFRESH_HOURS),
-        push_primary=enable_mqtt,
+        metadata_refresh_hours=entry.options.get(CONF_METADATA_REFRESH_HOURS, DEFAULT_METADATA_REFRESH_HOURS),
         config_entry=entry,
     )
     
@@ -406,11 +315,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
     _LOGGER.info("First refresh complete, data: %s", list(coordinator.data.keys()) if coordinator.data else "None")
 
-    # Ensure scheduled REST fallback or slow reconciliation continues even if no
-    # entities are currently attached as listeners (or if HA delays entity
-    # listener registration).
-    # Without at least one listener, DataUpdateCoordinator will not schedule
-    # timed refreshes.
+    # Keep slow metadata refresh scheduled even if HA delays entity listener
+    # registration.
     def _keepalive_listener() -> None:
         return
 
@@ -420,7 +326,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     serials = list(coordinator.data.keys()) if coordinator.data else []
     await _migrate_select_unique_ids(hass, entry, serials)
     await _cleanup_legacy_entities(hass, entry, serials)
-    await _enable_previously_disabled_entities(hass, entry, serials)
 
     hass.data[DOMAIN][entry.entry_id] = {
         "api": api,
@@ -429,42 +334,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "_unsub_keepalive": unsub_keepalive,
     }
 
-    # Reload the entry on options updates so polling interval/MQTT toggles
-    # take effect immediately and safely.
     entry.async_on_unload(entry.add_update_listener(_options_update_listener))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    await _disable_mqtt_only_entities(hass, entry)
-
-    # Optional: enable AWS IoT MQTT as the primary live-state update path.
     mqtt_debug = bool(entry.options.get(CONF_MQTT_DEBUG, False))
-
     api.mqtt_debug = mqtt_debug
 
-    if enable_mqtt:
-        _LOGGER.info("MQTT is enabled in options; attempting AWS IoT connection")
-        if mqtt_debug:
-            _LOGGER.warning("MQTT debug logging is enabled; raw topics/payloads will be logged at DEBUG")
+    _LOGGER.info("Attempting AWS IoT MQTT connection")
+    if mqtt_debug:
+        _LOGGER.warning("MQTT debug logging is enabled; raw topics/payloads will be logged at DEBUG")
 
-        try:
-            connected = await api.connect_mqtt()
-            if connected and coordinator.data:
-                coordinator.set_push_primary(True)
-                for sn in coordinator.data.keys():
-                    # AWS IoT callbacks arrive on a background thread.
-                    # Ensure coordinator updates happen on the HA event loop.
-                    cb = coordinator.make_shadow_callback(sn)
-                    await api.subscribe_device(sn, cb)
-                    # Ask for a current shadow snapshot; many stacks publish only on change.
-                    await api.request_shadow(sn)
-                _LOGGER.info("MQTT connected and subscriptions registered")
-            else:
-                coordinator.set_push_primary(False)
-                _LOGGER.warning("MQTT connection could not be established; continuing in REST polling mode")
-        except Exception as err:
-            coordinator.set_push_primary(False)
-            _LOGGER.warning("MQTT setup failed; continuing in REST polling mode: %s", err)
+    try:
+        connected = await api.connect_mqtt()
+        if not connected:
+            raise ConfigEntryNotReady("MQTT connection could not be established")
+        if coordinator.data:
+            for sn in coordinator.data.keys():
+                # AWS IoT callbacks arrive on a background thread.
+                # Ensure coordinator updates happen on the HA event loop.
+                cb = coordinator.make_shadow_callback(sn)
+                await api.subscribe_device(sn, cb)
+                # Ask for a current shadow snapshot; many stacks publish only on change.
+                await api.request_shadow(sn)
+        _LOGGER.info("MQTT connected and subscriptions registered")
+    except ConfigEntryNotReady:
+        raise
+    except Exception as err:
+        _LOGGER.warning("MQTT setup failed: %s", err)
+        raise ConfigEntryNotReady from err
 
     _LOGGER.info("Aiper integration setup complete")
 

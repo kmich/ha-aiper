@@ -10,6 +10,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.aiper.const import DOMAIN
 from custom_components.aiper.diagnostics import async_get_config_entry_diagnostics
+from custom_components.aiper.state import normalize_device_state
 
 
 @pytest.mark.asyncio
@@ -24,7 +25,7 @@ async def test_diagnostics_redacts_sensitive_runtime_data(hass: HomeAssistant) -
             "password": "top-secret",
             "region": "eu",
         },
-        options={"enable_mqtt": True},
+        options={},
     )
     api = SimpleNamespace(
         base_url="https://apieurope.aiper.com",
@@ -39,12 +40,14 @@ async def test_diagnostics_redacts_sensitive_runtime_data(hass: HomeAssistant) -
         last_update_success=True,
         update_interval=None,
         data={
-            "SN123": {
-                "name": "Pool Robot",
-                "deviceModelUrl": "https://static.example.test/surfer-s2.png",
-                "token": "runtime-token",
-                "nested": {"SecretKey": "aws-secret"},
-            }
+            "SN123": normalize_device_state(
+                {
+                    "name": "Pool Robot",
+                    "deviceModelUrl": "https://static.example.test/surfer-s2.png",
+                    "token": "runtime-token",
+                    "nested": {"SecretKey": "aws-secret"},
+                }
+            )
         },
         _command_state={
             "SN123": {
@@ -65,10 +68,11 @@ async def test_diagnostics_redacts_sensitive_runtime_data(hass: HomeAssistant) -
         "region": "eu",
         "username": "per...com",
     }
-    assert diagnostics["devices"]["SN123"]["token"] == "***"
-    assert diagnostics["devices"]["SN123"]["deviceModelUrl"] == "https://static.example.test/surfer-s2.png"
+    assert "token" not in diagnostics["devices"]["SN123"]
+    assert "nested" not in diagnostics["devices"]["SN123"]
+    assert "runtime-token" not in str(diagnostics)
+    assert "aws-secret" not in str(diagnostics)
     assert diagnostics["device_model_images"] == {"SN123": "https://static.example.test/surfer-s2.png"}
-    assert diagnostics["devices"]["SN123"]["nested"]["SecretKey"] == "***"
     assert diagnostics["command_state"]["SN123"]["pending"]["mode"]["accessKeyId"] == "***"
     assert diagnostics["command_state"]["SN123"]["pending"]["mode"]["value"] == 1
     assert diagnostics["api"]["mqtt_client"] == "SimpleNamespace"

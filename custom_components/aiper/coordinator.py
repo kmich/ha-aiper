@@ -13,18 +13,53 @@ from homeassistant.util import dt as dt_util
 from .api import AiperApi
 from .const import (
     CLEAN_PATH_LABEL_TO_VALUE,
-    DEFAULT_CLEAN_PATH_REFRESH_HOURS,
-    DEFAULT_CONSUMABLES_REFRESH_HOURS,
-    DEFAULT_HISTORY_REFRESH_HOURS,
-    DEFAULT_PUSH_RECONCILE_INTERVAL,
-    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_METADATA_REFRESH_HOURS,
     DOMAIN,
-    MODE_MAP,
+    status_running,
 )
 from .profiles import Capability, derive_device_profile, has_capability
-from .state import normalize_device_state
+from .state import (
+    DeviceState,
+    DevicesState,
+    RawDeviceData,
+    _coerce_bool,
+    merge_device_state,
+    normalize_clean_path_update,
+    normalize_device_state,
+    normalize_machine_update,
+    normalize_mode_options_update,
+    normalize_netstat_update,
+    normalize_opinfo_update,
+    normalize_ota_update,
+    supported_mode_ids_from_payload,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+LIVE_STATE_KEYS = frozenset(
+    {
+        "battLevel",
+        "battery",
+        "ble",
+        "clean_path",
+        "in_water",
+        "last_seen",
+        "link",
+        "machineStatus",
+        "mode",
+        "nearFieldBind",
+        "online",
+        "runTime",
+        "sta",
+        "status",
+        "temp",
+        "warn",
+        "warn_code",
+        "warning",
+        "wifiName",
+        "wifiRssi",
+    }
+)
 
 
 def _ensure_utc_aware(value: datetime | None) -> datetime | None:
@@ -36,45 +71,7 @@ def _ensure_utc_aware(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
-# Fast polling window used in REST fallback mode to reduce the perceived latency
-# when the device transitions from Offline -> Online.
-FAST_SCAN_INTERVAL_SECONDS = 5
-FAST_SCAN_WINDOW_SECONDS = 180
-
 # Slower-changing data refresh intervals are configurable via options.
-
-
-def _coerce_bool(val: Any) -> bool | None:
-    """Coerce common Aiper 0/1/bool/string values into a boolean.
-
-    Returns None if val is None or cannot be interpreted.
-    """
-    if val is None:
-        return None
-    if isinstance(val, bool):
-        return val
-    if isinstance(val, (int, float)):
-        if val == 1:
-            return True
-        if val == 0:
-            return False
-        return bool(val)
-    if isinstance(val, str):
-        v = val.strip().lower()
-        if v in ("1", "true", "on", "online", "connected"):
-            return True
-        if v in ("0", "false", "off", "offline", "disconnected"):
-            return False
-        try:
-            iv = int(v)
-            if iv == 1:
-                return True
-            if iv == 0:
-                return False
-            return bool(iv)
-        except Exception:
-            return None
-    return bool(val)
 
 
 def _slugify(text: str) -> str:
@@ -94,83 +91,14 @@ def _norm_key(key: str) -> str:
     return "".join(ch for ch in (key or "").lower() if ch.isalnum())
 
 
-def _deep_get(obj: Any, keys: tuple[str, ...]) -> Any:
-    """Best-effort deep lookup for the first non-null value.
-
-    Aiper REST responses vary significantly by region/firmware and often nest
-    values under wrapper objects. This helper searches dict/list structures
-    breadth-first for any of the provided keys, using a normalized comparison.
-    """
-    if obj is None:
-        return None
-
-    wanted = {_norm_key(k) for k in keys}
-    queue: list[Any] = [obj]
-    seen: set[int] = set()
-
-    while queue:
-        cur = queue.pop(0)
-        oid = id(cur)
-        if oid in seen:
+def _merge_static_metadata(existing: RawDeviceData, discovered: RawDeviceData) -> RawDeviceData:
+    """Merge discovery metadata without overwriting MQTT-owned live state."""
+    merged = dict(existing)
+    for key, value in discovered.items():
+        if key in LIVE_STATE_KEYS:
             continue
-        seen.add(oid)
-
-        if isinstance(cur, dict):
-            for k, v in cur.items():
-                if v is None:
-                    continue
-                if _norm_key(str(k)) in wanted:
-                    return v
-            for v in cur.values():
-                if isinstance(v, (dict, list)):
-                    queue.append(v)
-        elif isinstance(cur, list):
-            for it in cur:
-                if isinstance(it, (dict, list)):
-                    queue.append(it)
-
-    return None
-
-
-def _deep_collect(obj: Any, keys: tuple[str, ...]) -> list[tuple[str, Any]]:
-    """Collect all matching key/value pairs found anywhere in a nested structure."""
-    if obj is None:
-        return []
-    wanted = {_norm_key(k) for k in keys}
-    found: list[tuple[str, Any]] = []
-    queue: list[Any] = [obj]
-    seen: set[int] = set()
-
-    while queue:
-        cur = queue.pop(0)
-        oid = id(cur)
-        if oid in seen:
-            continue
-        seen.add(oid)
-
-        if isinstance(cur, dict):
-            for k, v in cur.items():
-                if v is None:
-                    continue
-                if _norm_key(str(k)) in wanted:
-                    found.append((str(k), v))
-                if isinstance(v, (dict, list)):
-                    queue.append(v)
-        elif isinstance(cur, list):
-            for it in cur:
-                if isinstance(it, (dict, list)):
-                    queue.append(it)
-
-    return found
-
-
-def _key_rank(key: str, priority: tuple[str, ...]) -> int:
-    nk = _norm_key(key)
-    for i, pk in enumerate(priority):
-        if nk == _norm_key(pk):
-            return i
-    return len(priority)
-
+        merged[key] = value
+    return merged
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -213,16 +141,6 @@ def _parse_dt(value: Any) -> datetime | None:
             except Exception:
                 continue
     return None
-
-
-def _mode_label(mode_id: Any) -> str | None:
-    try:
-        if mode_id is None:
-            return None
-        mid = int(mode_id)
-        return MODE_MAP.get(mid, f"Mode {mid}")
-    except Exception:
-        return None
 
 
 def _clean_path_value(val: Any) -> int | None:
@@ -271,680 +189,54 @@ def _clean_path_value(val: Any) -> int | None:
     return None
 
 
-def _parse_cleaning_history(raw: Any) -> tuple[int | None, float | None, list[dict[str, Any]]]:
-    """Parse the cleaning history/totals payload.
-
-    Aiper's API varies by region/firmware. Totals (count/time) may appear at the
-    root payload, under `data`, or under nested wrapper keys.
-    """
-
-    root = raw if isinstance(raw, dict) else {}
-
-    # Identify a record list (if present) while keeping `root` for totals search.
-    data = raw
-    if isinstance(raw, dict) and raw.get('data') is not None:
-        data = raw.get('data')
-
-    # Unwrap common list containers for records.
-    rec_list = None
-    if isinstance(data, dict):
-        # direct list keys
-        for lk in ('list', 'records', 'recordList', 'history', 'items'):
-            if isinstance(data.get(lk), list):
-                rec_list = data.get(lk)
-                break
-        # nested list containers
-        if rec_list is None:
-            for lk in ('data', 'result', 'page'):
-                sub = data.get(lk)
-                if isinstance(sub, dict):
-                    for lk2 in ('list', 'records', 'recordList', 'items'):
-                        if isinstance(sub.get(lk2), list):
-                            rec_list = sub.get(lk2)
-                            break
-                if rec_list is not None:
-                    break
-    elif isinstance(data, list):
-        rec_list = data
-
-    if rec_list is None:
-        rec_list = []
-
-    records_len = len(rec_list) if isinstance(rec_list, list) else 0
-
-    def _norm_key(key: str) -> str:
-        return ''.join(ch for ch in key.lower() if ch.isalnum())
-
-    def _key_rank(key: str, preferred: tuple[str, ...]) -> int:
-        nk = _norm_key(key)
-        for idx, cand in enumerate(preferred):
-            if _norm_key(cand) == nk:
-                return idx
-        for idx, cand in enumerate(preferred):
-            if _norm_key(cand) in nk or nk in _norm_key(cand):
-                return idx + 50
-        return 999
-
-    def _num(v):
-        if v is None:
-            return None
-        if isinstance(v, (int, float)):
-            return float(v)
-        if isinstance(v, str):
-            s = v.strip().lower()
-            digits = ''.join(ch for ch in s if (ch.isdigit() or ch == '.'))
-            if not digits:
-                return None
-            try:
-                return float(digits)
-            except Exception:
-                return None
-        return None
-
-    def _hours_candidates(v):
-        """Return plausible hours values from a raw duration/total.
-
-        For ambiguous numeric totals (e.g., 270), we prefer interpreting as MINUTES
-        before SECONDS, because Aiper's totals are commonly minute-based.
-        """
-        if v is None:
-            return []  # ← CRITICAL: Return empty list instead of None
-        if isinstance(v, str):
-            s = v.strip().lower()
-            n = _num(s)
-            if n is None:
-                return []  # ← CRITICAL: Return empty list instead of None
-            if 'hour' in s or s.endswith('h'):
-                return [n]
-            if 'min' in s:
-                return [n / 60.0]
-            if 'sec' in s or s.endswith('s'):
-                return [n / 3600.0]
-            # ambiguous numeric string: prefer minutes, then seconds, then hours
-            return [n / 60.0, n / 3600.0, n]  # ← Return list, not None
-
-        # ← Add handling for numeric types
-        try:
-            n = float(v)
-            if n <= 0:
-                return []  # ← CRITICAL: Return empty list for invalid values
-            # ambiguous numeric: prefer minutes, then seconds, then hours
-            return [n / 60.0, n / 3600.0, n]
-        except (TypeError, ValueError):
-            return []  # ← CRITICAL: Return empty list on conversion error
-
-    COUNT_KEYS = (
-        'totalNumberOfCleanings',
-        'totalCleanCount',
-        'totalCleanings',
-        'totalNumber',
-        'totalCount',
-        'totalTimes',
-        'totalCleanTimes',
-        'totalRecords',
-        'cleanCount',
-        'cleanTimes',
-        'total',
-    )
-    TIME_KEYS = (
-        'totalCleaningTime',
-        'totalCleanTime',
-        'totalCleanHour',
-        'totalCleanHours',
-        'totalCleaningHours',
-        'totalCleanMinute',
-        'totalCleanMinutes',
-        'totalCleaningMinutes',
-        'totalCleanSeconds',
-        'totalDuration',
-        'totalCleaningDuration',
-        'cleanTimeTotal',
-        'totalWorkTime',
-        'totalTime',
-        'totalHours',
-        'totalMinutes',
-        'totalSeconds',
-        'sumTime',
-        'sumCleanTime',
-    )
-
-    def _deep_collect(obj, keys):
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                if isinstance(k, str):
-                    nk = _norm_key(k)
-                    for cand in keys:
-                        if _norm_key(cand) == nk:
-                            yield k, v
-                            break
-                if isinstance(v, (dict, list)):
-                    yield from _deep_collect(v, keys)
-        elif isinstance(obj, list):
-            for it in obj:
-                if isinstance(it, (dict, list)):
-                    yield from _deep_collect(it, keys)
-
-    def _collect_total_like(obj, want='time'):
-        # Heuristic collector for totals that are not in known key lists.
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                if not isinstance(k, str):
-                    continue
-                nk = _norm_key(k)
-                if any(x in nk for x in ('page', 'size', 'current', 'last', 'start', 'begin', 'create', 'update')):
-                    pass
-                else:
-                    has_total = ('total' in nk) or ('sum' in nk) or ('all' in nk)
-                    if want == 'time':
-                        has_metric = any(x in nk for x in ('time', 'hour', 'minute', 'second', 'duration'))
-                    else:
-                        has_metric = any(x in nk for x in ('count', 'times', 'number', 'records'))
-                    if has_total and has_metric:
-                        yield k, v
-                if isinstance(v, (dict, list)):
-                    yield from _collect_total_like(v, want=want)
-        elif isinstance(obj, list):
-            for it in obj:
-                if isinstance(it, (dict, list)):
-                    yield from _collect_total_like(it, want=want)
-
-    def _collect_time_loose(obj):
-        # Collect time-like totals that may not include the word 'total'
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                if not isinstance(k, str):
-                    continue
-                nk = _norm_key(k)
-                # Skip obvious non-total fields
-                if any(x in nk for x in ('start', 'begin', 'end', 'create', 'update', 'record', 'list', 'page', 'size', 'current')):
-                    pass
-                else:
-                    if ('clean' in nk or 'swim' in nk) and any(x in nk for x in ('time', 'hour', 'minute', 'second', 'duration')):
-                        yield k, v
-                if isinstance(v, (dict, list)):
-                    yield from _collect_time_loose(v)
-        elif isinstance(obj, list):
-            for it in obj:
-                if isinstance(it, (dict, list)):
-                    yield from _collect_time_loose(it)
-
-
-    sources = []
-    if isinstance(root, dict):
-        sources.append(root)
-    if isinstance(data, dict) and data is not root:
-        sources.append(data)
-
-    count_cands = []
-    time_cands = []
-
-    for src in sources:
-        for k, v in _deep_collect(src, COUNT_KEYS):
-            try:
-                n = _num(v)
-                if n is None:
-                    continue
-                c = int(n)
-                if c > 0:
-                    count_cands.append((k, c))
-            except Exception:
-                continue
-        for k, v in _deep_collect(src, TIME_KEYS):
-            for h in _hours_candidates(v):
-                if h and h > 0:
-                    time_cands.append((k, h))
-        # heuristic fallbacks
-        for k, v in _collect_total_like(src, want='count'):
-            n = _num(v)
-            if n is not None:
-                c = int(n)
-                if c > 0:
-                    count_cands.append((k, c))
-        for k, v in _collect_total_like(src, want='time'):
-            for h in _hours_candidates(v):
-                if h and h > 0:
-                    time_cands.append((k, h))
-        # loose time totals (no 'total' keyword)
-        for k, v in _collect_time_loose(src):
-            for h in _hours_candidates(v):
-                if h and h > 0:
-                    time_cands.append((k, h))
-
-
-    # de-dup
-    def _dedup(pairs):
-        seen = set()
-        out = []
-        for k,v in pairs:
-            kk=_norm_key(k)
-            if (kk,v) in seen:
-                continue
-            seen.add((kk,v))
-            out.append((k,v))
-        return out
-    count_cands=_dedup(count_cands)
-    time_cands=_dedup(time_cands)
-
-    total_count: int | None = None
-    total_hours: float | None = None
-
-    best_score = -1e18
-    best_pair: tuple[tuple[Any, int] | None, tuple[Any, float] | None] = (None, None)
-
-    def score_pair(ck, c, tk, h):
-        if c <= 0 or h <= 0:
-            return -1e18
-        avg_min = (h * 60.0) / float(c)
-        if not (10.0 <= avg_min <= 240.0):
-            return -1e18
-        score = 1000.0
-        score -= abs(avg_min - 60.0) * 2.0
-        if c >= records_len:
-            score += 50.0
-        else:
-            score -= 50.0
-        score -= _key_rank(ck, COUNT_KEYS) * 5.0
-        score -= _key_rank(tk, TIME_KEYS) * 5.0
-        if h > 5000:
-            score -= 2000
-        if c > 100000:
-            score -= 2000
-        return score
-
-    if count_cands and time_cands:
-        for ck, c in count_cands:
-            for tk, h in time_cands:
-                sc = score_pair(ck, c, tk, h)
-                if sc > best_score:
-                    best_score = sc
-                    best_pair = ((ck, c), (tk, h))
-        if best_pair[0]:
-            total_count = best_pair[0][1]
-        if best_pair[1]:
-            total_hours = round(best_pair[1][1], 3)
-    else:
-        if count_cands:
-            count_cands.sort(key=lambda x: _key_rank(x[0], COUNT_KEYS))
-            total_count = count_cands[0][1]
-        if time_cands:
-            time_cands.sort(key=lambda x: _key_rank(x[0], TIME_KEYS))
-            total_hours = round(time_cands[0][1], 3)
-
-    def _minutes_from_value(v: Any) -> float | None:
-        if v is None:
-            return None
-        if isinstance(v, str):
-            s = v.strip().lower()
-            n = _num(s)
-            if n is None:
-                return None
-            if 'hour' in s or s.endswith('h'):
-                return n * 60.0
-            if 'min' in s:
-                return n
-            if 'sec' in s or s.endswith('s'):
-                return n / 60.0
-            if n > 300:
-                return n / 60.0
-            return n
-        n = _num(v)
-        if n is None:
-            return None
-        as_sec = n / 60.0
-        as_min = n
-        cand: list[tuple[int, float]] = []
-        if 0.5 <= as_sec <= 300:
-            cand.append((0, as_sec))
-        if 0.5 <= as_min <= 300:
-            cand.append((1, as_min))
-        if cand:
-            cand.sort(key=lambda x: x[0])
-            return float(cand[0][1])
-        return float(as_sec if n > 300 else as_min)
-
-    records: list[dict[str, Any]] = []
-
-    # Helper to find any plausible datetime value in a record item.
-    def _find_dt_any(item: dict) -> Any:
-        for k in (
-            'utcStartTimeStamp','utcEndTimeStamp','utcStartTime','utcEndTime',
-            'utcBeginTimeStamp','utcBeginTime','utcFinishTimeStamp','utcFinishTime',
-            'startTimeStamp','endTimeStamp','startTimestamp','endTimestamp',
-            'startTime','cleanStartTime','beginTime','createTime','cleanTime','cleanDate','recordTime','dateTime','start','begin','time'
-        ):
-            v = item.get(k)
-            if v is not None:
-                return v
-        # deep scan for datetime-like strings
-        stack: list[Any] = [item]
-        while stack:
-            obj=stack.pop()
-            if isinstance(obj, dict):
-                for _,v in obj.items():
-                    if isinstance(v, (dict, list)):
-                        stack.append(v)
-                    elif isinstance(v, str):
-                        s=v.strip()
-                        if any(ch.isdigit() for ch in s) and (':' in s or '-' in s or '/' in s):
-                            return v
-                    elif isinstance(v, (int, float)) and v > 1_000_000_000:
-                        return v
-            elif isinstance(obj, list):
-                for v in obj:
-                    if isinstance(v, (dict, list)):
-                        stack.append(v)
-        return None
-
-    if isinstance(rec_list, list):
-        for item in rec_list:
-            if not isinstance(item, dict):
-                continue
-
-            mode_id = _deep_get(item, ("modeId", "mode_id", "cleanType", "mode", "type"))
-            mode_name = _deep_get(item, ("modeName", "mode_name", "name", "cleanTypeName"))
-            try:
-                mid_int = int(mode_id) if mode_id is not None and str(mode_id).strip().lstrip('-').isdigit() else None
-            except Exception:
-                mid_int = None
-            if mode_name is None and mid_int is not None:
-                mode_name = MODE_MAP.get(mid_int, f"Mode {mid_int}")
-            if mode_name is None and mode_id is not None:
-                mode_name = str(mode_id)
-            if mode_name is None:
-                mode_name = "Unknown"
-
-            start_val = _find_dt_any(item)
-            start_dt = _parse_dt(start_val)
-            if start_dt is None and isinstance(start_val, (int, float)) and start_val > 10_000_000_000:
-                start_dt = datetime.fromtimestamp(float(start_val) / 1000.0, tz=timezone.utc)
-
-            duration_keys = (
-                "duration",
-                "durationTime",
-                "cleanTimeMin",
-                "cleanTimeMinute",
-                "cleaningTimeMin",
-                "cleanTime",
-                "cleaningTime",
-                "runTime",
-                "useTime",
-                "lastTime",
-                "timeUsed",
-            )
-            dur_val = None
-            dur_key = None
-            for duration_key in duration_keys:
-                if item.get(duration_key) is not None:
-                    dur_val = item.get(duration_key)
-                    dur_key = duration_key
-                    break
-            if dur_val is None:
-                dur_val = _deep_get(item, duration_keys)
-            dur_min = None
-            if dur_key:
-                norm_duration_key = _norm_key(dur_key)
-                n = _num(dur_val)
-                if n is not None:
-                    if "min" in norm_duration_key or "minute" in norm_duration_key:
-                        dur_min = n
-                    elif "sec" in norm_duration_key or "second" in norm_duration_key:
-                        dur_min = n / 60.0
-                    elif "hour" in norm_duration_key:
-                        dur_min = n * 60.0
-            if dur_min is None:
-                dur_min = _minutes_from_value(dur_val)
-
-            records.append({
-                "mode_id": mid_int,
-                "mode": str(mode_name),
-                "start": start_dt,
-                "duration_min": round(float(dur_min), 1) if dur_min is not None else None,
-                "raw": item,
-            })
-
-    records.sort(key=lambda r: r.get('start') or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
-
-
-    # Fallback: if the record list appears to contain the full history (or most of it),
-    # compute total hours from the sum of record durations. This avoids unit/field drift
-    # across regional API variants and prevents obviously incorrect totals.
-    try:
-        dur_sum_min = 0.0
-        for record in records:
-            duration_min = record.get("duration_min")
-            if duration_min is not None:
-                dur_sum_min += float(duration_min)
-    except Exception:
-        dur_sum_min = 0.0
-    total_hours_from_records = (dur_sum_min / 60.0) if dur_sum_min > 0 else None
-
-    def _avg_min(h: Any, c: Any) -> float | None:
-        try:
-            return (float(h) * 60.0) / float(c)
-        except Exception:
-            return None
-
-    if total_hours_from_records is not None:
-        # Determine if we likely have the full dataset. When the backend gives
-        # us the complete record list, trust the record durations over loose
-        # total-like fields; Surfer S2 skimmer runs can be much longer than
-        # floor cleaner cycles and otherwise look "insane" to Scuba heuristics.
-        likely_full = False
-        if total_count is not None and isinstance(total_count, int) and total_count > 0:
-            if records_len >= total_count:
-                likely_full = True
-        else:
-            # no total count; assume list is authoritative
-            likely_full = records_len >= 10
-
-        if likely_full:
-            total_hours = round(total_hours_from_records, 3)
-        else:
-            # Sanity check existing total_hours
-            avg_existing = _avg_min(total_hours, total_count) if (total_hours is not None and total_count) else None
-            avg_records = _avg_min(total_hours_from_records, (total_count or records_len))
-
-            existing_sane = (avg_existing is not None and 10.0 <= avg_existing <= 240.0)
-            records_sane = (avg_records is not None and 10.0 <= avg_records <= 240.0)
-
-            if total_hours is None and total_count is None and records_len >= 10:
-                total_hours = round(total_hours_from_records, 3)
-            elif records_sane:
-                # Prefer record-derived when existing is missing/insane or far away.
-                if not existing_sane:
-                    total_hours = round(total_hours_from_records, 3)
-                elif total_hours is not None:
-                    try:
-                        if abs(float(total_hours) - float(total_hours_from_records)) / max(float(total_hours_from_records), 1.0) > 0.2:
-                            total_hours = round(total_hours_from_records, 3)
-                    except Exception:
-                        pass
-
-    # If total_count is missing but we have records, populate it
-    if total_count is None and records_len > 0:
-        total_count = records_len
-
-    return total_count, total_hours, records
-
-
-
 def _parse_consumables(raw: Any) -> list[dict[str, Any]]:
     """Normalize consumables payload into a list.
 
-    The consumables endpoint has multiple variants. For Scuba X1 (T1), we
-    commonly see items with:
-      - componentReplaceRemainHour (hours remaining)
-      - lastChangeTime (epoch ms)
-      - usePercentage (percent used; 0 means 100% left)
-      - longestUseTime (string hours, often 8760)
-      - dynamicsFields list with keys like component_replace, lastChangeTime
+    Verified payloads return `data` as the item list directly. Parse only
+    observed consumable fields; do not derive maintenance percentages from
+    unrelated counters.
     """
+    data = raw.get("data") if isinstance(raw, dict) else None
+    if not isinstance(data, list):
+        return []
 
-    data = raw
-    if isinstance(raw, dict) and "data" in raw:
-        data = raw.get("data")
-
-    # Unwrap common containers
-    if isinstance(data, dict):
-        for lk in ("list", "consumables", "consumableList", "consumablesList", "items"):
-            if isinstance(data.get(lk), list):
-                data = data.get(lk)
-                break
-            if isinstance(data.get(lk), dict):
-                sub = data.get(lk) or {}
-                if isinstance(sub.get("list"), list):
-                    data = sub.get("list")
-                    break
+    def _dynamic_value(item: dict[str, Any], *keys: str) -> Any:
+        fields = item.get("dynamicsFields")
+        wanted = {_norm_key(key) for key in keys}
+        if isinstance(fields, list):
+            for field in fields:
+                if not isinstance(field, dict):
+                    continue
+                key = field.get("key")
+                if isinstance(key, str) and _norm_key(key) in wanted:
+                    return field.get("value")
+        return None
 
     out: list[dict[str, Any]] = []
-    if not isinstance(data, list):
-        return out
-
-    def _to_float(v):
-        if v is None:
-            return None
-        if isinstance(v, (int, float)):
-            return float(v)
-        if isinstance(v, str):
-            s = v.strip()
-            digits = "".join(ch for ch in s if (ch.isdigit() or ch == "."))
-            if not digits:
-                return None
-            try:
-                return float(digits)
-            except Exception:
-                return None
-        return None
-
-    def _dyn_get(item: dict, key: str):
-        # Search dynamicsFields list for a matching key
-        df = item.get("dynamicsFields")
-        if isinstance(df, list):
-            for it in df:
-                if isinstance(it, dict) and str(it.get("key")).strip().lower() == key.lower():
-                    return it.get("value")
-        return None
 
     for item in data:
         if not isinstance(item, dict):
             continue
 
-        name = _deep_get(item, ("consumablesName", "consumableName", "name", "title", "consumable", "consumables"))
+        name = item.get("consumableName")
         if not name:
-            name = item.get("type") or item.get("consumableType") or "Consumable"
+            name = _dynamic_value(item, "consumable_name")
+        if not name:
+            continue
         name = str(name)
 
-        # Remaining hours
-        remaining = _deep_get(
-            item,
-            (
-                "componentReplaceRemainHour",
-                "component_replace_remain_hour",
-                "componentReplaceRemainHours",
-                "componentReplaceRemainTime",
-                "componentReplaceRemain",
-                "componentReplacementRemainHour",
-                "replaceRemainHour",
-                "remainTime",
-                "remaining",
-                "remainingTime",
-                "remain",
-                "remain_time",
-                "leftTime",
-                "left_time",
-                "timeLeft",
-                "remainHours",
-            ),
-        )
-        if remaining is None:
-            remaining = _dyn_get(item, "component_replace")
-        remaining_hours = _to_float(remaining)
-
-        # Heuristic fallback: find any remain/left hour-ish field
-        if remaining_hours is None:
-            try:
-                for k, v in item.items():
-                    if v is None or not isinstance(k, str):
-                        continue
-                    nk = ''.join(ch for ch in k.lower() if ch.isalnum())
-                    if ('remain' in nk or 'left' in nk) and ('hour' in nk or nk.endswith('h')):
-                        vv = _to_float(v)
-                        if vv is not None and vv >= 0:
-                            remaining_hours = vv
-                            break
-            except Exception:
-                pass
-
-
-        # Percent left
-        percent_left = None
-        use_pct = _deep_get(item, ("usePercentage", "use_percent", "usedPercent", "used_percentage"))
-        use_pct_f = _to_float(use_pct)
-        if use_pct_f is not None:
-            # usePercentage is percent used (0 means 100% left)
-            percent_left = max(0.0, min(100.0, 100.0 - use_pct_f))
-
-        if percent_left is None:
-            pct = _deep_get(item, ("percent", "remainPercent", "remainingPercent", "leftPercent", "left_percent", "remainPct", "remain_rate"))
-            pct_f = _to_float(pct)
-            if pct_f is not None:
-                # assume already percent left
-                percent_left = max(0.0, min(100.0, pct_f))
-
-        # If still missing, compute from remaining/longest if available
-        if percent_left is None and remaining_hours is not None:
-            longest = _deep_get(item, ("longestUseTime", "maxUseTime", "max_time", "longest_use_time"))
-            longest_f = _to_float(longest)
-            if longest_f and longest_f > 0:
-                percent_left = max(0.0, min(100.0, (remaining_hours / longest_f) * 100.0))
-
-        # Last replacement time
-        last_val = _deep_get(item, ("componentReplaceLastTime", "componentReplaceLastTimestamp", "componentReplaceLastTimeStamp", "lastChangeTime", "lastReplacementTime", "lastReplaceTime", "lastReplace", "replaceTime", "lastReplacement", "last_replacement_time"))
-        if last_val is None:
-            last_val = _dyn_get(item, "lastChangeTime")
+        last_val = item.get("maintainLastChangeTime")
         last_rep = _parse_dt(last_val)
 
-        # Heuristic fallback: any last-replace timestamp field
-        if last_rep is None:
-            try:
-                for k, v in item.items():
-                    if v is None or not isinstance(k, str):
-                        continue
-                    nk = ''.join(ch for ch in k.lower() if ch.isalnum())
-                    if 'last' in nk and 'time' in nk and not any(x in nk for x in ('start','end','create','update')):
-                        dt = _parse_dt(v)
-                        if dt is not None:
-                            last_rep = dt
-                            break
-            except Exception:
-                pass
-
-
-        # Heuristic fallback: find any last replacement time-ish field
-        if last_rep is None:
-            try:
-                for k, v in item.items():
-                    if v is None or not isinstance(k, str):
-                        continue
-                    nk = ''.join(ch for ch in k.lower() if ch.isalnum())
-                    if 'last' in nk and 'time' in nk:
-                        dt = _parse_dt(v)
-                        if dt is not None:
-                            last_rep = dt
-                            break
-            except Exception:
-                pass
-
-
-        cid = item.get("id") or item.get("consumableId") or item.get("type")
+        cid = item.get("id")
         key = _slugify(f"{cid}_{name}" if cid else name)
 
         out.append(
             {
                 "key": key,
                 "name": name,
-                "remaining_hours": remaining_hours,
-                "percent_left": round(percent_left, 1) if percent_left is not None else None,
+                "remaining_hours": None,
+                "percent_left": None,
                 "last_replacement": last_rep,
                 "raw": item,
             }
@@ -952,52 +244,32 @@ def _parse_consumables(raw: Any) -> list[dict[str, Any]]:
     return out
 
 
-class AiperDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
     """Class to manage fetching Aiper data."""
 
     def __init__(
         self,
         hass: HomeAssistant,
         api: AiperApi,
-        scan_interval: int = DEFAULT_SCAN_INTERVAL,
-        history_refresh_hours: int = DEFAULT_HISTORY_REFRESH_HOURS,
-        consumables_refresh_hours: int = DEFAULT_CONSUMABLES_REFRESH_HOURS,
-        clean_path_refresh_hours: int = DEFAULT_CLEAN_PATH_REFRESH_HOURS,
-        push_primary: bool = False,
-        push_reconcile_interval: int = DEFAULT_PUSH_RECONCILE_INTERVAL,
+        metadata_refresh_hours: int = DEFAULT_METADATA_REFRESH_HOURS,
         config_entry: ConfigEntry | None = None,
     ) -> None:
         """Initialize the coordinator."""
-        self._normal_interval = timedelta(seconds=max(5, int(scan_interval)))
-        self._fast_interval = timedelta(seconds=FAST_SCAN_INTERVAL_SECONDS)
-        self._push_reconcile_interval = timedelta(seconds=max(300, int(push_reconcile_interval)))
-        self._push_primary = bool(push_primary)
-        self._fast_poll_until: datetime | None = None
+        self._metadata_refresh = timedelta(hours=max(1, int(metadata_refresh_hours)))
         self._last_online: dict[str, bool | None] = {}
-        self._last_fast_trigger: datetime | None = None
 
         super().__init__(
             hass,
             _LOGGER,
             config_entry=config_entry,
             name=DOMAIN,
-            update_interval=self._push_reconcile_interval if self._push_primary else self._normal_interval,
+            update_interval=self._metadata_refresh,
         )
         self.api = api
-        self._devices: dict[str, dict] = {}
-        self._shadow_data: dict[str, dict] = {}
-        # Additional REST-derived data that updates on a slower cadence.
-        self._last_history_fetch: dict[str, datetime] = {}
-        self._last_consumables_fetch: dict[str, datetime] = {}
-        self._history_cache: dict[str, dict[str, Any]] = {}
+        self._devices: dict[str, RawDeviceData] = {}
+        self._last_metadata_fetch: dict[str, datetime] = {}
         self._consumables_cache: dict[str, list[dict[str, Any]]] = {}
-        self._last_clean_path_fetch: dict[str, datetime] = {}
         self._clean_path_cache: dict[str, int] = {}
-
-        # Configurable refresh cadences (slower-changing data)
-        self._history_refresh = timedelta(hours=max(1, int(history_refresh_hours)))
-        self._consumables_refresh = timedelta(hours=max(1, int(consumables_refresh_hours)))
-        self._clean_path_refresh = timedelta(hours=max(1, int(clean_path_refresh_hours)))
 
         # Command tracking (for community-friendly UX)
         # We do not apply optimistic state changes; instead we track pending commands
@@ -1005,329 +277,102 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._command_state: dict[str, dict[str, dict[str, Any]]] = {}
         # Structure: {sn: {"pending": {kind: {...}}, "last": {kind: {...}}}}
 
-    def _start_fast_poll_window(self, reason: str = "") -> None:
-        """Enable a short fast-poll window and request an immediate refresh.
-
-        This is used in REST fallback mode when the device appears to have come
-        online via MQTT but the REST endpoint has not yet reflected the change.
-        """
-        if self._push_primary:
-            return
-        now = dt_util.utcnow()
-        self._last_fast_trigger = _ensure_utc_aware(self._last_fast_trigger)
-        # Throttle triggers to avoid storming the cloud API on noisy MQTT traffic.
-        if self._last_fast_trigger and (now - self._last_fast_trigger).total_seconds() < 5:
-            return
-        self._last_fast_trigger = now
-        self._fast_poll_until = now + timedelta(seconds=FAST_SCAN_WINDOW_SECONDS)
-        if self.update_interval != self._fast_interval:
-            self.update_interval = self._fast_interval
-        if reason:
-            _LOGGER.debug("Fast poll window started (%s)", reason)
-        # Request a refresh immediately; the coordinator will then schedule the
-        # next refresh according to update_interval.
-        self.hass.async_create_task(self.async_request_refresh())
-
-    def set_push_primary(self, enabled: bool) -> None:
-        """Switch between MQTT push-primary mode and REST polling fallback."""
-        self._push_primary = bool(enabled)
-        self._fast_poll_until = None
-        self.update_interval = self._push_reconcile_interval if self._push_primary else self._normal_interval
-        if getattr(self, "_listeners", None):
-            self._schedule_refresh()
-
     def _apply_device_profile(self, sn: str) -> None:
         """Derive and store family/capability metadata for a device."""
         device = self._devices.setdefault(sn, {})
         profile_input = {
             **device,
-            "shadow": self._shadow_data.get(sn, {}),
-            "_ha_consumables": self._consumables_cache.get(sn) or device.get("_ha_consumables") or [],
+            "consumables": self._consumables_cache.get(sn) or device.get("consumables") or [],
         }
         profile = derive_device_profile(profile_input)
-        device["_ha_profile_family"] = profile.family.value
-        device["_ha_capabilities"] = sorted(capability.value for capability in profile.capabilities)
-        device["_ha_mode_map"] = profile.mode_map
-        device["shadow"] = self._shadow_data.get(sn, {})
-        normalize_device_state(device)
+        device["profile_family"] = profile.family.value
+        device["capabilities"] = sorted(capability.value for capability in profile.capabilities)
+        if not device.get("supported_mode_ids"):
+            device["supported_mode_ids"] = list(profile.mode_map.keys())
+        device["mode_map"] = profile.mode_map
 
-    async def _async_update_data(self) -> dict[str, Any]:
+    async def _async_update_data(self) -> DevicesState:
         """Fetch data from API."""
         try:
-            transitioned_online = False
             now = dt_util.utcnow()
 
-            # Normalize cached timestamps (defensive against earlier versions)
-            for _d in (self._last_history_fetch, self._last_consumables_fetch, self._last_clean_path_fetch):
-                for _sn, _ts in list(_d.items()):
-                    _d[_sn] = _ensure_utc_aware(_ts) or dt_util.utcnow()
+            # Normalize cached timestamps (defensive against earlier versions).
+            for _sn, _ts in list(self._last_metadata_fetch.items()):
+                self._last_metadata_fetch[_sn] = _ensure_utc_aware(_ts) or dt_util.utcnow()
 
-            # Bootstrap always uses REST discovery. Once MQTT is connected and
-            # push-primary mode is active, scheduled coordinator refreshes avoid
-            # polling live state and only reconcile slow cloud metadata.
-            metadata_only = self._push_primary and bool(self._devices)
-            if metadata_only:
-                devices = list(self._devices.values())
-                _LOGGER.debug("Reconciling slow REST metadata for %d MQTT-driven devices", len(devices))
-            else:
-                devices = await self.api.get_devices()
-                _LOGGER.debug("Got %d devices from API", len(devices))
-            
+            discovered_devices: list[RawDeviceData] | None = None
+            if not self._devices:
+                discovered_devices = await self.api.get_devices()
+                _LOGGER.debug("Got %d devices from API", len(discovered_devices))
+                for discovered in discovered_devices:
+                    sn = discovered.get("sn")
+                    if sn:
+                        self._devices[str(sn)] = dict(discovered)
+
+            devices = list(self._devices.values())
+            metadata_due_serials: set[str] = set()
             for device in devices:
                 sn = device.get("sn")
                 if not sn:
                     continue
-                    
-                self._devices[sn] = device
-                
-                status = None
-                if metadata_only:
-                    status = self._devices.get(sn, {}).get("status_data")
-                else:
-                    # Get device online status
-                    try:
-                        status = await self.api.get_device_status(sn)
-                    except Exception as err:
-                        _LOGGER.debug("Device %s status fetch failed: %s", sn, err)
-                if status:
-                    self._devices[sn]["status_data"] = status
-                    if isinstance(status, dict) and not metadata_only:
-                        _LOGGER.debug("Device %s status online=%s", sn, status.get("online"))
-                    if not metadata_only:
-                        # Track last-seen when REST responds (even if device is Offline).
-                        self._devices[sn]["_ha_last_seen"] = now
-                info = None
-                if metadata_only:
-                    info = self._devices.get(sn, {}).get("info")
-                else:
-                    # Get detailed device info (may contain state)
-                    try:
-                        info = await self.api.get_device_info(sn)
-                    except Exception as err:
-                        _LOGGER.debug("Device %s info fetch failed: %s", sn, err)
-                if info:
-                    self._devices[sn]["info"] = info
+                last_metadata = _ensure_utc_aware(self._last_metadata_fetch.get(str(sn)))
+                if last_metadata is None or (now - last_metadata) >= self._metadata_refresh:
+                    metadata_due_serials.add(str(sn))
 
-                    # Try to extract shadow-like data from info
-                    if "shadow" not in self._shadow_data.get(sn, {}):
-                        self._shadow_data.setdefault(sn, {})
-                        # Some APIs return state in the device info
-                        if "battery" in info or "cap" in info:
-                            self._shadow_data[sn]["machine"] = {
-                                "cap": info.get("battery", info.get("cap")),
-                                "status": info.get("status", info.get("workStatus")),
-                                "mode": info.get("mode", info.get("workMode")),
-                            }
-                        if "online" in info:
-                            self._shadow_data[sn]["netstat"] = {
-                                "online": 1 if info.get("online") else 0,
-                            }
+            if metadata_due_serials:
+                try:
+                    if discovered_devices is None:
+                        discovered_devices = await self.api.get_devices()
+                    for discovered in discovered_devices:
+                        discovered_sn = discovered.get("sn")
+                        if discovered_sn:
+                            sn = str(discovered_sn)
+                            self._devices[sn] = _merge_static_metadata(
+                                self._devices.get(sn, {}),
+                                dict(discovered),
+                            )
+                            if self._last_metadata_fetch.get(sn) is None:
+                                metadata_due_serials.add(sn)
+                    devices = list(self._devices.values())
+                except Exception as err:
+                    _LOGGER.debug("Device metadata refresh failed: %s", err)
 
-                    if not metadata_only:
-                        # Track last-seen when REST responds.
-                        self._devices[sn]["_ha_last_seen"] = now
-            
-                online_state = None
-                if metadata_only:
-                    # MQTT is the primary live-state source in this mode. Do not
-                    # let stale REST status fields override shadow connectivity.
-                    shadow = self._shadow_data.get(sn) or {}
-                    netstat = shadow.get("netstat") or {}
-                    if isinstance(netstat, dict):
-                        online_state = _coerce_bool(netstat.get("online"))
-                    if online_state is None:
-                        online_state = self._last_online.get(sn)
-                    if online_state is None:
-                        online_state = _coerce_bool((self._devices.get(sn) or {}).get("_ha_online"))
-                else:
-                    # Compute authoritative online state from REST and squash stale
-                    # connectivity fields when offline.
-                    status_data = (self._devices.get(sn) or {}).get("status_data") or {}
-                    if isinstance(status_data, dict) and "online" in status_data:
-                        online_state = _coerce_bool(status_data.get("online"))
-                    if online_state is None and "online" in (self._devices.get(sn) or {}):
-                        online_state = _coerce_bool((self._devices.get(sn) or {}).get("online"))
-                    if online_state is None and info and isinstance(info, dict) and "online" in info:
-                        online_state = _coerce_bool(info.get("online"))
+            for device in devices:
+                sn = device.get("sn")
+                if not sn:
+                    continue
 
-                # Detect Offline -> Online transitions. In push-primary mode this
-                # is based on MQTT shadow connectivity; in fallback mode it is REST.
-                prev = self._last_online.get(sn)
-                sn_just_online = prev is False and online_state is True
-                if sn_just_online:
-                    transitioned_online = True
+                sn = str(sn)
+                metadata_due = sn in metadata_due_serials
+
+                current_device_state = (self.data or {}).get(sn) if self.data else None
+                online_entity = current_device_state.get("online") if current_device_state else None
+                online_state = online_entity.value if online_entity is not None and isinstance(online_entity.value, bool) else None
+                if online_state is None:
+                    online_state = self._last_online.get(sn)
+                if online_state is None:
+                    online_state = _coerce_bool((self._devices.get(sn) or {}).get("online"))
+
                 self._last_online[sn] = online_state
 
-                self._devices[sn]["_ha_online"] = online_state
-                shadow = self._shadow_data.setdefault(sn, {})
-                netstat = shadow.setdefault("netstat", {})
-                if online_state is True:
-                    netstat["online"] = 1
-                elif online_state is False:
-                    netstat["online"] = 0
-                    netstat["ble"] = 0
-                    netstat["sta"] = 0
-                    netstat["nearFieldBind"] = 0
-                    machine = shadow.setdefault("machine", {})
-                    machine["link"] = 0
+                self._devices[sn]["online"] = online_state
+                if online_state is False:
+                    self._devices[sn]["ble"] = 0
+                    self._devices[sn]["sta"] = 0
+                    self._devices[sn]["nearFieldBind"] = 0
+                    self._devices[sn]["link"] = 0
                     self._devices[sn]["wifiName"] = None
                     self._devices[sn]["wifiRssi"] = None
 
-                # Derive supported modes (capability-driven). We use any list
-                # present in REST info or MQTT payloads; otherwise fall back to
-                # the known MODE_MAP keys.
-                supported_ids: list[int] = []
-                try:
-                    candidates: list[Any] = []
-                    if info and isinstance(info, dict):
-                        for k in (
-                            "modeList",
-                            "workModeList",
-                            "supportedModes",
-                            "supportModes",
-                        ):
-                            if k in info:
-                                candidates.append(info.get(k))
-                    # MQTT component
-                    shadow = self._shadow_data.get(sn) or {}
-                    gwm = shadow.get("getworkmode") or {}
-                    if isinstance(gwm, dict):
-                        for k in ("modeList", "workModeList", "supportedModes"):
-                            if k in gwm:
-                                candidates.append(gwm.get(k))
-
-                    for cand in candidates:
-                        if isinstance(cand, list):
-                            for v in cand:
-                                if isinstance(v, (int, float)):
-                                    supported_ids.append(int(v))
-                                elif isinstance(v, dict):
-                                    for kk in ("mode", "id", "value"):
-                                        mode_value = v.get(kk)
-                                        if mode_value is not None:
-                                            try:
-                                                supported_ids.append(int(mode_value))
-                                            except Exception:
-                                                pass
-                                elif isinstance(v, str) and v.strip().isdigit():
-                                    supported_ids.append(int(v.strip()))
-                        elif isinstance(cand, (int, float)):
-                            supported_ids.append(int(cand))
-                    # De-dup and preserve ordering
-                    seen: set[int] = set()
-                    deduped_supported_ids: list[int] = []
-                    for supported_id in supported_ids:
-                        if supported_id in seen:
-                            continue
-                        seen.add(supported_id)
-                        deduped_supported_ids.append(supported_id)
-                    supported_ids = deduped_supported_ids
-                except Exception:
-                    supported_ids = []
-                explicit_supported_modes = bool(supported_ids)
-                if not supported_ids:
-                    supported_ids = list(MODE_MAP.keys())
-                self._devices[sn]["_ha_supported_mode_ids"] = supported_ids
-                self._devices[sn]["_ha_supported_modes_explicit"] = explicit_supported_modes
-
-                # Parse device info / firmware (diagnostic). Keys vary by region/firmware.
-                # We search across multiple blobs (device list, info, status, shadow) to
-                # maximize compatibility across regional API variants.
-                diag_blob = {
-                    "device": device,
-                    "info": info or {},
-                    "status": status or {},
-                    "shadow": self._shadow_data.get(sn, {}),
-                }
-
-                fw_main = _deep_get(
-                    diag_blob,
-                    (
-                        "mainFirmwareVersion",
-                        "mainVersion",
-                        "mainVer",
-                        "main_version",
-                        "firmwareVersion",
-                        "firmware",
-                        "swVersion",
-                        "version",
-                    ),
-                )
-                fw_mcu = _deep_get(diag_blob, ("mcuFirmwareVersion", "mcuVersion", "mcuVer", "mcu_version", "mcu"))
-                ip_addr = _deep_get(diag_blob, ("ipAddress", "ipAddr", "ip_address", "ip"))
-                wifi_name = _deep_get(diag_blob, ("wifiName", "wifi_name", "wifiSsid", "ssid"))
-                ap_hotspot = _deep_get(
-                    diag_blob,
-                    (
-                        "apHotspot",
-                        "apSsid",
-                        "apSSID",
-                        "apName",
-                        "ap_hotspot",
-                        "ap_ssid",
-                        "hotspot",
-                    ),
-                )
-                # Prefer the human-readable SSID from the app payload if present
-                if isinstance(wifi_name, str) and wifi_name.strip():
-                    if ap_hotspot is None or not isinstance(ap_hotspot, str) or not str(ap_hotspot).strip():
-                        ap_hotspot = wifi_name
-
-                bt_name = _deep_get(
-                    diag_blob,
-                    (
-                        "bluetoothName",
-                        "btName",
-                        "bleName",
-                        "bluetooth",
-                        "ble",
-                    ),
-                )
-
-                self._devices[sn]["_ha_fw_main"] = fw_main
-                self._devices[sn]["_ha_fw_mcu"] = fw_mcu
-                self._devices[sn]["_ha_ip_address"] = ip_addr
-                self._devices[sn]["_ha_ap_hotspot"] = ap_hotspot
-                self._devices[sn]["_ha_bluetooth_name"] = bt_name
-
-
-                # Refresh slower-changing REST data only occasionally.
-                # NOTE: These endpoints are historical/account-scoped in the app
-                # and should populate even if the robot is currently Offline.
-
-                # Cleaning history / totals
-                last_h = _ensure_utc_aware(self._last_history_fetch.get(sn))
-                if sn_just_online or last_h is None or (now - last_h) >= self._history_refresh:
-                    raw_hist = None
+                if metadata_due:
+                    info = None
                     try:
-                        raw_hist = await self.api.get_cleaning_history(sn)
+                        info = await self.api.get_device_info(sn)
                     except Exception as err:
-                        _LOGGER.debug("Cleaning history fetch failed for %s: %s", sn, err)
-                    tcount, thours, recs = _parse_cleaning_history(raw_hist)
-                    self._history_cache[sn] = {
-                        "total_count": tcount,
-                        "total_hours": thours,
-                        "records": recs,
-                        "raw": raw_hist,
-                    }
-                    self._last_history_fetch[sn] = now
-                hist = self._history_cache.get(sn) or {}
-                self._devices[sn]["_ha_total_cleanings"] = hist.get("total_count")
-                self._devices[sn]["_ha_total_cleaning_hours"] = hist.get("total_hours")
-                th = hist.get("total_hours")
-                self._devices[sn]["_ha_total_cleaning_minutes"] = (round(th * 60) if isinstance(th, (int, float)) else None)
-                records = hist.get("records") or []
-                self._devices[sn]["_ha_cleaning_records"] = records
-                # Last record
-                last_rec = records[0] if isinstance(records, list) and records else None
-                if isinstance(last_rec, dict):
-                    self._devices[sn]["_ha_last_cleaning_mode"] = last_rec.get("mode")
-                    self._devices[sn]["_ha_last_cleaning_start"] = last_rec.get("start")
-                    self._devices[sn]["_ha_last_cleaning_duration_min"] = last_rec.get("duration_min")
+                        _LOGGER.debug("Device info metadata refresh failed for %s: %s", sn, err)
+                    if isinstance(info, dict):
+                        self._devices[sn]["info"] = info
 
-                # Consumables
-                last_c = _ensure_utc_aware(self._last_consumables_fetch.get(sn))
-                if sn_just_online or last_c is None or (now - last_c) >= self._consumables_refresh:
                     raw_cons = None
                     try:
                         raw_cons = await self.api.get_consumables(sn)
@@ -1338,31 +383,32 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     # to avoid requiring an integration reload to observe new values.
                     if raw_cons is not None:
                         self._consumables_cache[sn] = cons_list
-                    self._last_consumables_fetch[sn] = now
-                self._devices[sn]["_ha_consumables"] = self._consumables_cache.get(sn) or []
+                    self._last_metadata_fetch[sn] = now
+
+                # Derive supported modes only from observed info metadata.
+                # Family profiles provide typed defaults when the list is absent.
+                info = self._devices[sn].get("info")
+                supported_ids = supported_mode_ids_from_payload(info) if isinstance(info, dict) else []
+                explicit_supported_modes = bool(supported_ids)
+                self._devices[sn]["supported_mode_ids"] = supported_ids
+                self._devices[sn]["supported_modes_explicit"] = explicit_supported_modes
+
+                # Canonicalize optional info fields if discovery metadata provides them.
+                info_data = info if isinstance(info, dict) else {}
+                if info_data.get("model") is not None:
+                    self._devices[sn]["model"] = info_data.get("model")
+                self._devices[sn]["fw_main"] = info_data.get("mainFirmwareVersion")
+                self._devices[sn]["fw_mcu"] = info_data.get("mcuFirmwareVersion")
+                self._devices[sn]["ip_address"] = info_data.get("ip")
+                self._devices[sn]["ap_hotspot"] = info_data.get("wifiName")
+                self._devices[sn]["bluetooth_name"] = info_data.get("bleName")
+                self._devices[sn]["consumables"] = self._consumables_cache.get(sn) or []
                 self._apply_device_profile(sn)
 
-                # Clean path preference
-                # Surfer S2 is verified to support this via the current single
-                # clean-path REST contract. The capability gate keeps Shark/unknown
-                # devices out and confines the remaining legacy matrix to families
-                # still pending hardware verification.
                 if has_capability(self._devices[sn], Capability.CLEAN_PATH):
-                    last_p = _ensure_utc_aware(self._last_clean_path_fetch.get(sn))
-                    if sn_just_online or last_p is None or (now - last_p) >= self._clean_path_refresh:
-                        val = None
-                        try:
-                            val = await self.api.query_clean_path_setting(sn)
-                        except Exception as err:
-                            _LOGGER.debug("Clean path fetch failed for %s: %s", sn, err)
-                        # Only update cache if the API returned a value (avoid overwriting
-                        # a previously known setting with None due to transient failures).
-                        if val is not None:
-                            self.set_clean_path_cache(sn, val)
-                        self._last_clean_path_fetch[sn] = now
-                    self._devices[sn]["_ha_clean_path"] = self._clean_path_cache.get(sn)
+                    self._devices[sn]["clean_path"] = self._clean_path_cache.get(sn)
                 else:
-                    self._devices[sn]["_ha_clean_path"] = None
+                    self._devices[sn]["clean_path"] = None
 
             # Expire pending commands (UI hints)
             for _sn in list(self._command_state.keys()):
@@ -1371,32 +417,16 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 except Exception:
                     pass
 
-            # Adapt polling cadence in REST fallback mode.
-            if transitioned_online and not self._push_primary:
-                self._fast_poll_until = now + timedelta(seconds=FAST_SCAN_WINDOW_SECONDS)
-                self.update_interval = self._fast_interval
-                _LOGGER.debug(
-                    "Detected Offline->Online transition; enabling fast polling for %ss",
-                    FAST_SCAN_WINDOW_SECONDS,
-                )
-
-            if self._fast_poll_until and now >= self._fast_poll_until:
-                # Fast window expired; return to normal cadence.
-                self._fast_poll_until = None
-                if self.update_interval != self._normal_interval:
-                    self.update_interval = self._normal_interval
-
-            # Merge device data with shadow data
-            result: dict[str, Any] = {}
+            # Publish normalized device data.
+            result: DevicesState = {}
             for sn, device in self._devices.items():
-                result[sn] = {
-                    **device,
-                    "shadow": self._shadow_data.get(sn, {}),
-                }
+                normalized = normalize_device_state(device)
+                current = (self.data or {}).get(sn) if self.data else None
+                result[sn] = merge_device_state(current, normalized, ignore_none=True) if current else normalized
 
             _LOGGER.debug("Coordinator updated devices=%s", list(result.keys()))
             return result
-            
+
         except Exception as err:
             _LOGGER.error("Error fetching data: %s", err)
             raise UpdateFailed(f"Error communicating with API: {err}") from err
@@ -1457,54 +487,38 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _on_shadow_update(self, sn: str, data: dict) -> None:
         """Process shadow update from MQTT."""
-        shadow = self._shadow_data.setdefault(sn, {})
-
-        def _deep_merge(dst: dict, src: dict) -> dict:
-            """Recursively merge src into dst.
-
-            Aiper devices often publish partial updates (e.g. only +WARN or
-            +RECORDS). Replacing the entire machine/netstat payload causes HA
-            entities to flicker to Unknown/unavailable. We therefore merge
-            fields and only overwrite keys that are explicitly present.
-            """
-            for key, val in (src or {}).items():
-                if isinstance(val, dict) and isinstance(dst.get(key), dict):
-                    _deep_merge(dst[key], val)
-                else:
-                    dst[key] = val
-            return dst
-
-        # AWS IoT shadow messages often look like:
-        # {"state": {"reported": {...}}} or {"state": {"delta": {...}}}
-        #
-        # NOTE: AWS also publishes *delta-only* messages on $aws/.../shadow/update/delta.
-        # These contain desired state (e.g., Machine.mode) but are not authoritative
-        # for the device's current state. If we merge them, the UI can oscillate
-        # between the real reported mode and an unfulfilled desired mode.
-        # Determine source topic (if available) to safely ignore desired-only deltas.
         topic = data.get("_topic") if isinstance(data, dict) else None
-        if isinstance(topic, str) and "shadow/update/delta" in topic:
-            # Delta topics contain desired-state only. We generally ignore them to
-            # avoid UI oscillation, *but* some firmwares never report certain
-            # preferences (notably cleanPath). Capture those as a fallback.
-            try:
-                st = data.get("state") if isinstance(data, dict) else None
-                if isinstance(st, dict):
-                    m = st.get("Machine")
-                    if isinstance(m, dict):
-                        cp = _clean_path_value(
-                            m.get("cleanPath")
-                            or m.get("clean_path")
-                            or m.get("cleanPathSetting")
-                            or m.get("clean_path_setting")
-                        )
-                        if cp is not None:
-                            dm = shadow.setdefault("desired_machine", {})
-                            dm["cleanPath"] = int(cp)
-            except Exception:
-                pass
 
-            _LOGGER.debug("Ignoring shadow delta message for %s", sn)
+        def _publish_updates(updates: DeviceState) -> None:
+            if not updates:
+                return
+            current = (self.data or {}).get(sn) if self.data else None
+            if current is None:
+                current = normalize_device_state(self._devices.get(sn, {}))
+            new_data: DevicesState = dict(self.data or {})
+            new_data[sn] = merge_device_state(current, updates)
+            self.async_set_updated_data(new_data)
+
+        def _cache_clean_path(update: DeviceState) -> None:
+            clean_path = update.get("clean_path")
+            if clean_path is None:
+                return
+            code = clean_path.attributes.get("code")
+            if code is not None:
+                self.set_clean_path_cache(sn, int(code))
+
+        def _clean_path_updates(payload: Any) -> DeviceState:
+            if not isinstance(payload, dict):
+                return {}
+            update = normalize_clean_path_update(payload)
+            _cache_clean_path(update)
+            return update
+
+        if isinstance(topic, str) and "shadow/update/delta" in topic:
+            state = data.get("state") if isinstance(data, dict) else None
+            delta_machine = state.get("Machine") if isinstance(state, dict) else None
+            _publish_updates(_clean_path_updates(delta_machine))
+            _LOGGER.debug("Ignoring desired-only shadow delta for %s", sn)
             return
 
         payload = data
@@ -1514,80 +528,48 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             current = data.get("current") or {}
             if isinstance(current, dict):
                 cur_state = current.get("state") or {}
-                # Capture desired cleanPath from documents messages (some devices
-                # never include it in reported state).
-                try:
-                    if isinstance(cur_state, dict):
-                        des = cur_state.get("desired")
-                        if isinstance(des, dict):
-                            m = des.get("Machine")
-                            if isinstance(m, dict):
-                                cp = _clean_path_value(
-                                    m.get("cleanPath")
-                                    or m.get("clean_path")
-                                    or m.get("cleanPathSetting")
-                                    or m.get("clean_path_setting")
-                                )
-                                if cp is not None:
-                                    dm = shadow.setdefault("desired_machine", {})
-                                    dm["cleanPath"] = int(cp)
-                except Exception:
-                    pass
+                if isinstance(cur_state, dict):
+                    desired = cur_state.get("desired")
+                    if isinstance(desired, dict):
+                        _publish_updates(_clean_path_updates(desired.get("Machine")))
+                    if isinstance(cur_state.get("reported"), dict):
+                        payload = cur_state.get("reported") or {}
+                    else:
+                        payload = cur_state
 
-                if isinstance(cur_state, dict) and isinstance(cur_state.get("reported"), dict):
-                    payload = cur_state.get("reported") or {}
-                elif isinstance(cur_state, dict):
-                    payload = cur_state
-
-        # Standard shadow payloads: only accept 'reported'. Ignore 'desired'/'delta' to avoid UI oscillation.
+        # Standard shadow payloads: only accept reported state. Desired/delta is
+        # command intent, not current device state, except cleanPath preference on
+        # firmwares that never report it.
         if isinstance(payload, dict) and isinstance(payload.get("state"), dict):
-            state = payload.get("state") or {}
-            # Capture desired cleanPath preference (reported often omits it).
-            try:
-                for cand in (state.get("desired"), state.get("delta")):
-                    if isinstance(cand, dict):
-                        m = cand.get("Machine")
-                        if isinstance(m, dict):
-                            cp = _clean_path_value(
-                                m.get("cleanPath")
-                                or m.get("clean_path")
-                                or m.get("cleanPathSetting")
-                                or m.get("clean_path_setting")
-                            )
-                            if cp is not None:
-                                dm = shadow.setdefault("desired_machine", {})
-                                dm["cleanPath"] = int(cp)
-            except Exception:
-                pass
-            if isinstance(state.get("reported"), dict):
-                payload = state.get("reported") or {}
+            state_payload = payload.get("state") or {}
+            for candidate in (state_payload.get("desired"), state_payload.get("delta")):
+                if isinstance(candidate, dict):
+                    _publish_updates(_clean_path_updates(candidate.get("Machine")))
+            if isinstance(state_payload.get("reported"), dict):
+                payload = state_payload.get("reported") or {}
             else:
-                # If this is desired/delta-only, ignore.
-                if any(k in state for k in ("desired", "delta")):
-                    _LOGGER.debug("Ignoring non-reported shadow update for %s (keys=%s)", sn, list(state.keys()))
+                if any(key in state_payload for key in ("desired", "delta")):
+                    _LOGGER.debug("Ignoring non-reported shadow update for %s (keys=%s)", sn, list(state_payload.keys()))
                     return
-                payload = state
+                if isinstance(state_payload, dict):
+                    payload = state_payload
 
-        # Some upstream messages wrap a nested payload under "data".
+        if not isinstance(payload, dict):
+            return
 
-        if isinstance(payload, dict) and "data" in payload and isinstance(payload.get("data"), dict) and payload.get("type"):
-            # e.g. {"type": "Machine", "data": {...}}
-            pass
+        raw_device = self._devices.setdefault(sn, {})
+        self._apply_device_profile(sn)
+        current_state = (self.data or {}).get(sn) if self.data else None
+        updates: DeviceState = {}
+        machine: dict[str, Any] = {}
 
-        # Handle different Aiper message formats.
-        # IMPORTANT: always merge into existing state to avoid flicker.
-        machine = shadow.setdefault("machine", {})
         if "Machine" in payload and isinstance(payload.get("Machine"), dict):
-            _deep_merge(machine, payload.get("Machine") or {})
+            machine = dict(payload.get("Machine") or {})
         elif "machine" in payload and isinstance(payload.get("machine"), dict):
-            _deep_merge(machine, payload.get("machine") or {})
+            machine = dict(payload.get("machine") or {})
         elif payload.get("type") == "Machine":
             machine_data = payload.get("data") or {}
-
-            update: dict[str, Any] = {}
-
-            # Copy any structured fields that are present.
-            for k in (
+            for key in (
                 "status",
                 "mode",
                 "cap",
@@ -1601,124 +583,67 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "cleanPath",
                 "clean_path",
             ):
-                if k in machine_data and machine_data.get(k) is not None:
-                    update[k] = machine_data.get(k)
+                if key in machine_data and machine_data.get(key) is not None:
+                    machine[key] = machine_data.get(key)
 
-            # Some devices publish condensed "report" strings.
             report = machine_data.get("report")
             if isinstance(report, str):
                 parsed = self._parse_machine_report(report)
                 if parsed:
-                    # records are additive; do not overwrite
-                    if "records" in parsed:
-                        recs = machine.setdefault("records", [])
-                        if isinstance(recs, list):
-                            recs.extend(parsed.get("records") or [])
-                        parsed = {k: v for k, v in parsed.items() if k != "records"}
-                    update.update(parsed)
+                    machine.update({key: value for key, value in parsed.items() if key != "records"})
 
-            if update:
-                _deep_merge(machine, update)
+        if machine:
+            updates = merge_device_state(updates, normalize_machine_update(raw_device, machine, current_state))
 
-        netstat = shadow.setdefault("netstat", {})
-        prev_mqtt_online = _coerce_bool(netstat.get("online"))
+        netstat: dict[str, Any] = {}
         if "NetStat" in payload and isinstance(payload.get("NetStat"), dict):
-            _deep_merge(netstat, payload.get("NetStat") or {})
+            netstat = dict(payload.get("NetStat") or {})
         elif "netstat" in payload and isinstance(payload.get("netstat"), dict):
-            _deep_merge(netstat, payload.get("netstat") or {})
+            netstat = dict(payload.get("netstat") or {})
         elif payload.get("type") == "NetStat":
             if isinstance(payload.get("data"), dict):
-                _deep_merge(netstat, payload.get("data") or {})
+                netstat = dict(payload.get("data") or {})
 
-        # In REST fallback mode, if MQTT indicates the device has just come
-        # online, start a short fast polling window so REST can catch up quickly.
-        curr_mqtt_online = _coerce_bool(netstat.get("online"))
-        if self._push_primary and curr_mqtt_online is not None:
+        if netstat:
+            updates = merge_device_state(updates, normalize_netstat_update(netstat))
+        online_update = updates.get("online")
+        curr_mqtt_online = online_update.value if online_update else None
+        if curr_mqtt_online is not None:
             self._last_online[sn] = curr_mqtt_online
-        if prev_mqtt_online is not True and curr_mqtt_online is True:
-            rest_online = None
-            try:
-                if self.data is not None and sn in self.data:
-                    rest_online = _coerce_bool((self.data.get(sn) or {}).get("_ha_online"))
-            except Exception:
-                rest_online = None
-            if rest_online is None:
-                rest_online = self._last_online.get(sn)
-            if rest_online is False:
-                self._start_fast_poll_window(reason=f"mqtt_online_transition:{sn}")
 
-        # Store other shadow components (as discovered). These also arrive as
-        # partial updates; merge to prevent "Unknown" flicker.
-        for key in ["OpInfo", "OtaStatus", "CycleWork", "GetWorkMode", "RubbishBoxStatus"]:
-            lk = key.lower()
-            comp = shadow.setdefault(lk, {})
+        for key in ("OpInfo", "OtaStatus", "CycleWork", "GetWorkMode", "RubbishBoxStatus"):
+            component = None
             if key in payload and isinstance(payload.get(key), dict):
-                _deep_merge(comp, payload.get(key) or {})
+                component = payload.get(key) or {}
             elif payload.get("type") == key and isinstance(payload.get("data"), dict):
-                _deep_merge(comp, payload.get("data") or {})
-        
-        self._shadow_data[sn] = shadow
-
-        # Promote cleanPath discovered in other components into machine (best-effort).
-        try:
-            if isinstance(machine, dict) and machine.get("cleanPath") is None and machine.get("clean_path") is None:
-                cp = self._extract_clean_path_value(sn, machine)
-                if cp is not None:
-                    machine["cleanPath"] = cp
-        except Exception:
-            pass
-
-        # In push-primary mode, promote live shadow fields onto the device record
-        # so entities that historically preferred REST keys see MQTT updates first.
-        if self._push_primary:
-            device = dict(self._devices.get(sn, {}))
-            if curr_mqtt_online is not None:
-                device["_ha_online"] = curr_mqtt_online
-            if isinstance(machine, dict):
-                if machine.get("cap") is not None:
-                    device["battLevel"] = machine.get("cap")
-                if machine.get("status") is not None:
-                    device["machineStatus"] = machine.get("status")
-                if machine.get("mode") is not None:
-                    device["mode"] = machine.get("mode")
-            opinfo = shadow.get("opinfo") or {}
-            if isinstance(opinfo, dict):
-                if opinfo.get("wifi_name") is not None:
-                    device["wifiName"] = opinfo.get("wifi_name")
-                if opinfo.get("wifi_rssi") is not None:
-                    device["wifiRssi"] = opinfo.get("wifi_rssi")
-            ota = shadow.get("otastatus") or {}
-            if isinstance(ota, dict):
-                if ota.get("version") is not None:
-                    device["_ha_fw_main"] = ota.get("version")
-                if ota.get("subver") is not None:
-                    device["_ha_fw_mcu"] = ota.get("subver")
-            device["_ha_last_seen"] = dt_util.utcnow()
-            self._devices[sn] = device
-
-        self._apply_device_profile(sn)
-
-        # Merge shadow into current coordinator data and notify listeners.
-        if self.data is not None:
-            new_data: dict[str, Any] = dict(self.data)
-            dev = dict(new_data.get(sn, self._devices.get(sn, {})))
-            if self._push_primary:
-                dev.update(self._devices.get(sn, {}))
-            dev["shadow"] = shadow
-            normalize_device_state(dev)
-            new_data[sn] = dev
-            self.async_set_updated_data(new_data)
+                component = payload.get("data") or {}
+            if not isinstance(component, dict):
+                continue
+            lower_key = key.lower()
+            if lower_key == "opinfo":
+                interim_state = merge_device_state(current_state, updates) if updates else current_state
+                updates = merge_device_state(updates, normalize_opinfo_update(component, interim_state))
+            elif lower_key == "otastatus":
+                updates = merge_device_state(updates, normalize_ota_update(component))
+            elif lower_key == "getworkmode":
+                updates = merge_device_state(updates, normalize_mode_options_update(raw_device, component))
+                updates = merge_device_state(updates, normalize_clean_path_update(component))
+            else:
+                updates = merge_device_state(updates, normalize_clean_path_update(component))
+            _cache_clean_path(updates)
 
         # Update last-seen time on any MQTT activity.
         try:
             if sn in self._devices:
-                self._devices[sn]["_ha_last_seen"] = dt_util.utcnow()
+                self._devices[sn]["last_seen"] = dt_util.utcnow()
         except Exception:
             pass
 
+        _publish_updates(updates)
+
         # Confirm pending commands when the device reports the new value.
         try:
-            self._confirm_pending_commands(sn, shadow.get("machine") or {})
+            self._confirm_pending_commands(sn, machine)
         except Exception:
             pass
 
@@ -1753,12 +678,6 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         result["warn"] = int(parts[0])
                     if len(parts) >= 2:
                         result["warn_code"] = int(parts[1])
-                elif ln.startswith("+RECORDS:"):
-                    # Optional: history records. Keep raw for later reverse engineering.
-                    # +RECORDS:<idx>,<type>,<date>,<time>,<value>
-                    # Do not overwrite anything; store as list.
-                    recs = result.setdefault("records", [])
-                    recs.append(ln)
                 elif ln.startswith("+WORKMODE:") or ln.startswith("+MODE:"):
                     # Some firmwares respond with explicit mode lines.
                     # Example patterns (unconfirmed): "+WORKMODE:<n>" or "+MODE:<n>".
@@ -1771,32 +690,17 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return {}
         return result
 
-    def get_device(self, sn: str) -> dict | None:
+    def get_device(self, sn: str) -> DeviceState | None:
         """Get device data by serial number."""
         if self.data:
             return self.data.get(sn)
         return None
 
-    def get_machine_state(self, sn: str) -> dict:
-        """Get the Machine shadow state for a device."""
-        device = self.get_device(sn)
-        if device and "shadow" in device:
-            return device["shadow"].get("machine", {})
-        return {}
-
-
-    def get_netstat(self, sn: str) -> dict:
-        """Get the NetStat shadow state for a device."""
-        device = self.get_device(sn)
-        if device and "shadow" in device:
-            return device["shadow"].get("netstat", {})
-        return {}
-
     # -----------------
     # Command tracking
     # -----------------
 
-    PENDING_TIMEOUT_SECONDS = 120
+    PENDING_TIMEOUT_SECONDS = 8
 
     def _ensure_cmd_state(self, sn: str) -> dict[str, dict[str, Any]]:
         st = self._command_state.get(sn)
@@ -1858,6 +762,14 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "last": dict(st.get("last", {})),
         }
 
+    def get_pending_command_target(self, sn: str, kind: str) -> Any:
+        """Return a non-expired pending command target, if present."""
+        self.expire_pending_commands(sn)
+        st = self._command_state.get(sn) or {}
+        pending = st.get("pending") or {}
+        info = pending.get(kind) if isinstance(pending, dict) else None
+        return info.get("target") if isinstance(info, dict) else None
+
     def expire_pending_commands(self, sn: str) -> None:
         """Expire pending commands that have not been confirmed within the timeout."""
         st = self._command_state.get(sn)
@@ -1908,6 +820,8 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return None
 
         reported_mode = _to_int(machine.get("mode"))
+        reported_status = _to_int(machine.get("status"))
+        reported_running = status_running(reported_status) if reported_status is not None else None
         # Clean path is especially inconsistent across firmwares; normalize.
         reported_clean_path = self._extract_clean_path_value(sn, machine)
 
@@ -1919,6 +833,19 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if tgt is not None and reported_mode is not None and tgt == reported_mode:
                 pend.pop("mode", None)
                 st.setdefault("last", {})["mode"] = {
+                    "target": tgt,
+                    "time": now,
+                    "source": "device_report",
+                    "result": "confirmed",
+                    "confirmed": True,
+                }
+                changed = True
+
+        if "running" in pend:
+            tgt = (pend.get("running") or {}).get("target")
+            if isinstance(tgt, bool) and reported_running is not None and tgt == reported_running:
+                pend.pop("running", None)
+                st.setdefault("last", {})["running"] = {
                     "target": tgt,
                     "time": now,
                     "source": "device_report",
@@ -1951,135 +878,47 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Best-effort extraction of clean-path from known payload containers.
 
         Different firmwares publish clean path under different keys/containers:
-        - Machine.cleanPath (or clean_path)
-        - Nested machine/settings keys
-        - GetWorkMode / CycleWork / OpInfo payloads
-        - REST info blobs
-
+        - Current normalized entity attributes
+        - Current Machine payload
         Returns a normalized integer when possible.
         """
-        try:
-            if machine is None:
-                machine = self.get_machine_state(sn) or {}
-        except Exception:
-            machine = machine or {}
+        if machine is None:
+            clean_path = ((self.data or {}).get(sn) or {}).get("clean_path")
+            if clean_path is not None:
+                value = _clean_path_value(clean_path.attributes.get("code"))
+                if value is not None:
+                    return value
+                value = _clean_path_value(clean_path.value)
+                if value is not None:
+                    return value
+            machine = {}
 
-        # Direct keys first.
         if isinstance(machine, dict):
-            for k in ("cleanPath", "clean_path"):
-                if k in machine and machine.get(k) is not None:
-                    v = _clean_path_value(machine.get(k))
-                    if v is not None:
-                        return v
-
-        # Deep search within machine (some firmwares nest values under settings/config).
-        try:
-            v = _clean_path_value(
-                _deep_get(
-                    machine,
-                    (
-                        "cleanPath",
-                        "clean_path",
-                        "cleanPathSetting",
-                        "clean_path_setting",
-                        "path",
-                        "sweepPath",
-                        "swimPath",
-                    ),
-                )
-            )
+            v = _clean_path_value(machine.get("cleanPath"))
             if v is not None:
                 return v
-        except Exception:
-            pass
-
-        # Search other shadow components that may carry the value.
-        shadow = self._shadow_data.get(sn) or {}
-        if isinstance(shadow, dict):
-            for comp_key in ("getworkmode", "cyclework", "opinfo", "rubbishboxstatus", "otastatus"):
-                comp = shadow.get(comp_key)
-                if isinstance(comp, dict):
-                    try:
-                        v = _clean_path_value(
-                            _deep_get(
-                                comp,
-                                (
-                                    "cleanPath",
-                                    "clean_path",
-                                    "cleanPathSetting",
-                                    "clean_path_setting",
-                                    "path",
-                                    "sweepPath",
-                                    "swimPath",
-                                ),
-                            )
-                        )
-                        if v is not None:
-                            return v
-                    except Exception:
-                        continue
-
-        # REST info blob (if present)
-        try:
-            dev = self._devices.get(sn) or {}
-            info = dev.get("info") if isinstance(dev, dict) else None
-            if isinstance(info, dict):
-                v = _clean_path_value(
-                    _deep_get(
-                        info,
-                        (
-                            "cleanPath",
-                            "clean_path",
-                            "cleanPathSetting",
-                            "clean_path_setting",
-                            "path",
-                        ),
-                    )
-                )
-                if v is not None:
-                    return v
-        except Exception:
-            pass
 
         return None
 
 
     def set_clean_path_cache(self, sn: str, value: int) -> None:
-        """Update cached clean-path preference (used by REST polling)."""
+        """Update cached clean-path preference."""
         self._clean_path_cache[sn] = int(value)
-        self._last_clean_path_fetch[sn] = dt_util.utcnow()
 
     def get_clean_path(self, sn: str) -> int | None:
         """Get current clean-path preference.
 
         Community-friendly behavior:
-        - Prefer device-reported state from MQTT/shadow (where available)
-        - Fall back to the REST-polled cached value
+        - Prefer the normalized entity state
+        - Fall back to the command/cache value
         """
         v = self._extract_clean_path_value(sn)
         if v is not None:
             return v
 
-        # Some firmwares never report cleanPath in reported state. In those
-        # cases, we fall back to the last desired value seen on the shadow.
-        try:
-            shadow = self._shadow_data.get(sn) or {}
-            dm = shadow.get("desired_machine") if isinstance(shadow, dict) else None
-            if isinstance(dm, dict):
-                dv = _clean_path_value(
-                    dm.get("cleanPath")
-                    or dm.get("clean_path")
-                    or dm.get("cleanPathSetting")
-                    or dm.get("clean_path_setting")
-                )
-                if dv is not None:
-                    return dv
-        except Exception:
-            pass
-
-        if sn in self._devices and "_ha_clean_path" in self._devices[sn]:
+        if sn in self._devices and "clean_path" in self._devices[sn]:
             try:
-                val = self._devices[sn].get("_ha_clean_path")
+                val = self._devices[sn].get("clean_path")
                 v = _clean_path_value(val)
                 return v
             except Exception:

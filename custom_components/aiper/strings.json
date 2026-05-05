@@ -31,12 +31,10 @@
     "step": {
       "init": {
         "title": "Aiper Options",
-        "description": "Optional settings for MQTT push updates, REST fallback polling, and offline command behavior.",
+        "description": "Optional settings for MQTT diagnostics and cloud metadata refresh.",
         "data": {
-          "enable_mqtt": "Enable MQTT push updates",
-          "mqtt_debug": "MQTT debug logging",
-          "queue_offline_commands": "Queue commands while device is offline (advanced)",
-          "poll_interval": "REST fallback polling interval (seconds)"
+          "metadata_refresh_hours": "Cloud metadata refresh interval (hours)",
+          "mqtt_debug": "MQTT debug logging"
         }
       }
     }

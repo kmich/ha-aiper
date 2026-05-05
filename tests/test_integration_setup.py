@@ -30,6 +30,7 @@ class FakeApi:
     login_called: bool = False
     connect_called: bool = False
     disconnected: bool = False
+    subscribed: list[str] = field(default_factory=list)
     shadow_requested: list[str] = field(default_factory=list)
 
     async def login(self) -> bool:
@@ -39,24 +40,19 @@ class FakeApi:
     async def get_devices(self) -> list[dict[str, Any]]:
         return [{"sn": "SN123", "model": "Shark_X", "name": "Pool Robot", "battLevel": 80, "machineStatus": 1}]
 
-    async def get_device_status(self, sn: str) -> dict[str, Any]:
-        return {"online": True}
-
     async def get_device_info(self, sn: str) -> dict[str, Any]:
-        return {"mainVersion": "1.0.0"}
-
-    async def get_cleaning_history(self, sn: str) -> dict[str, Any]:
-        return {"data": {"list": []}}
+        return {"mainFirmwareVersion": "1.0.0"}
 
     async def get_consumables(self, sn: str) -> dict[str, Any]:
         return {"data": []}
 
-    async def query_clean_path_setting(self, sn: str) -> int | None:
-        return None
-
     async def connect_mqtt(self) -> bool:
         self.connect_called = True
-        return False
+        return True
+
+    async def subscribe_device(self, sn: str, callback: Any) -> bool:
+        self.subscribed.append(sn)
+        return True
 
     async def request_shadow(self, sn: str) -> bool:
         self.shadow_requested.append(sn)
@@ -96,7 +92,6 @@ async def test_setup_entry_stores_runtime_data_and_unload_disconnects(
             "password": "secret",
             "region": "asia",
         },
-        options={"enable_mqtt": True},
         state=ConfigEntryState.SETUP_IN_PROGRESS,
     )
     entry.add_to_hass(hass)
@@ -111,9 +106,9 @@ async def test_setup_entry_stores_runtime_data_and_unload_disconnects(
     assert api.connect_called is True
     assert api.async_session == "session"
     assert coordinator.data is not None
-    assert coordinator.data["SN123"]["name"] == "Pool Robot"
-    assert coordinator.data["SN123"]["_ha_profile_family"] == "shark"
-    assert coordinator.update_interval == coordinator._normal_interval
+    assert coordinator.data["SN123"]["device_info"].value == "Pool Robot"
+    assert coordinator.data["SN123"]["device_family"].value == "shark"
+    assert coordinator.update_interval is not None
     assert forwarded == [(cast(ConfigEntry, entry), aiper.PLATFORMS)]
 
     assert await aiper.async_unload_entry(hass, cast(ConfigEntry, entry)) is True

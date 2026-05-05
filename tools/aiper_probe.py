@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 import getpass
 import json
@@ -18,6 +19,8 @@ import os
 from pathlib import Path
 import sys
 from typing import Any
+
+import aiohttp
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -30,7 +33,7 @@ except ImportError:  # pragma: no cover - exercised only in incomplete dev envs
     yaml = None
 
 from custom_components.aiper.api import AiperApi  # noqa: E402
-from custom_components.aiper.const import TOPIC_WRITE  # noqa: E402
+from custom_components.aiper.const import MqttTopic  # noqa: E402
 from custom_components.aiper.redaction import redact, redact_str  # noqa: E402
 
 
@@ -120,13 +123,18 @@ def _credentials(args: argparse.Namespace) -> tuple[str, str, str]:
     return username, password, region
 
 
-async def _make_api(args: argparse.Namespace) -> AiperApi:
+@asynccontextmanager
+async def _make_api(args: argparse.Namespace) -> AsyncIterator[AiperApi]:
     username, password, region = _credentials(args)
-    api = AiperApi(username=username, password=password, region=region)
-    api.mqtt_debug = bool(getattr(args, "mqtt_debug", False))
-    if not await api.login():
-        raise SystemExit("Aiper login failed")
-    return api
+    async with aiohttp.ClientSession() as session:
+        api = AiperApi(username=username, password=password, region=region, async_session=session)
+        api.mqtt_debug = bool(getattr(args, "mqtt_debug", False))
+        if not await api.login():
+            raise SystemExit("Aiper login failed")
+        try:
+            yield api
+        finally:
+            await api.disconnect()
 
 
 async def _get_devices(api: AiperApi) -> list[dict[str, Any]]:
@@ -171,21 +179,10 @@ async def capture_rest_snapshot(api: AiperApi, sn: str) -> dict[str, Any]:
         "calls": {
             "status": await _capture_call("get_device_status", lambda: api.get_device_status(sn)),
             "info": await _capture_call("get_device_info", lambda: api.get_device_info(sn)),
-            "history": await _capture_call("get_cleaning_history", lambda: api.get_cleaning_history(sn)),
             "consumables": await _capture_call("get_consumables", lambda: api.get_consumables(sn)),
             "clean_path": await _capture_call("query_clean_path_setting", lambda: api.query_clean_path_setting(sn)),
         },
     }
-
-
-def cleaning_history_candidate_bodies(sn: str) -> list[dict[str, Any]]:
-    """Return the current request body for the cleaning-history endpoint."""
-    return [{"sn": sn, "pageNum": 1, "pageSize": 20}]
-
-
-def consumables_candidate_bodies(device: dict[str, Any], sn: str) -> list[dict[str, Any]]:
-    """Return the current request body for the consumables endpoint."""
-    return [{"sn": sn}]
 
 
 def _region_from_iot_endpoint(endpoint: str | None) -> str | None:
@@ -267,12 +264,6 @@ def clean_path_query_candidates(device: dict[str, Any], sn: str) -> list[dict[st
         "/swimming/v2/getCleanPathSetting",
         "/swimming/v2/getCleanPathSettingBySn",
     ]
-    paths = list(base_paths)
-    for path in base_paths:
-        surfer_path = f"/surfer{path}" if not path.startswith("/surfer/") else path
-        if surfer_path not in paths:
-            paths.append(surfer_path)
-
     bodies: list[dict[str, Any]] = [{"sn": sn}]
     if equip_id is not None:
         bodies = [
@@ -283,7 +274,7 @@ def clean_path_query_candidates(device: dict[str, Any], sn: str) -> list[dict[st
         ]
 
     candidates: list[dict[str, Any]] = []
-    for path in paths:
+    for path in base_paths:
         for body in bodies:
             for envelope in ("encrypted", "plain"):
                 candidates.append({"path": path, "body": body, "envelope": envelope})
@@ -319,89 +310,45 @@ def _payload_summary(payload: Any) -> dict[str, Any]:
         for key in ("pageNum", "pageNo", "page", "pageSize", "size", "total"):
             if key in data:
                 summary[key] = data.get(key)
-        for key in ("list", "records", "recordList", "history", "items"):
-            value = data.get(key)
-            if isinstance(value, list):
-                summary["record_key"] = key
-                summary["record_count"] = len(value)
-                break
+        records = data.get("list")
+        if isinstance(records, list):
+            summary["record_key"] = "list"
+            summary["record_count"] = len(records)
     elif isinstance(data, list):
         summary["record_count"] = len(data)
 
     return summary
 
 
-async def probe_cleaning_history_bodies(api: AiperApi, sn: str) -> dict[str, Any]:
-    """Call the cleaning-history endpoint and capture the outcome."""
-    attempts: list[dict[str, Any]] = []
-
-    for body in cleaning_history_candidate_bodies(sn):
-        started = _utc_now()
-        try:
-            payload = await api._call_with_zoneid(
-                sn,
-                lambda body=body: api._call_encrypted("POST", "/swimming/v2/getCleanTimeBySn", body),
-            )
-            attempt = {
-                "started": started,
-                "request_body": body,
-                "ok": api._is_success(payload),
-                "summary": _payload_summary(payload),
-                "response": payload,
-            }
-            attempts.append(attempt)
-        except Exception as err:
-            attempts.append(
-                {
-                    "started": started,
-                    "request_body": body,
-                    "ok": False,
-                    "error": f"{type(err).__name__}: {err}",
-                }
-            )
-
-    return {
-        "captured_at": _utc_now(),
-        "sn": sn,
-        "endpoint": "/swimming/v2/getCleanTimeBySn",
-        "attempts": attempts,
-    }
-
-
-async def probe_consumables_bodies(api: AiperApi, device: dict[str, Any], sn: str) -> dict[str, Any]:
+async def probe_consumables(api: AiperApi, sn: str) -> dict[str, Any]:
     """Call the consumables endpoint and capture the outcome."""
-    attempts: list[dict[str, Any]] = []
-
-    for body in consumables_candidate_bodies(device, sn):
-        started = _utc_now()
-        try:
-            payload = await api._call_with_zoneid(
-                sn,
-                lambda body=body: api._call_encrypted("POST", "/poolRobot/getConsumableList", body),
-            )
-            attempt = {
-                "started": started,
-                "request_body": body,
-                "ok": api._is_success(payload),
-                "summary": _payload_summary(payload),
-                "response": payload,
-            }
-            attempts.append(attempt)
-        except Exception as err:
-            attempts.append(
-                {
-                    "started": started,
-                    "request_body": body,
-                    "ok": False,
-                    "error": f"{type(err).__name__}: {err}",
-                }
-            )
+    body = {"sn": sn}
+    started = _utc_now()
+    try:
+        payload = await api._call_with_zoneid(
+            sn,
+            lambda: api._call_encrypted("POST", "/poolRobot/getConsumableList", body),
+        )
+        attempt = {
+            "started": started,
+            "request_body": body,
+            "ok": api._is_success(payload),
+            "summary": _payload_summary(payload),
+            "response": payload,
+        }
+    except Exception as err:
+        attempt = {
+            "started": started,
+            "request_body": body,
+            "ok": False,
+            "error": f"{type(err).__name__}: {err}",
+        }
 
     return {
         "captured_at": _utc_now(),
         "sn": sn,
         "endpoint": "/poolRobot/getConsumableList",
-        "attempts": attempts,
+        "attempts": [attempt],
     }
 
 
@@ -507,7 +454,7 @@ async def publish_machine_at_format(
     """Publish one AT command using only one payload format and wait for an ack."""
     plain, encrypted = _machine_at_message(api, sn, command)
     message = encrypted if payload_format == "encrypted" else plain
-    topic = TOPIC_WRITE.format(sn=sn)
+    topic = MqttTopic.WRITE.format(sn=sn)
     started = _utc_now()
 
     api._clear_ack_fifo(sn)
@@ -576,18 +523,14 @@ def _write_manifest(path: Path, args: argparse.Namespace, command: str, sn: str 
 
 
 async def cmd_list(args: argparse.Namespace) -> int:
-    api = await _make_api(args)
-    try:
+    async with _make_api(args) as api:
         devices = await _get_devices(api)
         print(json.dumps(redact(devices), indent=2, sort_keys=True, default=_json_default))
         return 0
-    finally:
-        await api.disconnect()
 
 
 async def cmd_snapshot(args: argparse.Namespace) -> int:
-    api = await _make_api(args)
-    try:
+    async with _make_api(args) as api:
         devices = await _get_devices(api)
         sn = _select_sn(devices, args.sn)
         out_dir = _run_dir(args.output_dir, "snapshot")
@@ -597,43 +540,15 @@ async def cmd_snapshot(args: argparse.Namespace) -> int:
         _write_summary(out_dir, "snapshot", sn, 0)
         print(out_dir)
         return 0
-    finally:
-        await api.disconnect()
-
-
-async def cmd_history_probe(args: argparse.Namespace) -> int:
-    api = await _make_api(args)
-    try:
-        devices = await _get_devices(api)
-        sn = _select_sn(devices, args.sn)
-        out_dir = _run_dir(args.output_dir, "history")
-        _write_manifest(out_dir, args, "history", sn, devices)
-        result = await probe_cleaning_history_bodies(api, sn)
-        _write_json(out_dir / "history.json", result)
-        _write_summary(out_dir, "history", sn, 0)
-
-        for idx, attempt in enumerate(result["attempts"], start=1):
-            summary = attempt.get("summary") or {}
-            print(
-                f"{idx}. body={attempt['request_body']} ok={attempt['ok']} "
-                f"code={summary.get('code')} successful={summary.get('successful')} "
-                f"records={summary.get('record_count')}"
-            )
-        print(out_dir)
-        return 0
-    finally:
-        await api.disconnect()
 
 
 async def cmd_consumables_probe(args: argparse.Namespace) -> int:
-    api = await _make_api(args)
-    try:
+    async with _make_api(args) as api:
         devices = await _get_devices(api)
         sn = _select_sn(devices, args.sn)
-        device = next((dev for dev in devices if _device_sn(dev) == sn), {})
         out_dir = _run_dir(args.output_dir, "consumables")
         _write_manifest(out_dir, args, "consumables", sn, devices)
-        result = await probe_consumables_bodies(api, device, sn)
+        result = await probe_consumables(api, sn)
         _write_json(out_dir / "consumables.json", result)
         _write_summary(out_dir, "consumables", sn, 0)
 
@@ -646,13 +561,10 @@ async def cmd_consumables_probe(args: argparse.Namespace) -> int:
             )
         print(out_dir)
         return 0
-    finally:
-        await api.disconnect()
 
 
 async def cmd_mqtt_auth(args: argparse.Namespace) -> int:
-    api = await _make_api(args)
-    try:
+    async with _make_api(args) as api:
         devices = await _get_devices(api)
         sn = _select_sn(devices, args.sn)
         out_dir = _run_dir(args.output_dir, "mqtt-auth")
@@ -676,13 +588,10 @@ async def cmd_mqtt_auth(args: argparse.Namespace) -> int:
         )
         print(out_dir)
         return 0
-    finally:
-        await api.disconnect()
 
 
 async def cmd_observe(args: argparse.Namespace) -> int:
-    api = await _make_api(args)
-    try:
+    async with _make_api(args) as api:
         devices = await _get_devices(api)
         sn = _select_sn(devices, args.sn)
         out_dir = _run_dir(args.output_dir, "observe")
@@ -694,8 +603,6 @@ async def cmd_observe(args: argparse.Namespace) -> int:
         _write_summary(out_dir, "observe", sn, recorder.count)
         print(out_dir)
         return 0
-    finally:
-        await api.disconnect()
 
 
 async def cmd_shadow(args: argparse.Namespace) -> int:
@@ -707,8 +614,7 @@ async def cmd_at(args: argparse.Namespace) -> int:
     if not args.allow_control:
         raise SystemExit("Refusing to send control command without --allow-control")
 
-    api = await _make_api(args)
-    try:
+    async with _make_api(args) as api:
         devices = await _get_devices(api)
         sn = _select_sn(devices, args.sn)
         out_dir = _run_dir(args.output_dir, "at")
@@ -730,16 +636,13 @@ async def cmd_at(args: argparse.Namespace) -> int:
         _write_summary(out_dir, "at", sn, recorder.count)
         print(out_dir)
         return 0
-    finally:
-        await api.disconnect()
 
 
 async def cmd_at_format(args: argparse.Namespace) -> int:
     if not args.allow_control:
         raise SystemExit("Refusing to send control command without --allow-control")
 
-    api = await _make_api(args)
-    try:
+    async with _make_api(args) as api:
         devices = await _get_devices(api)
         sn = _select_sn(devices, args.sn)
         out_dir = _run_dir(args.output_dir, "at-format")
@@ -775,24 +678,20 @@ async def cmd_at_format(args: argparse.Namespace) -> int:
         _write_summary(out_dir, "at-format", sn, recorder.count)
         print(out_dir)
         return 0
-    finally:
-        await api.disconnect()
 
 
 async def cmd_contract_verify(args: argparse.Namespace) -> int:
     if not args.allow_control:
         raise SystemExit("Refusing to send control commands without --allow-control")
 
-    api = await _make_api(args)
-    try:
+    async with _make_api(args) as api:
         devices = await _get_devices(api)
         sn = _select_sn(devices, args.sn)
         device = next((dev for dev in devices if _device_sn(dev) == sn), {})
         out_dir = _run_dir(args.output_dir, "contract-verify")
         _write_manifest(out_dir, args, "contract-verify", sn, devices)
 
-        history = await probe_cleaning_history_bodies(api, sn)
-        consumables = await probe_consumables_bodies(api, device, sn)
+        consumables = await probe_consumables(api, sn)
         clean_path_query = await probe_clean_path_query(api, device, sn)
 
         recorder = EventRecorder(out_dir / "mqtt.ndjson")
@@ -815,7 +714,6 @@ async def cmd_contract_verify(args: argparse.Namespace) -> int:
             "sn": sn,
             "device": device,
             "rest": {
-                "history": history,
                 "consumables": consumables,
                 "clean_path_query": clean_path_query,
             },
@@ -824,23 +722,19 @@ async def cmd_contract_verify(args: argparse.Namespace) -> int:
         _write_json(out_dir / "contract-verify.json", result)
         _write_summary(out_dir, "contract-verify", sn, recorder.count)
 
-        history_ok = [a for a in history["attempts"] if a.get("ok")]
         consumables_ok = [a for a in consumables["attempts"] if a.get("ok")]
         clean_path_ok = [a for a in clean_path_query["attempts"] if a.get("ok")]
-        print(f"history_ok={len(history_ok)} consumables_ok={len(consumables_ok)} clean_path_query_ok={len(clean_path_ok)}")
+        print(f"consumables_ok={len(consumables_ok)} clean_path_query_ok={len(clean_path_ok)}")
         for group, results in command_results.items():
             for item in results:
                 print(f"{group}: {item['command']} acknowledged={item['acknowledged']}")
         print(out_dir)
         return 0
-    finally:
-        await api.disconnect()
 
 
 async def cmd_guided(args: argparse.Namespace) -> int:
     flow = _load_discovery_flow(args.profile)
-    api = await _make_api(args)
-    try:
+    async with _make_api(args) as api:
         devices = await _get_devices(api)
         sn = _select_sn(devices, args.sn)
         out_dir = _run_dir(args.output_dir, f"guided-{args.profile}")
@@ -887,8 +781,6 @@ async def cmd_guided(args: argparse.Namespace) -> int:
         _write_summary(out_dir, f"guided:{args.profile}", sn, recorder.count)
         print(out_dir)
         return 0
-    finally:
-        await api.disconnect()
 
 
 def _write_summary(out_dir: Path, command: str, sn: str, mqtt_events: int) -> None:
@@ -921,14 +813,6 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot_parser = subparsers.add_parser("snapshot", parents=[common], help="Capture read-only REST state")
     snapshot_parser.add_argument("--sn", help="Device serial number; defaults to the first discovered device")
     snapshot_parser.set_defaults(func=cmd_snapshot)
-
-    history_parser = subparsers.add_parser(
-        "history",
-        parents=[common],
-        help="Call the cleaning-history endpoint and record the result",
-    )
-    history_parser.add_argument("--sn", help="Device serial number; defaults to the first discovered device")
-    history_parser.set_defaults(func=cmd_history_probe)
 
     consumables_parser = subparsers.add_parser(
         "consumables",

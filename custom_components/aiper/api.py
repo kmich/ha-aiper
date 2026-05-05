@@ -23,20 +23,10 @@ except Exception:  # pragma: no cover
     ZoneInfo = None  # type: ignore
 
 from .const import (
-    API_ENDPOINTS,
+    ApiEndpoint,
+    CleaningMode,
+    MqttTopic,
     XOR_KEY,
-    TOPIC_READ,
-    TOPIC_WRITE,
-    TOPIC_SHADOW_GET,
-    TOPIC_SHADOW_GET_REQUEST,
-    TOPIC_SHADOW_UPDATE,
-    TOPIC_SHADOW_UPDATE_ACCEPTED,
-    TOPIC_SHADOW_UPDATE_DELTA,
-    TOPIC_SHADOW_UPDATE_DOCUMENTS,
-    TOPIC_SHADOW_REPORT,
-    TOPIC_SHADOW_REPORT_X9,
-    SURFER_RUN_START_MODE,
-    SURFER_RUN_STOP_MODE,
     X9_SERIES_PREFIXES,
 )
 
@@ -65,18 +55,18 @@ class AiperApi:
         self,
         username: str,
         password: str,
-        region: str = "eu",
-        async_session: aiohttp.ClientSession | None = None,
+        region: str = ApiEndpoint.eu,
+        *,
+        async_session: aiohttp.ClientSession,
     ) -> None:
         """Initialize the API client."""
         self.username = username
         self.password = password
         self.region = region
-        self.base_url = API_ENDPOINTS.get(region, API_ENDPOINTS["eu"])
+        self.base_url = ApiEndpoint[region]
         self._async_session = async_session
-        self._owns_async_session = False
         self._session_conflict_until = 0.0
-        
+
         self._token: str | None = None
         self._user_id: str | None = None
         self._identity_id: str | None = None
@@ -107,7 +97,7 @@ class AiperApi:
 
         # Serialize command sends per device SN so that ack correlation is reliable.
         self._cmd_locks: dict[str, asyncio.Lock] = {}
-        
+
         # Headers from RetrofitFactory interceptor
         # REST call pacing to avoid triggering cloud throttling
         self._async_rest_lock: asyncio.Lock | None = None
@@ -303,10 +293,6 @@ class AiperApi:
         timeout: int = 30,
     ) -> tuple[int, str]:
         """Perform an async REST request with limited retries/backoff on 429/5xx."""
-        if self._async_session is None:
-            self._async_session = aiohttp.ClientSession()
-            self._owns_async_session = True
-
         max_attempts = 4
         delay = 1.0
         last_exc: Exception | None = None
@@ -462,8 +448,8 @@ class AiperApi:
                 self._headers["zoneId"] = prev
             else:
                 self._headers.pop("zoneId", None)
-    
-    
+
+
 
     async def refresh_token(self) -> bool:
         """Refresh the authentication token."""
@@ -618,9 +604,9 @@ class AiperApi:
             data = payload.get("data")
             if isinstance(data, dict):
                 out = dict(data)
-                out["_payload"] = payload
+                out["payload"] = payload
                 return out
-            return {"data": data, "_payload": payload}
+            return {"data": data, "payload": payload}
 
         except aiohttp.ClientError as err:
             _LOGGER.error("Failed to get device info for %s: %s", sn, err)
@@ -640,35 +626,6 @@ class AiperApi:
         except aiohttp.ClientError as err:
             _LOGGER.error("Failed to get status for %s: %s", sn, err)
             return None
-    
-    def _cleaning_history_bodies(self, sn: str) -> list[dict[str, Any]]:
-        """Return the current request body for the cleaning-history endpoint."""
-        return [{"sn": sn, "pageNum": 1, "pageSize": 20}]
-
-
-    async def get_cleaning_history(self, sn: str) -> Any:
-        """Get cleaning history/totals for a device without blocking the event loop."""
-
-        async def _do(body: dict[str, Any]) -> Any:
-            payload = await self._call_encrypted("POST", "/swimming/v2/getCleanTimeBySn", body)
-            if self._is_success(payload):
-                return payload
-            return None
-
-        try:
-            for body in self._cleaning_history_bodies(sn):
-                async def call_history(body: dict[str, Any] = body) -> Any:
-                    return await _do(body)
-
-                data = await self._call_with_zoneid(sn, call_history)
-                if data:
-                    return data
-            return {}
-
-        except Exception as err:
-            _LOGGER.error("Failed to get cleaning history: %s", err)
-            return {}
-
 
     async def get_consumables(self, sn: str) -> Any:
         """Get consumable status without blocking the event loop."""
@@ -733,43 +690,28 @@ class AiperApi:
             "/swimming/v2/getCleanPathSettingBySn",
         ]
 
-        candidate_paths: list[str] = []
-        for p in base_paths:
-            if p not in candidate_paths:
-                candidate_paths.append(p)
-        for p in list(candidate_paths):
-            sp = f"/surfer{p}" if not p.startswith("/surfer/") else p
-            if sp not in candidate_paths:
-                candidate_paths.append(sp)
-
         bodies: list[dict[str, Any]] = [{"sn": sn}]
         if equip_id is not None:
             bodies.insert(0, {"sn": sn, "id": equip_id})
             bodies.insert(1, {"sn": sn, "equipmentId": equip_id})
             bodies.insert(2, {"sn": sn, "deviceId": equip_id})
 
-        for path in candidate_paths:
+        for path in base_paths:
             for body in bodies:
                 payload = None
                 try:
-                    async def call_encrypted(path: str = path, body: dict[str, Any] = body) -> dict[str, Any]:
-                        return await self._call_encrypted("POST", path, body)
-
                     payload = await self._call_with_zoneid(
                         sn,
-                        call_encrypted,
+                        lambda path=path, body=body: self._call_encrypted("POST", path, body),
                     )
                 except Exception as err:
                     _LOGGER.debug("Clean path query encrypted call failed (%s): %s", path, err)
 
                 if not payload or not self._is_success(payload):
                     try:
-                        async def call_plain(path: str = path, body: dict[str, Any] = body) -> dict[str, Any]:
-                            return await self._call_plain("POST", path, body)
-
                         payload = await self._call_with_zoneid(
                             sn,
-                            call_plain,
+                            lambda path=path, body=body: self._call_plain("POST", path, body),
                         )
                     except Exception as err:
                         _LOGGER.debug("Clean path query plain call failed (%s): %s", path, err)
@@ -839,15 +781,6 @@ class AiperApi:
             "/swimming/v2/setCleanPathSetting",
         ]
 
-        candidate_paths: list[str] = []
-        for p in base_paths:
-            if p not in candidate_paths:
-                candidate_paths.append(p)
-        for p in list(candidate_paths):
-            sp = f"/surfer{p}" if not p.startswith("/surfer/") else p
-            if sp not in candidate_paths:
-                candidate_paths.append(sp)
-
         key_variants = ("cleanPath", "cleanPathSetting", "clean_path_setting")
         base_bodies: list[dict[str, Any]] = [{"sn": sn, k: int(value)} for k in key_variants]
 
@@ -861,28 +794,22 @@ class AiperApi:
         bodies.extend(base_bodies)
 
         rest_ok = False
-        for path in candidate_paths:
+        for path in base_paths:
             for body in bodies:
                 payload = None
                 try:
-                    async def call_encrypted(path: str = path, body: dict[str, Any] = body) -> dict[str, Any]:
-                        return await self._call_encrypted("POST", path, body)
-
                     payload = await self._call_with_zoneid(
                         sn,
-                        call_encrypted,
+                        lambda path=path, body=body: self._call_encrypted("POST", path, body),
                     )
                 except Exception as err:
                     _LOGGER.debug("Clean path update encrypted call failed (%s): %s", path, err)
 
                 if not payload or not self._is_success(payload):
                     try:
-                        async def call_plain(path: str = path, body: dict[str, Any] = body) -> dict[str, Any]:
-                            return await self._call_plain("POST", path, body)
-
                         payload = await self._call_with_zoneid(
                             sn,
-                            call_plain,
+                            lambda path=path, body=body: self._call_plain("POST", path, body),
                         )
                     except Exception as err:
                         _LOGGER.debug("Clean path update plain call failed (%s): %s", path, err)
@@ -1018,7 +945,7 @@ class AiperApi:
         if not self.is_mqtt_connected():
             return False
         try:
-            topic = TOPIC_SHADOW_GET_REQUEST.format(sn=sn)
+            topic = MqttTopic.SHADOW_GET_REQUEST.format(sn=sn)
             if not await self._mqtt_client.async_publish(topic, "", 1):
                 return False
             _LOGGER.debug("Published shadow get request to %s", topic)
@@ -1039,7 +966,7 @@ class AiperApi:
         if not self.is_mqtt_connected():
             return False
         try:
-            topic = TOPIC_SHADOW_UPDATE.format(sn=sn)
+            topic = MqttTopic.SHADOW_UPDATE.format(sn=sn)
             payload = {"state": {"desired": desired}}
             message = json.dumps(payload, separators=(",", ":"))
             if not await self._mqtt_client.async_publish(topic, message, 1):
@@ -1060,15 +987,15 @@ class AiperApi:
     def _subscription_topics_for_sn(self, sn: str) -> tuple[str, ...]:
         """Return MQTT topics to subscribe for a device."""
         is_x9 = any(sn.upper().startswith(prefix) for prefix in X9_SERIES_PREFIXES)
-        report_topic = TOPIC_SHADOW_REPORT_X9 if is_x9 else TOPIC_SHADOW_REPORT
+        report_topic = MqttTopic.SHADOW_REPORT_X9 if is_x9 else MqttTopic.SHADOW_REPORT
         return (
             report_topic.format(sn=sn),
-            TOPIC_READ.format(sn=sn),
-            TOPIC_SHADOW_GET.format(sn=sn),
-            TOPIC_SHADOW_UPDATE_ACCEPTED.format(sn=sn),
-            TOPIC_SHADOW_UPDATE_DELTA.format(sn=sn),
-            TOPIC_SHADOW_UPDATE_DOCUMENTS.format(sn=sn),
-            TOPIC_SHADOW_REPORT_X9.format(sn=sn),
+            MqttTopic.READ.format(sn=sn),
+            MqttTopic.SHADOW_GET.format(sn=sn),
+            MqttTopic.SHADOW_UPDATE_ACCEPTED.format(sn=sn),
+            MqttTopic.SHADOW_UPDATE_DELTA.format(sn=sn),
+            MqttTopic.SHADOW_UPDATE_DOCUMENTS.format(sn=sn),
+            MqttTopic.SHADOW_REPORT_X9.format(sn=sn),
         )
 
     def _handle_device_message(self, sn: str, topic: str, payload_bytes: bytes) -> None:
@@ -1281,7 +1208,7 @@ class AiperApi:
         payload["chksum"] = self._crc16(data_json)
 
         message = json.dumps(payload, separators=(",", ":"))
-        topic = TOPIC_WRITE.format(sn=sn)
+        topic = MqttTopic.WRITE.format(sn=sn)
 
         try:
             if self.is_mqtt_connected():
@@ -1301,14 +1228,11 @@ class AiperApi:
             return False
 
 
-
-
-
-    async def set_cleaning_mode(self, sn: str, mode: int) -> bool:
+    async def set_cleaning_mode(self, sn: str, mode: int | CleaningMode) -> bool:
         """Set a selectable cleaning mode."""
         _LOGGER.info("Setting cleaning mode for %s: %s", sn, mode)
 
-        cmd_result = await self.send_machine_at(sn, f"AT+MODE={mode}")
+        cmd_result = await self.send_machine_at(sn, f"AT+PLAN={int(mode)}")
 
         try:
             await self.request_shadow(sn)
@@ -1317,10 +1241,11 @@ class AiperApi:
 
         return cmd_result is True
 
-    async def set_surfer_running(self, sn: str, running: bool) -> bool:
-        """Start or stop a Surfer-style surface skimmer."""
-        mode = SURFER_RUN_START_MODE if running else SURFER_RUN_STOP_MODE
-        _LOGGER.info("Setting Surfer run state for %s: %s", sn, running)
+
+    async def set_running(self, sn: str, running: bool) -> bool:
+        """Start or stop running."""
+        mode = 1 if running else 0
+        _LOGGER.info("Setting running mode for %s: %s", sn, mode)
 
         cmd_result = await self.send_machine_at(sn, f"AT+MODE={mode}")
 
@@ -1353,10 +1278,5 @@ class AiperApi:
                 pass
         self._mqtt_connected = False
         self._mqtt_client = None
-
-        if self._owns_async_session and self._async_session is not None:
-            await self._async_session.close()
-            self._async_session = None
-            self._owns_async_session = False
 
         _LOGGER.info("Disconnected from Aiper API")

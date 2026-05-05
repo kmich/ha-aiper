@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from custom_components.aiper.const import status_high_bit, status_label, status_value
+from custom_components.aiper.const import status_running, status_label, status_value
 from custom_components.aiper.state import normalize_device_state
 
 
@@ -14,26 +14,28 @@ def test_status_label_uses_lower_status_bits() -> None:
     assert status_label(129) == "Cleaning"
 
 
-def test_status_high_bit_preserves_observed_flag() -> None:
-    """The high status bit is tracked separately from the base state."""
-    assert status_high_bit(128) is True
-    assert status_high_bit(129) is True
-    assert status_high_bit(1) is False
+def test_status_running_uses_operating_base_status() -> None:
+    """Running reflects actual operation, not merely the high status bit."""
+    assert status_running(128) is False
+    assert status_running(129) is True
+    assert status_running(1) is True
+    assert status_running(130) is True
+    assert status_running(131) is False
 
 
 def test_surfer_standby_state_is_normalized_at_boundary() -> None:
     """Surfer reports mode 5 while stopped; normalize the exposed mode to off."""
     device = {
         "model": "Surfer_S2",
-        "machineStatus": 0,
-        "shadow": {"machine": {"status": 0, "mode": 5}},
+        "machineStatus": 128,
+        "mode": 5,
     }
 
-    normalize_device_state(device)
+    state = normalize_device_state(device)
 
-    assert device["machineStatus"] == 0
-    assert device["running"] is False
-    assert device["mode"] == 0
+    assert state["running"].value is False
+    assert state["mode"].attributes == {"code": 0}
+    assert state["mode"].value == "Off"
 
 
 def test_running_status_is_normalized_to_base_status() -> None:
@@ -41,12 +43,29 @@ def test_running_status_is_normalized_to_base_status() -> None:
     device = {
         "model": "Surfer_S2",
         "machineStatus": 129,
-        "shadow": {"machine": {"status": 129, "mode": 1}},
+        "mode": 1,
     }
 
-    normalize_device_state(device)
+    state = normalize_device_state(device)
 
-    assert device["machineStatus"] == 1
-    assert device["running"] is True
-    assert device["mode"] == 1
+    assert state["running"].value is True
+    assert state["mode"].attributes == {"code": 1}
+    assert state["mode"].value == "Manual"
 
+
+def test_identity_metadata_is_normalized_at_boundary() -> None:
+    """Platform entities should not need model/name/firmware fallback chains."""
+    device = {
+        "sn": "SN123",
+        "name": "Pool Bot",
+        "model": "Surfer_S2",
+        "fw_main": "V7.1.0",
+    }
+
+    state = normalize_device_state(device)
+
+    device_info = state["device_info"]
+    assert device_info.value == "Pool Bot"
+    assert device_info.attributes["model"] == "Surfer_S2"
+    assert device_info.attributes["sw_version"] == "V7.1.0"
+    assert state["device_family"].value == "surfer"

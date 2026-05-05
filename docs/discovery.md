@@ -130,12 +130,10 @@ uv run tools/aiper_probe.py contract-verify --sn T1B50900024 --allow-control
 `list` logs in and prints the discovered devices as redacted JSON. Use it first
 to confirm the account, region, and serial numbers.
 
-`snapshot` captures read-only REST state for one device. It calls the same
-methods used by the integration:
+`snapshot` captures read-only REST state for one device:
 
 - `get_device_status`
 - `get_device_info`
-- `get_cleaning_history`
 - `get_consumables`
 - `query_clean_path_setting`
 
@@ -153,8 +151,8 @@ shadow request.
 `--allow-control` because AT commands can affect a real device.
 
 `contract-verify` runs targeted REST and MQTT command probes. It is intended for
-specific protocol questions such as history body shape, consumables body shape,
-clean-path endpoint behavior, and legacy AT fallback behavior. It requires
+specific protocol questions such as consumables body shape, clean-path endpoint
+behavior, and legacy AT fallback behavior. It requires
 `--allow-control` because it sends commands to the device.
 
 `guided` loads a YAML flow from `tools/discovery_flows/`, prompts the user for
@@ -232,7 +230,7 @@ guesses.
 
 1. Run `snapshot` for the device.
 2. Run targeted probes for known protocol questions:
-   `history`, `consumables`, `at-format`, or `contract-verify`.
+   `consumables`, `at-format`, or `contract-verify`.
 3. Run `guided --profile generic` or a more specific app-action flow
    when the missing evidence depends on official app workflows.
 4. During guided steps, use the official Aiper app to perform the requested

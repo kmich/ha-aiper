@@ -1,20 +1,22 @@
-"""Device-family profiles and capability discovery for Aiper devices."""
+"""Device-family profiles and capability discovery for Aiper devices.
+
+Profiles answer two separate questions:
+
+- Which Home Assistant surfaces should this device expose?
+- How should raw device-reported numeric mode IDs be labelled?
+
+Do not treat every reported `Machine.mode` ID as a commandable cleaning mode.
+Surfer devices report mode as read-only cleaning context, while Scuba exposes
+known selectable cleaning modes. Shark/unknown devices only expose a cleaning
+mode select when the cloud explicitly reports supported mode IDs.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from .const import MODE_MAP, ModelMarker
-
-
-class DeviceFamily(StrEnum):
-    """Known broad Aiper device families."""
-
-    SCUBA = "scuba"
-    SURFER = "surfer"
-    SHARK = "shark"
-    UNKNOWN = "unknown"
+from .const import DeviceFamily, CleaningMode, mode_label
 
 
 class Capability(StrEnum):
@@ -25,25 +27,20 @@ class Capability(StrEnum):
     STATUS = "status"
     WARNING = "warning"
     WIFI = "wifi"
-    HISTORY = "history"
     FIRMWARE = "firmware"
     MQTT_SHADOW = "mqtt_shadow"
     CLEANING_MODE_SELECT = "mode_select"
-    RUN_CONTROL = "run_control"
+    RUNNING_CONTROL = "running_control"
     CLEAN_PATH = "clean_path"
     WATER_TEMPERATURE = "water_temperature"
     IN_WATER = "in_water"
     SOLAR_CHARGING = "solar_charging"
     BLUETOOTH = "bluetooth"
     DEVICE_LINK = "device_link"
-    ROLLER_BRUSH = "roller_brush"
-    MICROMESH_FILTER = "micromesh_filter"
-    CATERPILLAR_TREAD = "caterpillar_tread"
-    PROPELLER_MAINTENANCE = "propeller_maintenance"
 
 
-SURFER_MODEL_MARKERS = (ModelMarker.SURFER.value,)
-SHARK_MODEL_MARKERS = (ModelMarker.SHARK.value,)
+SURFER_MODEL_MARKERS = (DeviceFamily.SURFER.value,)
+SHARK_MODEL_MARKERS = (DeviceFamily.SHARK.value,)
 
 COMMON_CAPABILITIES = frozenset(
     {
@@ -52,7 +49,6 @@ COMMON_CAPABILITIES = frozenset(
         Capability.STATUS,
         Capability.WARNING,
         Capability.WIFI,
-        Capability.HISTORY,
         Capability.FIRMWARE,
         Capability.MQTT_SHADOW,
         Capability.BLUETOOTH,
@@ -66,21 +62,20 @@ SCUBA_CAPABILITIES = COMMON_CAPABILITIES | frozenset(
         Capability.CLEAN_PATH,
         Capability.WATER_TEMPERATURE,
         Capability.IN_WATER,
-        Capability.ROLLER_BRUSH,
-        Capability.MICROMESH_FILTER,
-        Capability.CATERPILLAR_TREAD,
     }
 )
 
 SURFER_CAPABILITIES = COMMON_CAPABILITIES | frozenset(
     {
-        Capability.RUN_CONTROL,
-        Capability.PROPELLER_MAINTENANCE,
+        Capability.RUNNING_CONTROL,
         Capability.SOLAR_CHARGING,
     }
 )
 
 SHARK_CAPABILITIES = COMMON_CAPABILITIES
+
+SCUBA_DEFAULT_MODE_IDS = [int(CleaningMode.SMART), int(CleaningMode.FLOOR), int(CleaningMode.WALL), int(CleaningMode.WATERLINE), int(CleaningMode.SCHEDULED)]
+SURFER_DEFAULT_MODE_IDS = [0, int(CleaningMode.SMART), int(CleaningMode.SCHEDULED)]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -93,57 +88,41 @@ class DeviceProfile:
 
 
 def device_model_string(device: dict[str, Any]) -> str:
-    """Return the most specific model string available from a device payload."""
-    return str(
-        device.get("model")
-        or device.get("deviceModel")
-        or device.get("modelName")
-        or device.get("productName")
-        or ""
-    )
+    """Return the canonical model string from a device payload."""
+    return str(device.get("model") or "")
 
 
 def device_family(device: dict[str, Any]) -> DeviceFamily:
     """Infer the broad device family from model payload fields."""
     model = device_model_string(device).lower()
-    if ModelMarker.SCUBA.value in model:
+    if DeviceFamily.SCUBA.value in model:
         return DeviceFamily.SCUBA
-    if any(marker in model for marker in SURFER_MODEL_MARKERS):
+    if DeviceFamily.SURFER.value in model:
         return DeviceFamily.SURFER
-    if any(marker in model for marker in SHARK_MODEL_MARKERS):
+    if DeviceFamily.SHARK.value in model:
         return DeviceFamily.SHARK
     return DeviceFamily.UNKNOWN
 
 
 def _mode_map_for_ids(family: DeviceFamily, mode_ids: list[int]) -> dict[int, str]:
     if family == DeviceFamily.SCUBA:
-        return {mode_id: MODE_MAP.get(mode_id, f"Mode {mode_id}") for mode_id in mode_ids}
+        return {mode_id: mode_label(mode_id) for mode_id in mode_ids}
     if family == DeviceFamily.SURFER:
         mode_map = {0: "Off", 1: "Manual", 5: "Scheduled"}
         return {mode_id: mode_map.get(mode_id, f"Mode {mode_id}") for mode_id in sorted({0, *mode_ids})}
     return {mode_id: f"Mode {mode_id}" for mode_id in mode_ids}
 
 
-def _has_consumable(device: dict[str, Any], *terms: str) -> bool:
-    wanted = tuple(term.lower() for term in terms)
-    for item in device.get("_ha_consumables") or []:
-        if not isinstance(item, dict):
-            continue
-        haystack = " ".join(
-            str(item.get(key, ""))
-            for key in ("name", "key", "raw_name", "type", "model")
-            if item.get(key) is not None
-        ).lower()
-        if all(term in haystack for term in wanted):
-            return True
-    return False
-
-
 def derive_device_profile(device: dict[str, Any]) -> DeviceProfile:
     """Derive a device profile from identity fields and discovered payload evidence."""
     family = device_family(device)
-    supported = device.get("_ha_supported_mode_ids")
+    supported = device.get("supported_mode_ids")
     mode_ids = [int(mode_id) for mode_id in supported] if isinstance(supported, list) else []
+    if not mode_ids:
+        if family == DeviceFamily.SCUBA:
+            mode_ids = list(SCUBA_DEFAULT_MODE_IDS)
+        elif family == DeviceFamily.SURFER:
+            mode_ids = list(SURFER_DEFAULT_MODE_IDS)
 
     if family == DeviceFamily.SCUBA:
         capabilities = set(SCUBA_CAPABILITIES)
@@ -151,30 +130,15 @@ def derive_device_profile(device: dict[str, Any]) -> DeviceProfile:
         capabilities = set(SURFER_CAPABILITIES)
     elif family == DeviceFamily.SHARK:
         capabilities = set(SHARK_CAPABILITIES)
-        if bool(device.get("_ha_supported_modes_explicit")) and mode_ids:
+        if bool(device.get("supported_modes_explicit")) and mode_ids:
             capabilities.add(Capability.CLEANING_MODE_SELECT)
     else:
         capabilities = set(COMMON_CAPABILITIES)
 
-    shadow = device.get("shadow") or {}
-    machine = shadow.get("machine") or {}
-    if isinstance(machine, dict):
-        if machine.get("temp") is not None:
-            capabilities.add(Capability.WATER_TEMPERATURE)
-        if machine.get("in_water") is not None:
-            capabilities.add(Capability.IN_WATER)
-        if machine.get("solar_status") is not None:
-            capabilities.add(Capability.SOLAR_CHARGING)
-
-    if _has_consumable(device, "propeller"):
-        capabilities.add(Capability.PROPELLER_MAINTENANCE)
-    if _has_consumable(device, "roller", "brush"):
-        capabilities.add(Capability.ROLLER_BRUSH)
-    if _has_consumable(device, "micromesh"):
-        capabilities.add(Capability.MICROMESH_FILTER)
-    if _has_consumable(device, "caterpillar"):
-        capabilities.add(Capability.CATERPILLAR_TREAD)
-
+    if device.get("temp") is not None:
+        capabilities.add(Capability.WATER_TEMPERATURE)
+    if device.get("in_water") is not None:
+        capabilities.add(Capability.IN_WATER)
     mode_map = _mode_map_for_ids(family, mode_ids)
 
     return DeviceProfile(
@@ -186,6 +150,6 @@ def derive_device_profile(device: dict[str, Any]) -> DeviceProfile:
 
 def has_capability(device: dict[str, Any], capability: Capability | str) -> bool:
     """Return whether a normalized device payload has a capability."""
-    caps = device.get("_ha_capabilities") or []
+    caps = device.get("capabilities") or []
     value = capability.value if isinstance(capability, Capability) else str(capability)
     return value in caps

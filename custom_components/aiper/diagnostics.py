@@ -13,7 +13,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
-from .device_images import device_model_image_url
 from .redaction import redact, redact_str
 
 
@@ -74,11 +73,17 @@ async def async_get_config_entry_diagnostics(
         # Device snapshot (already reasonably bounded). Redact any sensitive keys.
         try:
             diag["devices"] = redact(coordinator.data or {})
-            diag["device_model_images"] = {
-                sn: image_url
-                for sn, device in (coordinator.data or {}).items()
-                if isinstance(device, dict) and (image_url := device_model_image_url(device))
-            }
+            image_urls = {}
+            for sn, device in (coordinator.data or {}).items():
+                if not isinstance(device, dict):
+                    continue
+                try:
+                    image_url = device["entity_picture"].value
+                except KeyError:
+                    image_url = None
+                if image_url:
+                    image_urls[sn] = image_url
+            diag["device_model_images"] = image_urls
         except Exception:
             diag["devices"] = "<unavailable>"
 

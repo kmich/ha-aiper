@@ -14,11 +14,9 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import AiperApi, AiperSessionConflict
 from .const import (
-    CONF_ENABLE_MQTT,
+    CONF_METADATA_REFRESH_HOURS,
     CONF_MQTT_DEBUG,
-    CONF_POLL_INTERVAL,
-    CONF_QUEUE_OFFLINE_COMMANDS,
-    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_METADATA_REFRESH_HOURS,
     DOMAIN,
 )
 
@@ -167,12 +165,13 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         current = self._config_entry.options
         schema = vol.Schema(
             {
-                vol.Optional(CONF_ENABLE_MQTT, default=current.get(CONF_ENABLE_MQTT, True)): bool,
                 vol.Optional(CONF_MQTT_DEBUG, default=current.get(CONF_MQTT_DEBUG, False)): bool,
-                vol.Optional(CONF_QUEUE_OFFLINE_COMMANDS, default=current.get(CONF_QUEUE_OFFLINE_COMMANDS, False)): bool,
-                vol.Optional(CONF_POLL_INTERVAL, default=current.get(CONF_POLL_INTERVAL, DEFAULT_SCAN_INTERVAL)): vol.All(
+                vol.Optional(
+                    CONF_METADATA_REFRESH_HOURS,
+                    default=current.get(CONF_METADATA_REFRESH_HOURS, DEFAULT_METADATA_REFRESH_HOURS),
+                ): vol.All(
                     vol.Coerce(int),
-                    vol.Range(min=5, max=3600),
+                    vol.Range(min=1, max=168),
                 ),
             }
         )

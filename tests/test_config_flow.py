@@ -21,10 +21,8 @@ from pytest_homeassistant_custom_component.common import (
 from custom_components.aiper import config_flow as aiper_config_flow
 from custom_components.aiper.config_flow import CONF_REGION, InvalidAuth, validate_input
 from custom_components.aiper.const import (
-    CONF_ENABLE_MQTT,
+    CONF_METADATA_REFRESH_HOURS,
     CONF_MQTT_DEBUG,
-    CONF_POLL_INTERVAL,
-    CONF_QUEUE_OFFLINE_COMMANDS,
     DOMAIN,
 )
 
@@ -254,10 +252,8 @@ async def test_options_flow_defaults_and_updates(hass: HomeAssistant, aiper_flow
             CONF_REGION: "asia",
         },
         options={
-            CONF_ENABLE_MQTT: False,
+            CONF_METADATA_REFRESH_HOURS: 12,
             CONF_MQTT_DEBUG: True,
-            CONF_QUEUE_OFFLINE_COMMANDS: True,
-            CONF_POLL_INTERVAL: 30,
         },
     )
     entry.add_to_hass(hass)
@@ -268,10 +264,8 @@ async def test_options_flow_defaults_and_updates(hass: HomeAssistant, aiper_flow
     assert result["step_id"] == "init"
 
     user_input = {
-        CONF_ENABLE_MQTT: True,
+        CONF_METADATA_REFRESH_HOURS: 24,
         CONF_MQTT_DEBUG: False,
-        CONF_QUEUE_OFFLINE_COMMANDS: False,
-        CONF_POLL_INTERVAL: 120,
     }
     result = cast(
         dict[str, Any],
