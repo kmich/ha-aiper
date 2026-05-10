@@ -350,6 +350,11 @@ def _parse_cleaning_history(raw: Any) -> tuple[int | None, float | None, list[di
                 return [n / 3600.0]
             # ambiguous numeric string: prefer minutes, then seconds, then hours
             return [n / 60.0, n / 3600.0, n]
+        # numeric (int/float): treat as minutes first, then seconds, then hours
+        n = _num(v)
+        if n is None:
+            return []
+        return [n / 60.0, n / 3600.0, n]
 
     COUNT_KEYS = (
         'totalNumberOfCleanings',
