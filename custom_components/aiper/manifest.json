@@ -7,6 +7,7 @@
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/kmich/ha-aiper",
+  "integration_type": "hub",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/kmich/ha-aiper/issues",
   "requirements": [
@@ -14,5 +15,5 @@
     "certifi>=2024.0.0",
     "requests>=2.31.0"
   ],
-  "version": "0.7.3"
+  "version": "0.7.4"
 }

@@ -1,5 +1,4 @@
 {
   "name": "Aiper",
-  "zip_release": true,
-  "filename": "aiper.zip"
+  "render_readme": true
 }
