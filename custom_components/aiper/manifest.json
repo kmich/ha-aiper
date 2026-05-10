@@ -15,5 +15,5 @@
     "certifi>=2024.0.0",
     "requests>=2.31.0"
   ],
-  "version": "0.7.4"
+  "version": "0.7.5"
 }
