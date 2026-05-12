@@ -14,8 +14,6 @@ from .const import DOMAIN, CONF_ENABLE_MQTT, CONF_MQTT_DEBUG, CONF_POLL_INTERVAL
 from .coordinator import AiperDataUpdateCoordinator
 from .api import AiperApi
 
-import pathlib
-
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [
@@ -321,16 +319,6 @@ async def _enable_previously_disabled_entities(
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Aiper from a config entry."""
-
-    # Purge stale bytecode so users upgrading from broken releases don't
-    # get AttributeError from cached .pyc files referencing old module layout.
-    try:
-        _pycache = pathlib.Path(__file__).parent / "__pycache__"
-        for _pyc in _pycache.glob("*.pyc"):
-            _pyc.unlink(missing_ok=True)
-    except Exception:
-        pass
-
     hass.data.setdefault(DOMAIN, {})
 
     api = AiperApi(
