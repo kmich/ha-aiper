@@ -93,6 +93,10 @@ class AiperApi:
         self._rest_lock = threading.Lock()
         self._rest_min_interval = 0.8  # seconds between REST calls
         self._rest_next_allowed = 0.0
+
+        # Cache the last-working clean-path endpoint+body so repeated calls skip
+        # the full 12-path scan.  Keyed by SN.
+        self._clean_path_ok: dict[str, dict] = {}
         self._session.headers.update({
             "Content-Type": "application/json",
             "version": "3.0.0",  # App version
@@ -794,34 +798,47 @@ def _request_with_backoff(self, method: str, url: str, *, headers: dict, json_bo
                     bodies.append(b)
         bodies.extend(base_bodies)
 
-        rest_ok = False
-        for path in candidate_paths:
-            for body in bodies:
-                payload = None
+        def _try_path_body(path: str, body: dict) -> bool:
+            payload = None
+            try:
+                payload = self._call_with_zoneid(sn, lambda p=path, b=body: self._call_encrypted("POST", p, b))
+            except Exception as err:
+                _LOGGER.debug("Clean path update encrypted call failed (%s): %s", path, err)
+            if not payload or not self._is_success(payload):
                 try:
-                    payload = self._call_with_zoneid(sn, lambda p=path, b=body: self._call_encrypted("POST", p, b))
+                    payload = self._call_with_zoneid(sn, lambda p=path, b=body: self._call_plain("POST", p, b))
                 except Exception as err:
-                    _LOGGER.debug("Clean path update encrypted call failed (%s): %s", path, err)
+                    _LOGGER.debug("Clean path update plain call failed (%s): %s", path, err)
+            if payload and self._is_success(payload):
+                _LOGGER.debug(
+                    "Clean path REST OK via %s (code=%s successful=%s message=%s) keys=%s",
+                    path, payload.get("code"), payload.get("successful"),
+                    payload.get("message"), list(body.keys()),
+                )
+                return True
+            return False
 
-                if not payload or not self._is_success(payload):
-                    try:
-                        payload = self._call_with_zoneid(sn, lambda p=path, b=body: self._call_plain("POST", p, b))
-                    except Exception as err:
-                        _LOGGER.debug("Clean path update plain call failed (%s): %s", path, err)
+        rest_ok = False
 
-                if payload and self._is_success(payload):
-                    rest_ok = True
-                    _LOGGER.debug(
-                        "Clean path REST OK via %s (code=%s successful=%s message=%s) keys=%s",
-                        path,
-                        payload.get("code"),
-                        payload.get("successful"),
-                        payload.get("message"),
-                        list(body.keys()),
-                    )
+        # Try the last-working combination first to avoid the full scan on every call.
+        cached = self._clean_path_ok.get(sn)
+        if cached:
+            cached_body = dict(cached["body"])
+            for k in list(cached_body.keys()):
+                if k in ("cleanPath", "cleanPathSetting", "clean_path_setting"):
+                    cached_body[k] = int(value)
+            if _try_path_body(cached["path"], cached_body):
+                rest_ok = True
+
+        if not rest_ok:
+            for path in candidate_paths:
+                for body in bodies:
+                    if _try_path_body(path, body):
+                        rest_ok = True
+                        self._clean_path_ok[sn] = {"path": path, "body": body}
+                        break
+                if rest_ok:
                     break
-            if rest_ok:
-                break
 
         mqtt_published = False
         if self.is_mqtt_connected():
