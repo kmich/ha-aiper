@@ -350,6 +350,11 @@ def _parse_cleaning_history(raw: Any) -> tuple[int | None, float | None, list[di
                 return [n / 3600.0]
             # ambiguous numeric string: prefer minutes, then seconds, then hours
             return [n / 60.0, n / 3600.0, n]
+        # Numeric totals from the API are ambiguous; prefer minutes, then seconds, then hours.
+        n = _num(v)
+        if n is None:
+            return []
+        return [n / 60.0, n / 3600.0, n]
 
     COUNT_KEYS = (
         'totalNumberOfCleanings',
@@ -1174,7 +1179,11 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         raw_hist = await self.hass.async_add_executor_job(self.api.get_cleaning_history, sn)
                     except Exception as err:
                         _LOGGER.debug("Cleaning history fetch failed for %s: %s", sn, err)
-                    tcount, thours, recs = _parse_cleaning_history(raw_hist)
+                    try:
+                        tcount, thours, recs = _parse_cleaning_history(raw_hist)
+                    except Exception as err:
+                        _LOGGER.debug("Cleaning history parse failed for %s: %s", sn, err)
+                        tcount, thours, recs = None, None, []
                     self._history_cache[sn] = {
                         "total_count": tcount,
                         "total_hours": thours,
