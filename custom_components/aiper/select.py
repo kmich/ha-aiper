@@ -308,6 +308,10 @@ class AiperCleaningModeSelect(AiperSelectBase):
             if label and label not in options:
                 self._mode_ids.append(int(mid))
                 options.append(label)
+        if not options:
+            for mid, label in MODE_MAP.items():
+                self._mode_ids.append(int(mid))
+                options.append(label)
         self._attr_options = options
 
     def _get_current_mode_id(self) -> int | None:
@@ -348,6 +352,17 @@ class AiperCleaningModeSelect(AiperSelectBase):
             if mode_id is not None:
                 return mode_id
 
+        try:
+            cmd = self.coordinator.get_command_state(self._sn) or {}
+            for bucket in ("pending", "last"):
+                entry = (cmd.get(bucket) or {}).get("mode")
+                if isinstance(entry, dict):
+                    mode_id = _normalize_mode_id(entry.get("target"))
+                    if mode_id is not None:
+                        return mode_id
+        except Exception:
+            pass
+
         return None
 
     @property
@@ -355,13 +370,23 @@ class AiperCleaningModeSelect(AiperSelectBase):
         mid = self._get_current_mode_id()
         if mid is None:
             return None
-        return MODE_MAP.get(mid)
+        label = MODE_MAP.get(mid)
+        if label is None:
+            label = f"Mode {mid}"
+            try:
+                opts = list(self._attr_options or [])
+                if label not in opts:
+                    opts.append(label)
+                    self._attr_options = opts
+            except Exception:
+                pass
+        return label
 
     async def async_select_option(self, option: str) -> None:
         self._raise_if_control_blocked()
 
         # Map label -> id
-        mode_id = None
+        mode_id = _normalize_mode_id(option)
         for mid, label in MODE_MAP.items():
             if label == option:
                 mode_id = int(mid)

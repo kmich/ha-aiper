@@ -520,6 +520,9 @@ class AiperApi:
         bodies = [{"sn": sn}]
         if equip_id is not None:
             bodies[:0] = [
+                {"id": equip_id},
+                {"equipmentId": equip_id},
+                {"deviceId": equip_id},
                 {"sn": sn, "id": equip_id},
                 {"sn": sn, "equipmentId": equip_id},
                 {"sn": sn, "deviceId": equip_id},
@@ -553,26 +556,63 @@ class AiperApi:
 
     @staticmethod
     def _extract_clean_path_value(payload: dict[str, Any]) -> int | None:
-        data = payload.get("data")
-        for source in (data, payload):
-            if not isinstance(source, dict):
+        def _normalize(val: Any) -> int | None:
+            if val is None or isinstance(val, bool):
+                return None
+            if isinstance(val, int):
+                return 0 if val == -1 else int(val)
+            if isinstance(val, float) and val.is_integer():
+                num = int(val)
+                return 0 if num == -1 else num
+            if isinstance(val, str):
+                clean = val.strip()
+                if not clean:
+                    return None
+                if clean.lstrip("-").isdigit():
+                    num = int(clean)
+                    return 0 if num == -1 else num
+                norm = " ".join(clean.lower().replace("_", " ").replace("-", " ").split())
+                if "adaptive" in norm or norm == "auto":
+                    return 1
+                if "s shaped" in norm or "s shape" in norm or norm in {"s", "standard", "default"}:
+                    return 0
+            return None
+
+        keys = (
+            "cleanPath",
+            "clean_path",
+            "cleanPathSetting",
+            "clean_path_setting",
+            "pathPreference",
+            "path_preference",
+            "sweepPath",
+            "swimPath",
+            "route",
+            "pattern",
+            "path",
+            "value",
+        )
+        stack: list[Any] = [payload.get("data"), payload]
+        seen: set[int] = set()
+        while stack:
+            source = stack.pop()
+            if source is None:
                 continue
-            for key in ("cleanPath", "cleanPathSetting", "clean_path_setting", "path", "value"):
-                val = source.get(key)
-                if val is None:
-                    continue
-                if isinstance(val, int):
-                    return 0 if val == -1 else int(val)
-                if isinstance(val, str):
-                    clean = val.strip()
-                    if clean.lstrip("-").isdigit():
-                        num = int(clean)
-                        return 0 if num == -1 else num
-                    norm = clean.lower().replace("_", " ").replace("-", " ")
-                    if "adaptive" in norm:
-                        return 1
-                    if "shape" in norm or norm.strip() == "s":
-                        return 0
+            ident = id(source)
+            if ident in seen:
+                continue
+            seen.add(ident)
+            if isinstance(source, dict):
+                for key in keys:
+                    if key in source:
+                        value = _normalize(source.get(key))
+                        if value is not None:
+                            return value
+                for value in source.values():
+                    if isinstance(value, (dict, list)):
+                        stack.append(value)
+            elif isinstance(source, list):
+                stack.extend(item for item in source if isinstance(item, (dict, list)))
         return None
 
     def update_clean_path_setting(self, sn: str, value: int) -> bool:
@@ -587,7 +627,8 @@ class AiperApi:
             "/swimming/v2/setCleanPathSetting",
         )
         candidate_paths = list(dict.fromkeys([*paths, *[f"/surfer{p}" for p in paths]]))
-        base_bodies = [{"sn": sn, key: int(value)} for key in ("cleanPath", "cleanPathSetting", "clean_path_setting")]
+        value_keys = ("cleanPath", "cleanPathSetting", "clean_path_setting", "path", "value")
+        base_bodies = [{"sn": sn, key: int(value)} for key in value_keys]
         bodies: list[dict[str, Any]] = []
         if equip_id is not None:
             for base in base_bodies:
@@ -595,6 +636,9 @@ class AiperApi:
                     body = dict(base)
                     body[id_key] = equip_id
                     bodies.append(body)
+            for id_key in ("id", "equipmentId", "deviceId"):
+                for key in value_keys:
+                    bodies.append({id_key: equip_id, key: int(value)})
         bodies.extend(base_bodies)
 
         rest_ok = False
@@ -629,6 +673,7 @@ class AiperApi:
                 {"cleanPathSetting": int(value)},
                 {"clean_path_setting": int(value)},
                 {"cmd": "AUTO", "param": [int(value)]},
+                {"cmd": "AUTO", "params": [int(value)]},
                 {"cmd": f"AUTO {int(value)}"},
             ):
                 try:
@@ -640,6 +685,7 @@ class AiperApi:
                 f"AUTO {int(value)}",
                 f"AT+CPATH={int(value)}",
                 f"AT+CLEANPATH={int(value)}",
+                f"AT+SETPATH={int(value)}",
             ):
                 try:
                     result = self.send_machine_at(sn, at_cmd)
@@ -666,26 +712,34 @@ class AiperApi:
             "/swimming/v2/setWorkMode",
             "/network/setWorkMode",
         )
-        bodies: list[dict[str, Any]] = [{"sn": sn, "mode": int(mode)}, {"sn": sn, "workMode": int(mode)}]
+        candidate_paths = list(dict.fromkeys([*paths, *[f"/surfer{p}" for p in paths]]))
+        mode_keys = ("mode", "workMode", "work_mode", "modeId", "workModeId", "cleanMode", "cleanModeId")
+        bodies: list[dict[str, Any]] = [{"sn": sn, key: int(mode)} for key in mode_keys]
         if equip_id is not None:
-            bodies.extend(
-                [
-                    {"sn": sn, "equipmentId": equip_id, "mode": int(mode)},
-                    {"sn": sn, "deviceId": equip_id, "mode": int(mode)},
-                    {"equipmentId": equip_id, "mode": int(mode)},
-                ]
-            )
-        for path in paths:
+            for id_key in ("id", "equipmentId", "deviceId"):
+                for key in mode_keys:
+                    bodies.append({"sn": sn, id_key: equip_id, key: int(mode)})
+                    bodies.append({id_key: equip_id, key: int(mode)})
+        for path in candidate_paths:
             for body in bodies:
+                payload = None
                 try:
                     payload = self._call_with_zoneid(
                         sn,
                         lambda p=path, b=body: self._call_encrypted("POST", p, b),
                     )
-                    if self._is_success(payload):
-                        return True
                 except Exception:
                     pass
+                if not payload or not self._is_success(payload):
+                    try:
+                        payload = self._call_with_zoneid(
+                            sn,
+                            lambda p=path, b=body: self._call_plain("POST", p, b),
+                        )
+                    except Exception:
+                        payload = None
+                if payload and self._is_success(payload):
+                    return True
         return False
 
     def connect_mqtt(self) -> bool:
@@ -853,11 +907,14 @@ class AiperApi:
             return ack
 
     def send_machine_at(self, sn: str, at_cmd: str, timeout: float = 4.0) -> bool | None:
+        if not self.is_mqtt_connected():
+            _LOGGER.warning("Aiper MQTT not connected; cannot send AT command")
+            return False
         payload = {"sn": sn, "timeZone": self._timezone_string_for_sn(sn), "cmd": at_cmd}
         with self._cmd_locks[sn]:
             self._clear_ack_fifo(sn)
             if not self.send_command(sn, "Machine", payload):
-                return None
+                return False
             ack = self._wait_for_ack(sn, timeout=timeout)
             if ack is None:
                 return None
@@ -929,12 +986,18 @@ class AiperApi:
             _LOGGER.debug("Aiper REST mode update failed for %s: %s", sn, err)
 
         result: bool | None = False
-        for at_cmd in (f"AT+MODE={int(mode)}", f"AT+WORKMODE={int(mode)}"):
+        for at_cmd in (f"AT+MODE={int(mode)}", f"AT+WORKMODE={int(mode)}", f"AT+WMODE={int(mode)}"):
             result = self.send_machine_at(sn, at_cmd)
             if result is True or result is None:
                 break
+
+        direct_ok = False
+        if result is False and self.is_mqtt_connected():
+            direct_ok = self._send_mode_commands(sn, int(mode))
+
+        shadow_ok = self.publish_shadow_update(sn, {"Machine": {"mode": int(mode), "workMode": int(mode)}})
         self.request_shadow(sn)
-        return bool(rest_ok or result is True or result is None)
+        return bool(rest_ok or result is True or result is None or direct_ok or shadow_ok)
 
     def _send_mode_commands(self, sn: str, mode: int) -> bool:
         results = [
