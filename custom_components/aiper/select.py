@@ -100,6 +100,13 @@ def _normalize_mode_id(value: Any) -> int | None:
             if possible.lstrip("-").isdigit():
                 return int(possible)
 
+        # Partial match: "Smart cleaning" → MODE_MAP label "Smart" is in "smart cleaning".
+        normalized = " ".join(text.replace("_", " ").replace("-", " ").split()).casefold()
+        for mid, label in MODE_MAP.items():
+            label_norm = label.casefold()
+            if label_norm and label_norm in normalized:
+                return int(mid)
+
         return None
 
     if isinstance(value, dict):
@@ -362,6 +369,14 @@ class AiperCleaningModeSelect(AiperSelectBase):
                         return mode_id
         except Exception:
             pass
+
+        # Last cleaning history is a better UX fallback than showing the select as unknown
+        # when the robot has just finished / is returning and the live state has no mode.
+        dev = (self.coordinator.data or {}).get(self._sn) or {}
+        if isinstance(dev, dict):
+            mode_id = _normalize_mode_id(dev.get("_ha_last_cleaning_mode"))
+            if mode_id is not None:
+                return mode_id
 
         return None
 
