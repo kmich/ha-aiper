@@ -1879,9 +1879,24 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
 
     def set_clean_path_cache(self, sn: str, value: int) -> None:
-        """Update cached clean-path preference (used by REST polling)."""
-        self._clean_path_cache[sn] = int(value)
+        """Update cached clean-path preference and propagate to shadow/device state.
+
+        Writes into every layer that get_clean_path() checks so that an
+        optimistic update from select.py is visible immediately, without
+        waiting for the next coordinator poll to overwrite shadow data.
+        """
+        iv = int(value)
+        self._clean_path_cache[sn] = iv
         self._last_clean_path_fetch[sn] = dt_util.utcnow()
+
+        # Propagate into shadow machine so _extract_clean_path_value() picks it up.
+        shadow = self._shadow_data.setdefault(sn, {})
+        machine = shadow.setdefault("machine", {})
+        machine["cleanPath"] = iv
+
+        # Propagate into the per-device dict used as the REST-poll fallback.
+        if sn in self._devices:
+            self._devices[sn]["_ha_clean_path"] = iv
 
     def get_clean_path(self, sn: str) -> int | None:
         """Get current clean-path preference.
