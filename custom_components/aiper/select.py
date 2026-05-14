@@ -31,6 +31,107 @@ from .coordinator import AiperDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
+_MODE_VALUE_KEYS = (
+    "mode",
+    "workMode",
+    "work_mode",
+    "cleanMode",
+    "clean_mode",
+    "cleaningMode",
+    "cleaning_mode",
+    "currentMode",
+    "current_mode",
+    "modeId",
+    "mode_id",
+    "cleanModeId",
+    "clean_mode_id",
+    "modeName",
+    "mode_name",
+    "workModeName",
+    "work_mode_name",
+    "cleanModeName",
+    "clean_mode_name",
+)
+
+_MODE_CONTAINER_KEYS = (
+    "Machine",
+    "machine",
+    "reported",
+    "desired",
+    "state",
+    "data",
+    "info",
+    "status",
+    "shadow",
+    "GetWorkMode",
+    "getworkmode",
+    "CycleWork",
+    "cyclework",
+    "OpInfo",
+    "opinfo",
+)
+
+
+def _normalize_mode_id(value: Any) -> int | None:
+    """Normalize known Aiper mode payload shapes to a MODE_MAP id."""
+    if value is None or isinstance(value, bool):
+        return None
+
+    if isinstance(value, int):
+        return value
+
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+
+        if text.lstrip("-").isdigit():
+            return int(text)
+
+        for mid, label in MODE_MAP.items():
+            if text.casefold() == label.casefold():
+                return int(mid)
+
+        if text.casefold().startswith("mode "):
+            possible = text[5:].strip()
+            if possible.lstrip("-").isdigit():
+                return int(possible)
+
+        return None
+
+    if isinstance(value, dict):
+        return _extract_mode_id(value)
+
+    return None
+
+
+def _extract_mode_id(container: Any, depth: int = 0) -> int | None:
+    """Extract a mode id from known REST/MQTT mode containers."""
+    if depth > 4:
+        return None
+
+    if not isinstance(container, dict):
+        return _normalize_mode_id(container)
+
+    for key in _MODE_VALUE_KEYS:
+        if key in container:
+            mode_id = _normalize_mode_id(container.get(key))
+            if mode_id is not None:
+                return mode_id
+
+    for key in _MODE_CONTAINER_KEYS:
+        nested = container.get(key)
+        if nested is None:
+            continue
+        mode_id = _extract_mode_id(nested, depth + 1)
+        if mode_id is not None:
+            return mode_id
+
+    return None
+
 
 def _coerce_bool(val: Any) -> bool | None:
     if val is None:
@@ -210,24 +311,43 @@ class AiperCleaningModeSelect(AiperSelectBase):
         self._attr_options = options
 
     def _get_current_mode_id(self) -> int | None:
-        # Prefer shadow Machine.mode
+        # Prefer reported Machine state, then fall back through known REST/MQTT containers.
         st = self.coordinator.get_machine_state(self._sn) or {}
-        m = st.get("mode")
-        if isinstance(m, int):
-            return m
-        if isinstance(m, str) and m.isdigit():
-            return int(m)
+        mode_id = _extract_mode_id(st)
+        if mode_id is not None:
+            return mode_id
 
-        # Fallback to REST info if present
+        shadow = getattr(self.coordinator, "_shadow_data", {}).get(self._sn) or {}
+        if isinstance(shadow, dict):
+            for key in (
+                "machine",
+                "Machine",
+                "getworkmode",
+                "GetWorkMode",
+                "cyclework",
+                "CycleWork",
+                "opinfo",
+                "OpInfo",
+            ):
+                mode_id = _extract_mode_id(shadow.get(key))
+                if mode_id is not None:
+                    return mode_id
+
+            mode_id = _extract_mode_id(shadow)
+            if mode_id is not None:
+                return mode_id
+
         dev = (self.coordinator.data or {}).get(self._sn) or {}
-        info = dev.get("info") or {}
-        if isinstance(info, dict):
-            for k in ("mode", "workMode"):
-                if k in info and info.get(k) is not None:
-                    try:
-                        return int(info.get(k))
-                    except Exception:
-                        continue
+        if isinstance(dev, dict):
+            for key in ("shadow", "info", "status", "state", "data"):
+                mode_id = _extract_mode_id(dev.get(key))
+                if mode_id is not None:
+                    return mode_id
+
+            mode_id = _extract_mode_id(dev)
+            if mode_id is not None:
+                return mode_id
+
         return None
 
     @property
