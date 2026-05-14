@@ -523,6 +523,15 @@ class AiperCleanPathSelect(AiperSelectBase):
 
         self.coordinator.note_command_sent(self._sn, "clean_path", path_id)
 
+        # Set cache optimistically before the API call so the UI updates immediately
+        # rather than waiting for the full REST round-trip (which can take 30+ s when
+        # the first few endpoint variants time out).
+        try:
+            self.coordinator.set_clean_path_cache(self._sn, path_id)
+            self.async_write_ha_state()
+        except Exception:
+            pass
+
         ok = False
         try:
             ok = await self.hass.async_add_executor_job(
@@ -531,24 +540,29 @@ class AiperCleanPathSelect(AiperSelectBase):
                 path_id,
             )
         except Exception as err:
+            # Revert optimistic cache on failure.
+            if cur is not None:
+                try:
+                    self.coordinator.set_clean_path_cache(self._sn, cur)
+                    self.async_write_ha_state()
+                except Exception:
+                    pass
             self.coordinator.note_command_failed(self._sn, "clean_path", path_id, reason=str(err))
             raise HomeAssistantError(f"Failed to set clean path: {err}") from err
         if not ok:
+            # Revert optimistic cache on rejection.
+            if cur is not None:
+                try:
+                    self.coordinator.set_clean_path_cache(self._sn, cur)
+                    self.async_write_ha_state()
+                except Exception:
+                    pass
             self.coordinator.note_command_failed(self._sn, "clean_path", path_id, reason="device rejected")
             if not self.coordinator.api.is_mqtt_connected():
                 raise HomeAssistantError(
                     "Failed to set clean path: cloud control is unavailable because MQTT is not connected. Enable MQTT in the Aiper integration options."
                 )
             raise HomeAssistantError("Failed to set clean path: device rejected the command")
-
-
-
-        # Optimistically cache the selection. Some firmwares never report cleanPath
-        # in reported shadow state, so without this the entity can remain Unknown.
-        try:
-            self.coordinator.set_clean_path_cache(self._sn, path_id)
-        except Exception:
-            pass
 
         # Ask for a shadow refresh and a coordinator refresh.
         try:
