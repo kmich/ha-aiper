@@ -3,20 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass
 from datetime import UTC, datetime
-import logging
-from typing import Any, TypeVar
+from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
 MessageCallback = Callable[[str, bytes], None]
-_T = TypeVar("_T")
 
 
-def _wait_crt_operation(operation: Future[_T] | tuple[Future[_T], int], timeout: float) -> _T:
+def _wait_crt_operation[T](operation: Future[T] | tuple[Future[T], int], timeout: float) -> T:
     """Wait for an AWS CRT operation result.
 
     MQTT3 publish/subscribe return `(future, packet_id)` while connect and
@@ -26,7 +25,7 @@ def _wait_crt_operation(operation: Future[_T] | tuple[Future[_T], int], timeout:
     return future.result(timeout=timeout)
 
 
-async def _async_wait_crt_operation(operation: Future[_T] | tuple[Future[_T], int], timeout: float) -> _T:
+async def _async_wait_crt_operation[T](operation: Future[T] | tuple[Future[T], int], timeout: float) -> T:
     """Wait for an AWS CRT operation result without blocking the event loop."""
     future = operation[0] if isinstance(operation, tuple) else operation
     return await asyncio.wait_for(asyncio.wrap_future(future), timeout=timeout)

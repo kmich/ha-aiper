@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import logging
+from contextlib import suppress
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .api import AiperApi
 from .const import (
     CONF_METADATA_REFRESH_HOURS,
     CONF_MQTT_DEBUG,
@@ -22,7 +24,6 @@ from .const import (
 )
 from .controller import AiperDeviceController
 from .coordinator import AiperDataUpdateCoordinator
-from .api import AiperApi
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -233,9 +234,8 @@ async def _migrate_select_unique_ids(
                 score = 0
             elif eid.endswith("_cleaning_mode"):
                 score = 1
-        elif kind == "path":
-            if eid.endswith("clean_path"):
-                score = 0
+        elif kind == "path" and eid.endswith("clean_path"):
+            score = 0
 
         if suffixed:
             score += 5
@@ -350,7 +350,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if not connected:
             raise ConfigEntryNotReady("MQTT connection could not be established")
         if coordinator.data:
-            for sn in coordinator.data.keys():
+            for sn in coordinator.data:
                 # AWS IoT callbacks arrive on a background thread.
                 # Ensure coordinator updates happen on the HA event loop.
                 cb = coordinator.make_shadow_callback(sn)
@@ -375,10 +375,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         data = hass.data[DOMAIN].pop(entry.entry_id)
         unsub = data.get("_unsub_keepalive")
         if callable(unsub):
-            try:
+            with suppress(Exception):
                 unsub()
-            except Exception:
-                pass
         api: AiperApi = data["api"]
         await api.disconnect()
 

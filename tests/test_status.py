@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from custom_components.aiper.const import status_running, status_label, status_value
+from custom_components.aiper.const import status_label, status_running, status_value
 from custom_components.aiper.state import normalize_device_state
 
 

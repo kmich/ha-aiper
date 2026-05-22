@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta, datetime, timezone
+from contextlib import suppress
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -20,8 +21,8 @@ from .const import (
 )
 from .profiles import Capability, derive_device_profile, has_capability
 from .state import (
-    DeviceState,
     DevicesState,
+    DeviceState,
     RawDeviceData,
     _coerce_bool,
     merge_device_state,
@@ -68,8 +69,8 @@ def _ensure_utc_aware(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 # Slower-changing data refresh intervals are configurable via options.
@@ -114,7 +115,7 @@ def _parse_dt(value: Any) -> datetime | None:
             v = float(value)
             if v > 10_000_000_000:  # ms
                 v = v / 1000.0
-            return datetime.fromtimestamp(v, tz=timezone.utc)
+            return datetime.fromtimestamp(v, tz=UTC)
         except Exception:
             return None
     if isinstance(value, str):
@@ -138,7 +139,7 @@ def _parse_dt(value: Any) -> datetime | None:
             "%m/%d/%Y,%H:%M:%S",
         ):
             try:
-                return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+                return datetime.strptime(s, fmt).replace(tzinfo=UTC)
             except Exception:
                 continue
     return None
@@ -415,10 +416,8 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
 
             # Expire pending commands (UI hints)
             for _sn in list(self._command_state.keys()):
-                try:
+                with suppress(Exception):
                     self.expire_pending_commands(_sn)
-                except Exception:
-                    pass
 
             # Publish normalized device data.
             result: DevicesState = {}
@@ -605,9 +604,8 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             netstat = dict(payload.get("NetStat") or {})
         elif "netstat" in payload and isinstance(payload.get("netstat"), dict):
             netstat = dict(payload.get("netstat") or {})
-        elif payload.get("type") == "NetStat":
-            if isinstance(payload.get("data"), dict):
-                netstat = dict(payload.get("data") or {})
+        elif payload.get("type") == "NetStat" and isinstance(payload.get("data"), dict):
+            netstat = dict(payload.get("data") or {})
 
         if netstat:
             updates = merge_device_state(updates, normalize_netstat_update(netstat))
@@ -647,10 +645,8 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         _publish_updates(updates)
 
         # Confirm pending commands when the device reports the new value.
-        try:
+        with suppress(Exception):
             self._confirm_pending_commands(sn, machine)
-        except Exception:
-            pass
 
     @staticmethod
     def _parse_machine_report(report: str) -> dict[str, Any]:

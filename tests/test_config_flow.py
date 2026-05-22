@@ -6,7 +6,6 @@ from collections.abc import Iterator
 from typing import Any, cast
 
 import pytest
-
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant

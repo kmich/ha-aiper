@@ -1,0 +1,50 @@
+name: Bug Report
+description: Report an issue with Aiper Pool Cleaner
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting an Aiper issue. Please include diagnostics when
+        possible and redact credentials, tokens, MQTT payloads, and other
+        identifying device data before posting logs.
+  - type: input
+    id: version
+    attributes:
+      label: Integration version
+      placeholder: "e.g. 0.9.0"
+    validations:
+      required: true
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      placeholder: "e.g. 2026.5.0"
+    validations:
+      required: true
+  - type: input
+    id: device_model
+    attributes:
+      label: Aiper device model
+      placeholder: "e.g. Surfer S2 or Scuba X1"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      placeholder: What happened? What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Paste relevant Home Assistant logs after removing secrets and identifying payload data.
+      render: shell
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics JSON
+      description: Paste a redacted diagnostics export when it helps explain the issue.
+      render: json

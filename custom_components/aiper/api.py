@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections.abc import Awaitable
 import json
 import logging
+import random
 import threading
 import time
-import random
-from typing import Any, Callable
-
 from collections import defaultdict, deque
-
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from datetime import datetime
+from typing import Any
 
 import aiohttp
 
@@ -24,13 +23,12 @@ except Exception:  # pragma: no cover
     ZoneInfo = None  # type: ignore
 
 from .const import (
+    X9_SERIES_PREFIXES,
+    XOR_KEY,
     ApiEndpoint,
     CleaningMode,
     MqttTopic,
-    XOR_KEY,
-    X9_SERIES_PREFIXES,
 )
-
 from .crypto import AiperEncryption
 from .mqtt import AwsIotCredentials, AwsIotMqttTransport
 from .profiles import DeviceFamily, device_family
@@ -669,10 +667,8 @@ class AiperApi:
         equip_id = dev.get("equipmentId") or dev.get("deviceId") or dev.get("id")
 
         if equip_id is None:
-            try:
+            with suppress(Exception):
                 await self.get_devices()
-            except Exception:
-                pass
             dev = self._devices.get(sn) or {}
             equip_id = dev.get("equipmentId") or dev.get("deviceId") or dev.get("id")
 
@@ -764,10 +760,8 @@ class AiperApi:
                 except Exception as err:
                     _LOGGER.debug("Surfer clean path AT update failed: %s", err)
 
-            try:
+            with suppress(Exception):
                 await self.request_shadow(sn)
-            except Exception:
-                pass
 
             return bool(rest_ok or mqtt_ok)
 
@@ -777,10 +771,8 @@ class AiperApi:
         equip_id = dev.get("equipmentId") or dev.get("deviceId") or dev.get("id")
 
         if equip_id is None:
-            try:
+            with suppress(Exception):
                 await self.get_devices()
-            except Exception:
-                pass
             dev = self._devices.get(sn) or {}
             equip_id = dev.get("equipmentId") or dev.get("deviceId") or dev.get("id")
 
@@ -910,10 +902,8 @@ class AiperApi:
         except Exception:
             shadow_ok = False
 
-        try:
+        with suppress(Exception):
             await self.request_shadow(sn)
-        except Exception:
-            pass
 
         return bool(rest_ok or mqtt_published or shadow_ok)
 
@@ -1255,10 +1245,8 @@ class AiperApi:
 
         cmd_result = await self.send_machine_at(sn, f"AT+PLAN={int(mode)}")
 
-        try:
+        with suppress(Exception):
             await self.request_shadow(sn)
-        except Exception:
-            pass
 
         return cmd_result is True
 
@@ -1269,10 +1257,8 @@ class AiperApi:
 
         cmd_result = await self.send_machine_at(sn, f"AT+MODE={mode}")
 
-        try:
+        with suppress(Exception):
             await self.request_shadow(sn)
-        except Exception:
-            pass
 
         return cmd_result is True
 
@@ -1291,10 +1277,8 @@ class AiperApi:
     async def disconnect(self) -> None:
         """Disconnect from MQTT and cleanup."""
         if self._mqtt_client:
-            try:
+            with suppress(Exception):
                 await self._mqtt_client.async_disconnect()
-            except Exception:
-                pass
         self._mqtt_connected = False
         self._mqtt_client = None
 

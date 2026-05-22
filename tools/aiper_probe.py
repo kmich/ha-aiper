@@ -10,18 +10,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 import getpass
 import json
 import os
-from pathlib import Path
 import sys
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import aiohttp
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -35,7 +34,6 @@ except ImportError:  # pragma: no cover - exercised only in incomplete dev envs
 from custom_components.aiper.api import AiperApi  # noqa: E402
 from custom_components.aiper.const import MqttTopic  # noqa: E402
 from custom_components.aiper.redaction import redact, redact_str  # noqa: E402
-
 
 DEFAULT_OUTPUT_DIR = Path("probe-output")
 DISCOVERY_FLOWS_DIR = REPO_ROOT / "tools" / "discovery_flows"
@@ -233,7 +231,7 @@ async def probe_mqtt_auth(api: AiperApi) -> dict[str, Any]:
         credentials = {
             "ok": bool(creds and creds.get("AccessKeyId")),
             "request_region": credential_region,
-            "credential_keys": sorted(str(key) for key in (creds or {}).keys()),
+            "credential_keys": sorted(str(key) for key in (creds or {})),
         }
     except Exception as err:
         credentials = {
@@ -306,7 +304,7 @@ def _payload_summary(payload: Any) -> dict[str, Any]:
     }
 
     if isinstance(data, dict):
-        summary["data_keys"] = sorted(str(key) for key in data.keys())
+        summary["data_keys"] = sorted(str(key) for key in data)
         for key in ("pageNum", "pageNo", "page", "pageSize", "size", "total"):
             if key in data:
                 summary[key] = data.get(key)

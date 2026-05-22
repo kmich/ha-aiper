@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
+
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -101,10 +103,8 @@ class AiperRunningSwitch(CoordinatorEntity[AiperDataUpdateCoordinator], SwitchEn
         if not result.ok:
             raise HomeAssistantError(f"Failed to set running state: {result.reason or 'device rejected the command'}")
 
-        try:
+        with suppress(Exception):
             await self.controller.refresh_shadow(self._sn)
-        except Exception:
-            pass
 
         await self.coordinator.async_request_refresh()
 

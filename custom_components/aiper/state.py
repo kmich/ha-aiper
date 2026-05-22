@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .const import CLEAN_PATH_MAP, Status, mode_label, status_running, status_label, status_value
+from .const import CLEAN_PATH_MAP, Status, mode_label, status_label, status_running, status_value
 from .device_images import device_model_image_url
 from .profiles import Capability, derive_device_profile
 
@@ -529,10 +529,7 @@ def normalize_device_state(raw: RawDeviceData) -> DeviceState:
     state["bluetooth"] = EntityState(bluetooth)
     state["linked"] = EntityState(linked)
 
-    if online and wifi:
-        wifi_signal = raw.get("wifiRssi")
-    else:
-        wifi_signal = None
+    wifi_signal = raw.get("wifiRssi") if online and wifi else None
     state["wifi_signal"] = EntityState(wifi_signal)
 
     state["warning"] = EntityState(_warning_text(raw, online))

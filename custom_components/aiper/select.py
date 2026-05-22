@@ -10,6 +10,7 @@ Design goals (community-friendly):
 from __future__ import annotations
 
 import logging
+from contextlib import suppress
 from typing import Any
 
 from homeassistant.components.select import SelectEntity
@@ -218,10 +219,8 @@ class AiperCleaningModeSelect(AiperSelectBase):
             raise HomeAssistantError(f"Failed to set cleaning mode: {result.reason or 'device rejected the command'}")
 
         # Ask for a shadow refresh and a coordinator refresh.
-        try:
+        with suppress(Exception):
             await self.controller.refresh_shadow(self._sn)
-        except Exception:
-            pass
 
         await self.coordinator.async_request_refresh()
 
@@ -297,16 +296,12 @@ class AiperCleanPathSelect(AiperSelectBase):
 
         # Optimistically cache the selection. Some firmwares never report cleanPath
         # in reported shadow state, so without this the entity can remain Unknown.
-        try:
+        with suppress(Exception):
             self.coordinator.set_clean_path_cache(self._sn, path_id)
-        except Exception:
-            pass
 
         # Ask for a shadow refresh and a coordinator refresh.
-        try:
+        with suppress(Exception):
             await self.controller.refresh_shadow(self._sn)
-        except Exception:
-            pass
 
         await self.coordinator.async_request_refresh()
 

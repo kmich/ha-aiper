@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import UTC
 from typing import Any
 
 from custom_components.aiper.coordinator import _clean_path_value, _parse_consumables
@@ -147,4 +147,4 @@ def test_parse_consumables_handles_surfer_s2_direct_list_payload() -> None:
             },
         }
     ]
-    assert consumables[0]["last_replacement"].tzinfo == timezone.utc
+    assert consumables[0]["last_replacement"].tzinfo == UTC

@@ -1,19 +1,76 @@
-.DS_Store
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Test and coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Tool caches
+.*_cache/
+.ruff_cache/
+
+# Environments
 .env
 .venv/
-.idea/
-.vscode/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
 
-# Python tooling
-.*_cache/
-.coverage
-htmlcov/
-*.egg-info/
-*-local-test.zip
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
 
 # Home Assistant development runtime files
+home-assistant.log
+home-assistant_v2.db
+*.db-shm
+*.db-wal
 ha-config/**
 !ha-config/
 !ha-config/configuration.yaml
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
+
+# Release artifacts
+*.zip
+*.tar.gz

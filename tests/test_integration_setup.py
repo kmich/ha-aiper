@@ -15,8 +15,8 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components import aiper
-from custom_components.aiper.coordinator import AiperDataUpdateCoordinator
 from custom_components.aiper.const import DOMAIN
+from custom_components.aiper.coordinator import AiperDataUpdateCoordinator
 
 
 @dataclass

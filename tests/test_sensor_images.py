@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import cast
 
 from custom_components.aiper.coordinator import AiperDataUpdateCoordinator
-from custom_components.aiper.sensor import AiperSensor, SENSOR_DESCRIPTIONS
+from custom_components.aiper.sensor import SENSOR_DESCRIPTIONS, AiperSensor
 from custom_components.aiper.state import normalize_device_state
 
 

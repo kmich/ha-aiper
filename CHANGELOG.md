@@ -11,6 +11,7 @@ This changelog tracks local modernization work intended for a future pull reques
 - Added local Home Assistant development runtime via `docker-compose.yml` and `ha-config/configuration.yaml`.
 - Added local Home Assistant brand icons for custom integration and HACS installs.
 - Added ws-core-style CI, validation, and tag-triggered release workflows with GitHub-generated release notes.
+- Added an Aiper bug report template for versioned, diagnostics-aware issue reports.
 - Added pytest coverage for config-flow validation, diagnostics redaction, parser normalization, warning code handling, MQTT push updates, entity publication, command control, and probe helpers.
 - Added a test that keeps discovery-only raw AT commands out of Home Assistant services.
 - Added a Surfer S2 propeller maintenance timestamp sensor when the consumables endpoint reports propeller maintenance data.
@@ -25,6 +26,7 @@ This changelog tracks local modernization work intended for a future pull reques
 - Documented development commands in `README.md`.
 - Expanded the README and HACS display name for installation, configuration, entity, and troubleshooting guidance.
 - Expanded `.gitignore` for Python tooling, Home Assistant runtime files, and generated caches.
+- Tightened Ruff to the broader `ha_ws_core` lint families and cleaned up the imported code to pass them.
 - Normalized parsed Aiper datetime values to UTC-aware datetimes before exposing them to Home Assistant timestamp sensors.
 - Cleaned up lint issues surfaced by the new Ruff configuration.
 - Gated controls and entities through typed capability profiles so Surfer S2, Scuba, Shark, and unknown devices only expose supported surfaces.
