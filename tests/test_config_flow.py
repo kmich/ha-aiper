@@ -281,6 +281,7 @@ async def test_reauth_success_updates_entry(hass: HomeAssistant, aiper_flow_hand
     )
     assert result["type"] == "form"
     assert result["step_id"] == "reauth_confirm"
+    assert result["description_placeholders"][CONF_USERNAME] == "user@example.com"
 
     result = cast(
         dict[str, Any],
