@@ -18,7 +18,13 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from custom_components.aiper import config_flow as aiper_config_flow
-from custom_components.aiper.config_flow import CONF_REGION, InvalidAuth, validate_input
+from custom_components.aiper.api import AiperConnectionError
+from custom_components.aiper.config_flow import (
+    CONF_REGION,
+    CannotConnect,
+    InvalidAuth,
+    validate_input,
+)
 from custom_components.aiper.const import (
     CONF_METADATA_REFRESH_HOURS,
     CONF_MQTT_DEBUG,
@@ -31,6 +37,7 @@ class FakeAiperApi:
 
     instances: list[FakeAiperApi] = []
     login_result = True
+    login_error: Exception | None = None
     devices = [{"sn": "SN1"}, {"sn": "SN2"}]
 
     def __init__(self, username: str, password: str, region: str, async_session=None) -> None:
@@ -42,6 +49,8 @@ class FakeAiperApi:
         self.__class__.instances.append(self)
 
     async def login(self) -> bool:
+        if self.login_error is not None:
+            raise self.login_error
         return self.login_result
 
     async def get_devices(self) -> list[dict[str, str]]:
@@ -56,6 +65,7 @@ def fake_api(monkeypatch: pytest.MonkeyPatch) -> type[FakeAiperApi]:
     """Patch the config flow to use a fake API client."""
     FakeAiperApi.instances = []
     FakeAiperApi.login_result = True
+    FakeAiperApi.login_error = None
     FakeAiperApi.devices = [{"sn": "SN1"}, {"sn": "SN2"}]
     monkeypatch.setattr("custom_components.aiper.config_flow.AiperApi", FakeAiperApi)
     monkeypatch.setattr("custom_components.aiper.config_flow.async_get_clientsession", lambda hass: "session")
@@ -114,6 +124,25 @@ async def test_validate_input_raises_invalid_auth_when_login_fails(
 
 
 @pytest.mark.asyncio
+async def test_validate_input_raises_cannot_connect_for_connection_error(
+    hass: HomeAssistant,
+    fake_api: type[FakeAiperApi],
+) -> None:
+    """Cloud transport failures should not be reported as bad credentials."""
+    fake_api.login_error = AiperConnectionError("network down")
+    data = {
+        CONF_USERNAME: "user@example.com",
+        CONF_PASSWORD: "secret",
+        CONF_REGION: "eu",
+    }
+
+    with pytest.raises(CannotConnect):
+        await validate_input(hass, data)
+
+    assert FakeAiperApi.instances[0].disconnected is True
+
+
+@pytest.mark.asyncio
 async def test_user_step_success_creates_entry(hass: HomeAssistant, aiper_flow_handler: None) -> None:
     """The real user config-flow step should validate and create an entry."""
     user_input = {
@@ -163,6 +192,33 @@ async def test_user_step_invalid_auth_returns_form_error(
     assert result["type"] == "form"
     assert result["step_id"] == "user"
     assert result["errors"] == {"base": "invalid_auth"}
+
+
+@pytest.mark.asyncio
+async def test_user_step_connection_error_returns_form_error(
+    hass: HomeAssistant,
+    aiper_flow_handler: None,
+    fake_api: type[FakeAiperApi],
+) -> None:
+    """Connection failures should keep the user on the form with cannot_connect."""
+    fake_api.login_error = AiperConnectionError("network down")
+
+    result = cast(
+        dict[str, Any],
+        await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_USERNAME: "user@example.com",
+                CONF_PASSWORD: "secret",
+                CONF_REGION: "eu",
+            },
+        ),
+    )
+
+    assert result["type"] == "form"
+    assert result["step_id"] == "user"
+    assert result["errors"] == {"base": "cannot_connect"}
 
 
 @pytest.mark.asyncio

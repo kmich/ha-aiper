@@ -43,6 +43,14 @@ class AiperApiError(Exception):
     """Base exception for Aiper API failures."""
 
 
+class AiperAuthenticationError(AiperApiError):
+    """Raised when Aiper rejects supplied login credentials."""
+
+
+class AiperConnectionError(AiperApiError):
+    """Raised when Aiper cloud services cannot be reached."""
+
+
 class AiperSessionConflict(AiperApiError):
     """Raised when Aiper rejects a request because another session is active."""
 
@@ -397,7 +405,7 @@ class AiperApi:
 
             if not self._is_success(payload):
                 msg = payload.get("msg") or payload.get("message") or payload.get("mess") or "Unknown error"
-                raise Exception(f"Login failed: {msg}")
+                raise AiperAuthenticationError(f"Login failed: {msg}")
 
             result = payload.get("data", {}) or {}
 
@@ -409,7 +417,7 @@ class AiperApi:
                 self.base_url = str(domains[0]).rstrip("/")
 
             if not self._token:
-                raise Exception(f"No token in login response: {result}")
+                raise AiperApiError(f"No token in login response: {result}")
 
             self._headers["token"] = self._token
             _LOGGER.info("Successfully logged in to Aiper API (base_url=%s)", self.base_url)
@@ -417,9 +425,9 @@ class AiperApi:
             await self.get_openid_token()
             return True
 
-        except aiohttp.ClientError as err:
+        except (aiohttp.ClientError, TimeoutError) as err:
             _LOGGER.error("Login request failed: %s", err)
-            raise Exception(f"Login request failed: {err}") from err
+            raise AiperConnectionError(f"Login request failed: {err}") from err
 
     def _zone_id_for_sn(self, sn: str) -> str | None:
         """Return the best-known zoneId for a device.

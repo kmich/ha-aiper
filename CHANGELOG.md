@@ -55,6 +55,7 @@ This changelog tracks local modernization work intended for a future pull reques
 ### Fixed
 
 - Fixed config-flow test scaffolding so tests run through the `uv` managed Python environment.
+- Fixed config-flow validation so cloud connection failures are not reported as invalid credentials.
 - Fixed `tools/aiper_probe.py` so `AIPER_REGION` is honored when `--region` is not provided.
 - Fixed AWS IoT MQTT connection setup by using the Cognito identity ID as the MQTT client ID required by Aiper's IoT policy.
 - Fixed device-info metadata storage to use a normal `payload` key instead of an internal `_payload` key.
