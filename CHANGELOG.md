@@ -9,6 +9,7 @@ This changelog tracks local modernization work intended for a future pull reques
 - Added repo-level `AGENTS.md` with architecture notes, working rules, and modernization priorities for future agent sessions.
 - Added `uv` development tooling with `pyproject.toml` and `uv.lock` for pytest, Ruff, mypy, and Pyright checks.
 - Added local Home Assistant development runtime via `docker-compose.yml` and `ha-config/configuration.yaml`.
+- Added local Home Assistant brand icons for custom integration and HACS installs.
 - Added pytest coverage for config-flow validation, diagnostics redaction, parser normalization, warning code handling, MQTT push updates, entity publication, command control, and probe helpers.
 - Added a test that keeps discovery-only raw AT commands out of Home Assistant services.
 - Added a Surfer S2 propeller maintenance timestamp sensor when the consumables endpoint reports propeller maintenance data.
@@ -21,6 +22,7 @@ This changelog tracks local modernization work intended for a future pull reques
 ### Changed
 
 - Documented development commands in `README.md`.
+- Expanded the README and HACS display name for installation, configuration, entity, and troubleshooting guidance.
 - Expanded `.gitignore` for Python tooling, Home Assistant runtime files, and generated caches.
 - Normalized parsed Aiper datetime values to UTC-aware datetimes before exposing them to Home Assistant timestamp sensors.
 - Cleaned up lint issues surfaced by the new Ruff configuration.

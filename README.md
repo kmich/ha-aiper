@@ -1,22 +1,58 @@
-# Aiper Pool Cleaner (Home Assistant)
+# Aiper Pool Cleaner
 
-Custom Home Assistant integration for Aiper pool cleaners.
+![Aiper Pool Cleaner icon](custom_components/aiper/brand/icon.png)
+
+Home Assistant custom integration for Aiper pool cleaners. It connects to
+Aiper's cloud REST API and AWS IoT MQTT control plane to expose live pool
+cleaner state and supported controls in Home Assistant.
+
+## Features
+
+- Config flow setup from the Home Assistant UI.
+- Live MQTT-backed device state for supported cleaners.
+- Device sensors, binary sensors, switches, selects, and diagnostics based on
+  model capabilities.
+- HACS release ZIPs for normal installs and upgrades.
 
 ## Installation
 
 ### HACS (recommended)
-1. In HACS -> Integrations -> 3-dots -> **Custom repositories**
-2. Add this repository URL as **Integration**
-3. Install and restart Home Assistant
+
+1. In HACS, open **Integrations**.
+2. Open the three-dot menu and choose **Custom repositories**.
+3. Add `https://github.com/kmich/ha-aiper` as an **Integration** repository.
+4. Install **Aiper Pool Cleaner** and restart Home Assistant.
 
 ### Manual
-Replace the existing `config/custom_components/aiper` directory with
-`custom_components/aiper` from this repository and restart Home Assistant.
-Do not merge files into an older copy; upgrades may remove Python modules.
+
+1. Copy `custom_components/aiper` from this repository into
+   `config/custom_components/aiper` in Home Assistant.
+2. Restart Home Assistant.
+
+For upgrades, replace the whole `config/custom_components/aiper` directory.
+Do not merge files into an older copy because releases may remove Python
+modules.
 
 ## Configuration
-Add the integration via **Settings -> Devices & Services -> Add Integration ->
-Aiper Pool Cleaner**.
+
+1. Open **Settings -> Devices & Services**.
+2. Select **Add Integration**.
+3. Search for **Aiper Pool Cleaner**.
+4. Sign in with the Aiper account used by the mobile app.
+
+The integration uses Aiper's cloud services. Credentials, tokens, serial
+numbers, and MQTT payloads should be treated as sensitive when sharing logs or
+diagnostics.
+
+## Entities
+
+The available entities depend on the cleaner model and the capabilities Aiper
+reports for it. Supported surfaces can include:
+
+- Cleaner state, battery, charging, error, warning, and consumable sensors.
+- Online and runtime binary sensors.
+- Switch controls such as supported cleaner start/stop paths.
+- Select controls for supported cleaning mode and clean-path choices.
 
 ## Development
 
@@ -39,13 +75,19 @@ uv sync --group dev
 uv run pytest
 ```
 
-## Notes
-- This integration uses Aiper's cloud + AWS IoT (MQTT) control plane.
-- Set device "Clean Path" is applied via downChan to ensure it takes effect on
-  supported models/regions.
+## Troubleshooting
+
+- If an upgrade leaves import errors mentioning removed Aiper modules, delete
+  the existing `config/custom_components/aiper` directory and install the new
+  one again.
+- If live state or controls are unavailable, check that Home Assistant can
+  reach Aiper cloud services and that the cleaner is online in the Aiper app.
+- When reporting an issue, include Home Assistant logs and diagnostics after
+  removing any secrets or identifying device data.
 
 ## Support
-- Issues: see the repository issue tracker.
+
+Report bugs and request features in the GitHub issue tracker.
 
 ## Lovelace examples
 
