@@ -10,7 +10,7 @@ import aiohttp
 import pytest
 
 from custom_components.aiper import api as api_module
-from custom_components.aiper.api import AiperApi, AiperConnectionError, AiperSessionConflict
+from custom_components.aiper.api import AiperApi, AiperConnectionError, AiperResponseError, AiperSessionConflict
 
 
 def _api() -> AiperApi:
@@ -159,3 +159,17 @@ async def test_request_with_backoff_classifies_connection_failures(monkeypatch: 
 
     with pytest.raises(AiperConnectionError, match="network down"):
         await api._request_with_backoff("POST", "https://example.invalid", headers={})
+
+
+@pytest.mark.asyncio
+async def test_get_devices_rejects_malformed_device_lists(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Successful discovery responses still need a device list shape."""
+    api = _api()
+
+    async def malformed_devices(*args, **kwargs) -> dict[str, Any]:
+        return {"code": "0", "data": "not-a-device-list"}
+
+    monkeypatch.setattr(api, "_call_encrypted", malformed_devices)
+
+    with pytest.raises(AiperResponseError, match="Unexpected device list"):
+        await api.get_devices()

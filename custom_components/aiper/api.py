@@ -52,6 +52,10 @@ class AiperConnectionError(AiperApiError):
     """Raised when Aiper cloud services cannot be reached."""
 
 
+class AiperResponseError(AiperApiError):
+    """Raised when Aiper returns an unexpected response shape."""
+
+
 class AiperSessionConflict(AiperApiError):
     """Raised when Aiper rejects a request because another session is active."""
 
@@ -222,7 +226,10 @@ class AiperApi:
         try:
             payload = json.loads(decrypted)
         except Exception as err:
-            raise Exception(f"Failed to parse decrypted response from {path}: {decrypted[:200]}") from err
+            raise AiperResponseError(f"Failed to parse decrypted response from {path}: {decrypted[:200]}") from err
+
+        if not isinstance(payload, dict):
+            raise AiperResponseError(f"Unexpected decrypted response from {path}: {type(payload).__name__}")
 
         if retry_login and path != "/login" and self._is_session_conflict(payload):
             _LOGGER.info("Aiper account session conflict; re-authenticating once before backing off")
@@ -420,7 +427,7 @@ class AiperApi:
                 self.base_url = str(domains[0]).rstrip("/")
 
             if not self._token:
-                raise AiperApiError(f"No token in login response: {result}")
+                raise AiperResponseError(f"No token in login response: {result}")
 
             self._headers["token"] = self._token
             _LOGGER.info("Successfully logged in to Aiper API (base_url=%s)", self.base_url)
@@ -585,6 +592,8 @@ class AiperApi:
             devices = payload.get("data", [])
             if isinstance(devices, dict):
                 devices = devices.get("list", devices.get("equipments", []))
+            if not isinstance(devices, list) or not all(isinstance(device, dict) for device in devices):
+                raise AiperResponseError(f"Unexpected device list response: {type(devices).__name__}")
 
             for device in devices:
                 sn = device.get("sn")

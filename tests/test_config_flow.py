@@ -18,11 +18,12 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from custom_components.aiper import config_flow as aiper_config_flow
-from custom_components.aiper.api import AiperConnectionError
+from custom_components.aiper.api import AiperConnectionError, AiperResponseError
 from custom_components.aiper.config_flow import (
     CONF_REGION,
     CannotConnect,
     InvalidAuth,
+    InvalidResponse,
     validate_input,
 )
 from custom_components.aiper.const import (
@@ -143,6 +144,25 @@ async def test_validate_input_raises_cannot_connect_for_connection_error(
 
 
 @pytest.mark.asyncio
+async def test_validate_input_raises_invalid_response_for_unexpected_payload(
+    hass: HomeAssistant,
+    fake_api: type[FakeAiperApi],
+) -> None:
+    """Unexpected cloud payloads should not be reported as bad credentials."""
+    fake_api.login_error = AiperResponseError("missing token")
+    data = {
+        CONF_USERNAME: "user@example.com",
+        CONF_PASSWORD: "secret",
+        CONF_REGION: "eu",
+    }
+
+    with pytest.raises(InvalidResponse):
+        await validate_input(hass, data)
+
+    assert FakeAiperApi.instances[0].disconnected is True
+
+
+@pytest.mark.asyncio
 async def test_user_step_success_creates_entry(hass: HomeAssistant, aiper_flow_handler: None) -> None:
     """The real user config-flow step should validate and create an entry."""
     user_input = {
@@ -219,6 +239,33 @@ async def test_user_step_connection_error_returns_form_error(
     assert result["type"] == "form"
     assert result["step_id"] == "user"
     assert result["errors"] == {"base": "cannot_connect"}
+
+
+@pytest.mark.asyncio
+async def test_user_step_invalid_response_returns_form_error(
+    hass: HomeAssistant,
+    aiper_flow_handler: None,
+    fake_api: type[FakeAiperApi],
+) -> None:
+    """Unexpected cloud payloads should use the invalid_response form error."""
+    fake_api.login_error = AiperResponseError("missing token")
+
+    result = cast(
+        dict[str, Any],
+        await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_USERNAME: "user@example.com",
+                CONF_PASSWORD: "secret",
+                CONF_REGION: "eu",
+            },
+        ),
+    )
+
+    assert result["type"] == "form"
+    assert result["step_id"] == "user"
+    assert result["errors"] == {"base": "invalid_response"}
 
 
 @pytest.mark.asyncio

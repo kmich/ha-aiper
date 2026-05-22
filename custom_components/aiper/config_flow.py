@@ -16,6 +16,7 @@ from .api import (
     AiperApi,
     AiperAuthenticationError,
     AiperConnectionError,
+    AiperResponseError,
     AiperSessionConflict,
 )
 from .const import (
@@ -67,6 +68,9 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     except (AiperConnectionError, AiperSessionConflict) as err:
         _LOGGER.error("Aiper connection validation failed: %s", err)
         raise CannotConnect from err
+    except AiperResponseError as err:
+        _LOGGER.error("Aiper returned an unexpected validation response: %s", err)
+        raise InvalidResponse from err
     finally:
         await api.disconnect()
 
@@ -92,6 +96,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
+            except InvalidResponse:
+                errors["base"] = "invalid_response"
             except Exception:
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
@@ -134,6 +140,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
+            except InvalidResponse:
+                errors["base"] = "invalid_response"
             except Exception:
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
@@ -195,3 +203,7 @@ class CannotConnect(HomeAssistantError):
 
 class InvalidAuth(HomeAssistantError):
     """Error to indicate there is invalid auth."""
+
+
+class InvalidResponse(HomeAssistantError):
+    """Error to indicate Aiper returned an unexpected response."""

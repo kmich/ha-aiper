@@ -21,6 +21,7 @@
     "error": {
       "cannot_connect": "Failed to connect to Aiper servers",
       "invalid_auth": "Invalid username or password",
+      "invalid_response": "Aiper returned an unexpected response",
       "unknown": "An unexpected error occurred"
     },
     "abort": {
