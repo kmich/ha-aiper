@@ -13,6 +13,7 @@ This changelog tracks local modernization work intended for a future pull reques
 - Added ws-core-style CI, validation, and tag-triggered release workflows with GitHub-generated release notes.
 - Added an Aiper bug report template for versioned, diagnostics-aware issue reports.
 - Added pytest coverage for config-flow validation, diagnostics redaction, parser normalization, warning code handling, MQTT push updates, entity publication, command control, and probe helpers.
+- Added translation coverage so `strings.json` and the English translation stay synchronized.
 - Added a test that keeps discovery-only raw AT commands out of Home Assistant services.
 - Added a Surfer S2 propeller maintenance timestamp sensor when the consumables endpoint reports propeller maintenance data.
 - Added AWS IoT Device SDK v2 MQTT transport for SigV4 WebSocket notifications.
