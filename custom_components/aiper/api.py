@@ -37,6 +37,7 @@ _LOGGER = logging.getLogger(__name__)
 
 SESSION_CONFLICT_CODE = "402"
 SESSION_CONFLICT_COOLDOWN_SECONDS = 180
+RETRYABLE_HTTP_STATUSES = (429, 500, 502, 503, 504)
 
 
 class AiperApiError(Exception):
@@ -312,8 +313,8 @@ class AiperApi:
                     timeout=aiohttp.ClientTimeout(total=timeout),
                 ) as resp:
                     text = await resp.text()
-                    if resp.status in (429, 500, 502, 503, 504):
-                        raise Exception(f"HTTP {resp.status}")
+                    if resp.status in RETRYABLE_HTTP_STATUSES:
+                        raise AiperConnectionError(f"HTTP {resp.status}")
                     resp.raise_for_status()
                     return resp.status, text
             except Exception as err:
@@ -338,7 +339,9 @@ class AiperApi:
                     break
                 await asyncio.sleep(delay + random.uniform(0, 0.3))
                 delay = min(delay * 2.0, 8.0)
-        raise last_exc if last_exc else Exception("Request failed")
+        if isinstance(last_exc, (AiperConnectionError, aiohttp.ClientConnectionError, TimeoutError)):
+            raise AiperConnectionError(f"Aiper request failed: {last_exc}") from last_exc
+        raise last_exc if last_exc else AiperConnectionError("Aiper request failed")
 
     async def _call_plain(
         self,
