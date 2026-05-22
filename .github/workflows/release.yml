@@ -12,6 +12,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: HACS validation
+        uses: hacs/action@main
+        with:
+          category: integration
+
+      - name: hassfest
+        uses: home-assistant/actions/hassfest@master
+
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
         with:
@@ -28,14 +36,6 @@ jobs:
 
       - name: Mypy
         run: uv run --frozen mypy custom_components/ tests/ tools/ .github/scripts/
-
-      - name: HACS validation
-        uses: hacs/action@main
-        with:
-          category: integration
-
-      - name: hassfest
-        uses: home-assistant/actions/hassfest@master
 
       - name: Unit tests
         run: uv run --frozen pytest tests/ -v

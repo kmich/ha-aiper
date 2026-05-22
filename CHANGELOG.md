@@ -56,6 +56,7 @@ This changelog tracks local modernization work intended for a future pull reques
 
 - Fixed config-flow test scaffolding so tests run through the `uv` managed Python environment.
 - Fixed config-flow validation so cloud connection failures are not reported as invalid credentials.
+- Fixed the release preflight so hassfest validates the integration before the local Home Assistant test environment is installed.
 - Fixed REST retry exhaustion so repeated transport and retryable server failures stay classified as connection failures.
 - Fixed `tools/aiper_probe.py` so `AIPER_REGION` is honored when `--region` is not provided.
 - Fixed AWS IoT MQTT connection setup by using the Cognito identity ID as the MQTT client ID required by Aiper's IoT policy.
