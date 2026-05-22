@@ -20,7 +20,3 @@ cards:
         name: Status
       - entity: sensor.REPLACE_ME_battery
         name: Battery
-      - entity: sensor.REPLACE_ME_total_cleaning_time
-        name: Total cleaning time
-      - entity: sensor.REPLACE_ME_total_cleaning_time_minutes
-        name: Total cleaning time (min)

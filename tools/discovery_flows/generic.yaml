@@ -1,0 +1,21 @@
+name: Generic Aiper
+description: Minimal guided app-action capture for any Aiper device.
+steps:
+  - id: baseline_idle
+    prompt: Make sure the device is online and idle.
+    capture:
+      rest: true
+      shadow: true
+      observe_seconds: 20
+  - id: app_action
+    prompt: Perform one relevant action in the official Aiper app.
+    capture:
+      rest: true
+      shadow: true
+      observe_seconds: 45
+  - id: settle
+    prompt: Leave the device untouched so final telemetry can settle.
+    capture:
+      rest: true
+      shadow: true
+      observe_seconds: 45

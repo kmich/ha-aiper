@@ -13,57 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
-
-
-SENSITIVE_KEY_FRAGMENTS = (
-    "password",
-    "passwd",
-    "token",
-    "secret",
-    "authorization",
-    "openid",
-    "identity",
-    "accesskey",
-    "secretkey",
-    "sessiontoken",
-    "credential",
-    "jwt",
-)
-
-
-def _is_sensitive_key(key: str) -> bool:
-    k = key.lower().replace("_", "")
-    return any(frag in k for frag in SENSITIVE_KEY_FRAGMENTS)
-
-
-def _redact_str(value: str) -> str:
-    if not value:
-        return ""
-    if len(value) <= 6:
-        return "***"
-    return value[:3] + "…" + value[-3:]
-
-
-def _redact(obj: Any) -> Any:
-    """Recursively redact sensitive values from an arbitrary structure."""
-    if isinstance(obj, dict):
-        out: dict[str, Any] = {}
-        for k, v in obj.items():
-            if isinstance(k, str) and _is_sensitive_key(k):
-                out[k] = "***"
-            else:
-                out[k] = _redact(v)
-        return out
-    if isinstance(obj, list):
-        return [_redact(v) for v in obj]
-    if isinstance(obj, tuple):
-        return tuple(_redact(v) for v in obj)
-    if isinstance(obj, str):
-        # Avoid dumping very long strings (which may include payloads)
-        if len(obj) > 512:
-            return obj[:256] + "…" + obj[-64:]
-        return obj
-    return obj
+from .redaction import redact, redact_str
 
 
 async def async_get_config_entry_diagnostics(
@@ -78,7 +28,7 @@ async def async_get_config_entry_diagnostics(
     # Config entry data: never expose credentials.
     entry_data = {
         "region": entry.data.get("region"),
-        "username": _redact_str(str(entry.data.get("username", ""))) if entry.data.get("username") else None,
+        "username": redact_str(str(entry.data.get("username", ""))) if entry.data.get("username") else None,
     }
 
     diag: dict[str, Any] = {
@@ -96,11 +46,21 @@ async def async_get_config_entry_diagnostics(
 
     if api is not None:
         # Best-effort: include non-sensitive runtime details.
+        mqtt_client = getattr(api, "_mqtt_client", None)
         diag["api"].update(
             {
-                "iot_endpoint": _redact_str(str(getattr(api, "_iot_endpoint", ""))) if getattr(api, "_iot_endpoint", None) else None,
-                "identity_id": _redact_str(str(getattr(api, "_identity_id", ""))) if getattr(api, "_identity_id", None) else None,
+                "iot_endpoint": redact_str(str(getattr(api, "_iot_endpoint", ""))) if getattr(api, "_iot_endpoint", None) else None,
+                "identity_id": redact_str(str(getattr(api, "_identity_id", ""))) if getattr(api, "_identity_id", None) else None,
                 "aws_region": getattr(api, "_aws_region", None),
+                "mqtt_client": type(mqtt_client).__name__ if mqtt_client is not None else None,
+                "mqtt_last_error": getattr(mqtt_client, "last_error", None) if mqtt_client is not None else None,
+                "mqtt_last_connected_at": getattr(mqtt_client, "last_connected_at", None)
+                if mqtt_client is not None
+                else None,
+                "mqtt_last_disconnected_at": getattr(mqtt_client, "last_disconnected_at", None)
+                if mqtt_client is not None
+                else None,
+                "mqtt_reconnect_count": getattr(mqtt_client, "reconnect_count", None) if mqtt_client is not None else None,
             }
         )
 
@@ -112,15 +72,26 @@ async def async_get_config_entry_diagnostics(
 
         # Device snapshot (already reasonably bounded). Redact any sensitive keys.
         try:
-            diag["devices"] = _redact(coordinator.data or {})
+            diag["devices"] = redact(coordinator.data or {})
+            image_urls = {}
+            for sn, device in (coordinator.data or {}).items():
+                if not isinstance(device, dict):
+                    continue
+                try:
+                    image_url = device["entity_picture"].value
+                except KeyError:
+                    image_url = None
+                if image_url:
+                    image_urls[sn] = image_url
+            diag["device_model_images"] = image_urls
         except Exception:
             diag["devices"] = "<unavailable>"
 
         # Command tracker (useful for debugging select behavior).
         try:
             if hasattr(coordinator, "_command_state"):
-                diag["command_state"] = _redact(getattr(coordinator, "_command_state", {}))
+                diag["command_state"] = redact(getattr(coordinator, "_command_state", {}))
         except Exception:
             pass
 
-    return _redact(diag)
+    return redact(diag)

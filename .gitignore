@@ -5,3 +5,15 @@ __pycache__/
 .venv/
 .idea/
 .vscode/
+
+# Python tooling
+.*_cache/
+.coverage
+htmlcov/
+*.egg-info/
+*-local-test.zip
+
+# Home Assistant development runtime files
+ha-config/**
+!ha-config/
+!ha-config/configuration.yaml

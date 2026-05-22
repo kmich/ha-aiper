@@ -8,12 +8,17 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
-from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api_safe import AiperApi
-from .const import DOMAIN, CONF_ENABLE_MQTT, CONF_MQTT_DEBUG, CONF_QUEUE_OFFLINE_COMMANDS, CONF_POLL_INTERVAL, DEFAULT_SCAN_INTERVAL, CONF_HISTORY_REFRESH_HOURS, CONF_CONSUMABLES_REFRESH_HOURS, CONF_CLEAN_PATH_REFRESH_HOURS, DEFAULT_HISTORY_REFRESH_HOURS, DEFAULT_CONSUMABLES_REFRESH_HOURS, DEFAULT_CLEAN_PATH_REFRESH_HOURS
+from .api import AiperApi, AiperSessionConflict
+from .const import (
+    CONF_METADATA_REFRESH_HOURS,
+    CONF_MQTT_DEBUG,
+    DEFAULT_METADATA_REFRESH_HOURS,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,21 +45,25 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         username=data[CONF_USERNAME],
         password=data[CONF_PASSWORD],
         region=data[CONF_REGION],
+        async_session=async_get_clientsession(hass),
     )
 
     try:
-        result = await hass.async_add_executor_job(api.login)
+        result = await api.login()
         if not result:
             raise InvalidAuth
 
         # Get devices to show count
-        devices = await hass.async_add_executor_job(api.get_devices)
+        devices = await api.get_devices()
 
+    except AiperSessionConflict as err:
+        _LOGGER.error("Aiper account session conflict during validation: %s", err)
+        raise CannotConnect from err
     except Exception as err:
         _LOGGER.error("Login validation failed: %s", err)
         raise InvalidAuth from err
     finally:
-        await hass.async_add_executor_job(api.disconnect)
+        await api.disconnect()
 
     return {
         "title": f"Aiper ({data[CONF_USERNAME]})",
@@ -69,7 +78,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> config_entries.ConfigFlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
 
@@ -99,13 +108,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
+    async def async_step_reauth(self, entry_data: dict[str, Any]) -> config_entries.ConfigFlowResult:
         """Handle reauthorization request."""
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> config_entries.ConfigFlowResult:
         """Handle reauthorization confirmation."""
         errors: dict[str, str] = {}
 
@@ -134,8 +143,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
     @staticmethod
-    @config_entries.callback
-    def async_get_options_flow(config_entry: config_entries.ConfigEntry):
+    @callback
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> OptionsFlowHandler:
         return OptionsFlowHandler(config_entry)
 
 
@@ -148,7 +157,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         # of attempting to assign to the property.
         self._config_entry = config_entry
 
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> config_entries.ConfigFlowResult:
         """Manage the options."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
@@ -156,12 +165,13 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         current = self._config_entry.options
         schema = vol.Schema(
             {
-                vol.Optional(CONF_ENABLE_MQTT, default=current.get(CONF_ENABLE_MQTT, True)): bool,
                 vol.Optional(CONF_MQTT_DEBUG, default=current.get(CONF_MQTT_DEBUG, False)): bool,
-                vol.Optional(CONF_QUEUE_OFFLINE_COMMANDS, default=current.get(CONF_QUEUE_OFFLINE_COMMANDS, False)): bool,
-                vol.Optional(CONF_POLL_INTERVAL, default=current.get(CONF_POLL_INTERVAL, DEFAULT_SCAN_INTERVAL)): vol.All(
+                vol.Optional(
+                    CONF_METADATA_REFRESH_HOURS,
+                    default=current.get(CONF_METADATA_REFRESH_HOURS, DEFAULT_METADATA_REFRESH_HOURS),
+                ): vol.All(
                     vol.Coerce(int),
-                    vol.Range(min=5, max=3600),
+                    vol.Range(min=1, max=168),
                 ),
             }
         )

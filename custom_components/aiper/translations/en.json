@@ -31,12 +31,10 @@
     "step": {
       "init": {
         "title": "Aiper Options",
-        "description": "Optional settings for polling, offline command behavior, and MQTT real-time updates (beta).",
+        "description": "Optional settings for MQTT diagnostics and cloud metadata refresh.",
         "data": {
-          "enable_mqtt": "Enable MQTT (beta)",
-          "mqtt_debug": "MQTT debug logging (beta)",
-          "queue_offline_commands": "Queue commands while device is offline (advanced)",
-          "poll_interval": "Polling interval (seconds)"
+          "metadata_refresh_hours": "Cloud metadata refresh interval (hours)",
+          "mqtt_debug": "MQTT debug logging"
         }
       }
     }

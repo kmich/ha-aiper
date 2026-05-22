@@ -1,0 +1,33 @@
+name: Surfer S2
+description: Guided app-action capture for Surfer S2 support work.
+steps:
+  - id: baseline_idle
+    prompt: Make sure the Surfer S2 is online, in water if practical, and idle.
+    capture:
+      rest: true
+      shadow: true
+      observe_seconds: 30
+  - id: app_start_skimming
+    prompt: Start skimming/cleaning from the official Aiper app.
+    capture:
+      rest: true
+      shadow: true
+      observe_seconds: 60
+  - id: app_change_mode_or_setting
+    prompt: Change one available mode or setting in the official app.
+    capture:
+      rest: true
+      shadow: true
+      observe_seconds: 60
+  - id: app_stop
+    prompt: Stop or pause the device from the official Aiper app.
+    capture:
+      rest: true
+      shadow: true
+      observe_seconds: 60
+  - id: solar_or_basket_state
+    prompt: If practical, trigger or inspect solar, charging, or basket state in the app; otherwise just continue.
+    capture:
+      rest: true
+      shadow: true
+      observe_seconds: 45

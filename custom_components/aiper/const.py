@@ -1,97 +1,137 @@
 """Constants for the Aiper integration."""
 from __future__ import annotations
 
+from enum import IntEnum, StrEnum
+
 DOMAIN = "aiper"
 
 # Options
-CONF_ENABLE_MQTT = "enable_mqtt"
 CONF_MQTT_DEBUG = "mqtt_debug"
 
-# Control semantics
-CONF_QUEUE_OFFLINE_COMMANDS = "queue_offline_commands"
-CONF_POLL_INTERVAL = "poll_interval"
+# Slower-changing cloud metadata refresh options (hours)
+CONF_METADATA_REFRESH_HOURS = "metadata_refresh_hours"
 
-# Slower-changing data refresh options (hours)
-CONF_HISTORY_REFRESH_HOURS = "history_refresh_hours"
-CONF_CONSUMABLES_REFRESH_HOURS = "consumables_refresh_hours"
-CONF_CLEAN_PATH_REFRESH_HOURS = "clean_path_refresh_hours"
+DEFAULT_METADATA_REFRESH_HOURS = 24
 
-DEFAULT_HISTORY_REFRESH_HOURS = 6
-DEFAULT_CONSUMABLES_REFRESH_HOURS = 24
-DEFAULT_CLEAN_PATH_REFRESH_HOURS = 6
+class ApiEndpoint(StrEnum):
+    """Aiper cloud API endpoints by broad region."""
 
-# API Endpoints by region
-API_ENDPOINTS = {
-    "us": "https://apiamerica.aiper.com",
-    "eu": "https://apieurope.aiper.com",
-    "asia": "https://apiasia.aiper.com",
-}
+    us = "https://apiamerica.aiper.com"
+    eu = "https://apieurope.aiper.com"
+    asia = "https://apiasia.aiper.com"
 
-# AWS IoT Configuration
-AWS_IOT_ENDPOINT = "iot.aiper.com"  # Will be retrieved from API
-AWS_REGION = "us-east-1"  # Default, may vary by user region
 
-# MQTT Topics (templates with {sn} placeholder)
-TOPIC_READ = "aiper/things/{sn}/upChan"
-TOPIC_WRITE = "aiper/things/{sn}/downChan"
-TOPIC_SHADOW_GET = "$aws/things/{sn}/shadow/get/accepted"
-TOPIC_SHADOW_GET_REQUEST = "$aws/things/{sn}/shadow/get"
-TOPIC_SHADOW_UPDATE = "$aws/things/{sn}/shadow/update"
-TOPIC_SHADOW_UPDATE_ACCEPTED = "$aws/things/{sn}/shadow/update/accepted"
-TOPIC_SHADOW_UPDATE_DELTA = "$aws/things/{sn}/shadow/update/delta"
-TOPIC_SHADOW_UPDATE_DOCUMENTS = "$aws/things/{sn}/shadow/update/documents"
-TOPIC_SHADOW_REPORT = "aiper/things/{sn}/shadow/report"
-TOPIC_SHADOW_REPORT_X9 = "aiper/things/{sn}/app/report"
+class MqttTopic(StrEnum):
+    """MQTT topic templates with an `{sn}` serial-number placeholder."""
+
+    READ = "aiper/things/{sn}/upChan"
+    WRITE = "aiper/things/{sn}/downChan"
+    SHADOW_GET = "$aws/things/{sn}/shadow/get/accepted"
+    SHADOW_GET_REQUEST = "$aws/things/{sn}/shadow/get"
+    SHADOW_UPDATE = "$aws/things/{sn}/shadow/update"
+    SHADOW_UPDATE_ACCEPTED = "$aws/things/{sn}/shadow/update/accepted"
+    SHADOW_UPDATE_DELTA = "$aws/things/{sn}/shadow/update/delta"
+    SHADOW_UPDATE_DOCUMENTS = "$aws/things/{sn}/shadow/update/documents"
+    SHADOW_REPORT = "aiper/things/{sn}/shadow/report"
+    SHADOW_REPORT_X9 = "aiper/things/{sn}/app/report"
 
 # XOR Key for message encryption
 XOR_KEY = bytes([0x12, 0x34, 0x56, 0x78])
 
-# Device status codes
-STATUS_IDLE = 0
-STATUS_CLEANING = 1
-STATUS_RETURNING = 2
-STATUS_CHARGING = 3
-STATUS_CHARGED = 4
-STATUS_ERROR = 5
-STATUS_SLEEPING = 6
+STATUS_BASE_MASK = 0x7F
+# Meaning unknown; observed in both scheduled-idle and manual-cleaning states.
+STATUS_HIGH_BIT = 0x80
 
-STATUS_MAP = {
-    STATUS_IDLE: "Idle",
-    STATUS_CLEANING: "Cleaning",
-    STATUS_RETURNING: "Returning",
-    STATUS_CHARGING: "Charging",
-    STATUS_CHARGED: "Charged",
-    STATUS_ERROR: "Error",
-    STATUS_SLEEPING: "Sleeping",
-}
+
+class Status(IntEnum):
+    """Known Aiper device status values carried in the lower status bits."""
+
+    IDLE = 0
+    CLEANING = 1
+    RETURNING = 2
+    CHARGING = 3
+    CHARGED = 4
+    ERROR = 5
+    SLEEPING = 6
+
+
+def status_value(status: int | Status | None) -> int | None:
+    """Return the lower-bit status value from a raw status code."""
+    if status is None:
+        return None
+    try:
+        return int(status) & STATUS_BASE_MASK
+    except (TypeError, ValueError):
+        return None
+
+
+def status_running(status: int | Status | None) -> bool:
+    """Return whether the device is running."""
+    value = status_value(status)
+    if value is None:
+        return False
+    return value in (Status.CLEANING, Status.RETURNING)
+
+
+def status_label(status: int | Status | None) -> str:
+    """Return a display label for a known status code."""
+    value = status_value(status)
+    if value is None:
+        return f"Status {status}"
+    try:
+        return Status(value).name.replace("_", " ").title()
+    except ValueError:
+        return f"Status {status}"
+
+
+class CleaningMode(IntEnum):
+    """Known labels for device-reported cleaning-mode IDs.
+
+    Cleaning mode IDs are device-specific. This enum is intentionally only the
+    known common label set; runtime control paths must still accept explicit
+    integer IDs reported by the device.
+    """
+
+    SMART = 1
+    FLOOR = 2
+    WALL = 3
+    WATERLINE = 4
+    SCHEDULED = 5
+
+
+class DeviceFamily(StrEnum):
+    """Model-name markers used for broad device-family detection."""
+
+    SCUBA = "scuba"
+    SURFER = "surfer"
+    SHARK = "shark"
+    UNKNOWN = "unknown"
+
 
 # Cleaning modes
 #
 # IMPORTANT: These numeric codes are device-specific. For Scuba X1 we have observed
 # that the device reports a numeric `Machine.mode` that maps to app modes. Current mapping (based on testing): 1=Smart, 2=Floor, 3=Wall, 4=Waterline.
 #
-# The other modes are inferred and should be validated against the official app or by
-# experimenting with `AT+MODE=<n>` via the `aiper.send_at_command` service.
+# Other modes are inferred and should be validated with the probe tooling before
+# being exposed as stable Home Assistant controls.
 
-# "Scheduled" mode: the device performs an ~50 minute run, powers down, and will
-# attempt to run again ~48 hours later if battery is sufficient (as per app behavior).
-# Empirically, this appears to be a distinct MODE value, not an "AT+PLAN" command.
-MODE_SCHEDULED = 5
-MODE_FLOOR = 2
-MODE_SMART = 1
-MODE_WALL = 3
-MODE_WATERLINE = 4
-
-MODE_MAP = {
+MODE_MAP: dict[int, str] = {
     # NOTE: Mode IDs are device-specific and not documented publicly.
     # For Scuba X1 (tested): Machine.mode=1=Smart, 2=Floor, 3=Wall, 4=Waterline.
-    # If your device reports different IDs, use the `aiper.send_at_command` service to experiment with `AT+MODE=<n>`.
-    MODE_SCHEDULED: "Scheduled",
-    MODE_SMART: "Smart",
-    MODE_FLOOR: "Floor",
-    MODE_WALL: "Wall",
-    MODE_WATERLINE: "Waterline",
+    # If your device reports different IDs, validate them with the probe tooling before exposing them.
+    int(CleaningMode.SCHEDULED): "Scheduled",
+    int(CleaningMode.SMART): "Smart",
+    int(CleaningMode.FLOOR): "Floor",
+    int(CleaningMode.WALL): "Wall",
+    int(CleaningMode.WATERLINE): "Waterline",
 }
+
+
+def mode_label(mode_id: int | CleaningMode) -> str:
+    """Return a conservative label for a protocol mode ID."""
+    mode_value = int(mode_id)
+    return MODE_MAP.get(mode_value, f"Mode {mode_value}")
 
 # Warning codes (partial list, expand as discovered)
 WARN_CODES = {
@@ -106,9 +146,6 @@ WARN_CODES = {
 
 # X9 Series device prefixes (use different topic pattern)
 X9_SERIES_PREFIXES = ["X9", "SE", "SL"]
-
-# Scan interval (seconds)
-DEFAULT_SCAN_INTERVAL = 120
 
 # Connection timeout
 CONNECT_TIMEOUT = 10

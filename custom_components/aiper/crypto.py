@@ -13,7 +13,7 @@ import json
 import secrets
 import time
 
-from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.serialization import load_der_public_key
 
@@ -53,6 +53,8 @@ class AiperEncryption:
 
         der = base64.b64decode(PUBLIC_KEY_STRING)
         pub = load_der_public_key(der)
+        if not isinstance(pub, rsa.RSAPublicKey):
+            raise TypeError("Aiper public key is not an RSA key")
         encrypted = pub.encrypt(key_data, padding.PKCS1v15())
         return base64.b64encode(encrypted).decode("utf-8")
 

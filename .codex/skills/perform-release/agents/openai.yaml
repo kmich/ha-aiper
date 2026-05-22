@@ -1,0 +1,4 @@
+interface:
+  display_name: "Perform Release"
+  short_description: "Release this HACS integration safely"
+  default_prompt: "Use $perform-release to create a patch release."
