@@ -1,4 +1,5 @@
 """Aiper API Client for REST and MQTT communication."""
+
 from __future__ import annotations
 
 import asyncio
@@ -185,7 +186,6 @@ class AiperApi:
 
         return None
 
-
     async def _call_encrypted(
         self,
         method: str,
@@ -270,7 +270,6 @@ class AiperApi:
 
         return payload
 
-
     async def _rest_wait(self) -> None:
         """Throttle REST calls to reduce cloud load and avoid rate limits."""
         if self._async_rest_lock is None:
@@ -280,7 +279,6 @@ class AiperApi:
             if now < self._rest_next_allowed:
                 await asyncio.sleep(self._rest_next_allowed - now)
             self._rest_next_allowed = time.time() + self._rest_min_interval
-
 
     async def _request_with_backoff(
         self,
@@ -317,14 +315,24 @@ class AiperApi:
                 msg = str(err).lower()
                 transient = any(
                     key in msg
-                    for key in ("429", "500", "502", "503", "504", "timeout", "tempor", "connection", "reset", "refused")
+                    for key in (
+                        "429",
+                        "500",
+                        "502",
+                        "503",
+                        "504",
+                        "timeout",
+                        "tempor",
+                        "connection",
+                        "reset",
+                        "refused",
+                    )
                 )
                 if attempt >= max_attempts or not transient:
                     break
                 await asyncio.sleep(delay + random.uniform(0, 0.3))
                 delay = min(delay * 2.0, 8.0)
         raise last_exc if last_exc else Exception("Request failed")
-
 
     async def _call_plain(
         self,
@@ -372,7 +380,6 @@ class AiperApi:
         except Exception:
             # May be unencrypted JSON
             return data.decode("utf-8") if isinstance(data, bytes) else data
-
 
     async def login(self) -> bool:
         """Authenticate with Aiper API."""
@@ -433,7 +440,6 @@ class AiperApi:
         header_zid = self._headers.get("zoneId")
         return header_zid if isinstance(header_zid, str) and header_zid else None
 
-
     async def _call_with_zoneid(self, sn: str, fn: Callable[[], Awaitable[Any]]) -> Any:
         """Invoke async `fn` while temporarily setting the zoneId header for `sn`."""
         zid = self._zone_id_for_sn(sn)
@@ -448,8 +454,6 @@ class AiperApi:
                 self._headers["zoneId"] = prev
             else:
                 self._headers.pop("zoneId", None)
-
-
 
     async def refresh_token(self) -> bool:
         """Refresh the authentication token."""
@@ -480,7 +484,6 @@ class AiperApi:
         except Exception as err:
             _LOGGER.error("Token refresh error: %s", err)
             return False
-
 
     async def get_openid_token(self) -> None:
         """Fetch Cognito Identity/OpenID data used for AWS IoT MQTT."""
@@ -518,7 +521,6 @@ class AiperApi:
 
         except Exception as err:
             _LOGGER.warning("Failed to get OpenID token data: %s", err)
-
 
     async def get_aws_credentials(self) -> dict[str, Any] | None:
         """Exchange the OpenID token for temporary AWS credentials asynchronously."""
@@ -561,7 +563,6 @@ class AiperApi:
         self._aws_credentials_exp = time.time() + 3300
         return creds
 
-
     async def get_devices(self) -> list[dict]:
         """Get list of devices from API without blocking the event loop."""
         try:
@@ -591,7 +592,6 @@ class AiperApi:
             _LOGGER.error("Failed to get devices: %s", err)
             return []
 
-
     async def get_device_info(self, sn: str) -> dict | None:
         """Get detailed info for a specific device without blocking the event loop."""
         try:
@@ -611,7 +611,6 @@ class AiperApi:
         except aiohttp.ClientError as err:
             _LOGGER.error("Failed to get device info for %s: %s", sn, err)
             return None
-
 
     async def get_device_status(self, sn: str) -> dict | None:
         """Get online status for a device without blocking the event loop."""
@@ -700,6 +699,7 @@ class AiperApi:
             for body in bodies:
                 payload = None
                 try:
+
                     async def encrypted_query(
                         path: str = path,
                         body: dict[str, Any] = body,
@@ -715,6 +715,7 @@ class AiperApi:
 
                 if not payload or not self._is_success(payload):
                     try:
+
                         async def plain_query(
                             path: str = path,
                             body: dict[str, Any] = body,
@@ -736,7 +737,6 @@ class AiperApi:
                     return val
 
         return None
-
 
     async def update_clean_path_setting(self, sn: str, value: int) -> bool:
         """Update clean-path preference and apply it to the device asynchronously."""
@@ -810,6 +810,7 @@ class AiperApi:
             for body in bodies:
                 payload = None
                 try:
+
                     async def encrypted_update(
                         path: str = path,
                         body: dict[str, Any] = body,
@@ -825,6 +826,7 @@ class AiperApi:
 
                 if not payload or not self._is_success(payload):
                     try:
+
                         async def plain_update(
                             path: str = path,
                             body: dict[str, Any] = body,
@@ -896,7 +898,13 @@ class AiperApi:
             shadow_ok = bool(
                 await self.publish_shadow_update(
                     sn,
-                    {"Machine": {"cleanPath": int(value), "cleanPathSetting": int(value), "clean_path_setting": int(value)}},
+                    {
+                        "Machine": {
+                            "cleanPath": int(value),
+                            "cleanPathSetting": int(value),
+                            "clean_path_setting": int(value),
+                        }
+                    },
                 )
             )
         except Exception:
@@ -908,7 +916,6 @@ class AiperApi:
             pass
 
         return bool(rest_ok or mqtt_published or shadow_ok)
-
 
     async def connect_mqtt(self) -> bool:
         """Connect to AWS IoT MQTT broker."""
@@ -962,8 +969,6 @@ class AiperApi:
         """
         return bool(self._mqtt_connected and self._mqtt_client and self._mqtt_client.is_connected())
 
-
-
     async def request_shadow(self, sn: str) -> bool:
         """Request the current AWS IoT thing shadow."""
         if not self.is_mqtt_connected():
@@ -978,12 +983,9 @@ class AiperApi:
             _LOGGER.debug("Failed to request shadow for %s: %s", sn, err)
             return False
 
-
-
     async def publish_shadow_update(self, sn: str, desired: dict[str, Any]) -> bool:
         """Backward-compatible alias for desired-state publishing."""
         return await self.publish_shadow_desired(sn, desired)
-
 
     async def publish_shadow_desired(self, sn: str, desired: dict[str, Any]) -> bool:
         """Publish a desired-state update to the AWS IoT device shadow."""
@@ -1066,7 +1068,6 @@ class AiperApi:
         except Exception as err:
             _LOGGER.error("Failed to process message: %s", err)
 
-
     async def subscribe_device(self, sn: str, callback: Callable[..., None]) -> bool:
         """Subscribe to device shadow updates."""
         if not self.is_mqtt_connected():
@@ -1130,7 +1131,6 @@ class AiperApi:
         if event is not None:
             event.clear()
 
-
     def _async_ack_event(self, sn: str) -> asyncio.Event:
         event = self._async_ack_events.get(sn)
         if event is None:
@@ -1157,7 +1157,6 @@ class AiperApi:
             if not self._ack_fifo[sn]:
                 event.clear()
             return ack
-
 
     def _cmd_lock(self, sn: str) -> asyncio.Lock:
         lock = self._cmd_locks.get(sn)
@@ -1189,7 +1188,6 @@ class AiperApi:
             if "+ERROR" in ack_u:
                 return False
             return None
-
 
     async def send_command(self, sn: str, cmd_type: str, data: dict | None = None) -> bool:
         """Send a command to the device."""
@@ -1251,7 +1249,6 @@ class AiperApi:
             _LOGGER.error("Failed to send command: %s", err)
             return False
 
-
     async def set_cleaning_mode(self, sn: str, mode: int | CleaningMode) -> bool:
         """Set a selectable cleaning mode."""
         _LOGGER.info("Setting cleaning mode for %s: %s", sn, mode)
@@ -1264,7 +1261,6 @@ class AiperApi:
             pass
 
         return cmd_result is True
-
 
     async def set_running(self, sn: str, running: bool) -> bool:
         """Start or stop running."""
@@ -1291,7 +1287,6 @@ class AiperApi:
                 else:
                     crc >>= 1
         return crc
-
 
     async def disconnect(self) -> None:
         """Disconnect from MQTT and cleanup."""

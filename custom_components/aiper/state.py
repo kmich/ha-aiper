@@ -249,7 +249,9 @@ def supported_mode_ids_from_payload(payload: dict[str, Any]) -> list[int]:
     return deduped
 
 
-def normalize_machine_update(rest: RawDeviceData, mqtt: dict[str, Any], current: DeviceState | None = None) -> DeviceState:
+def normalize_machine_update(
+    rest: RawDeviceData, mqtt: dict[str, Any], current: DeviceState | None = None
+) -> DeviceState:
     """Translate one MQTT Machine payload into normalized entity updates."""
     updates: DeviceState = {}
     running_control = _has_running_control(rest)
@@ -516,9 +518,7 @@ def normalize_device_state(raw: RawDeviceData) -> DeviceState:
         linked = False
     else:
         wifi_connected = (
-            bool(raw.get("wifiName"))
-            or raw.get("wifiRssi") is not None
-            or raw.get("sta") in (1, 2, "1", "2")
+            bool(raw.get("wifiName")) or raw.get("wifiRssi") is not None or raw.get("sta") in (1, 2, "1", "2")
         )
         wifi = wifi_connected if wifi_connected or raw.get("sta") is not None else None
         ble = raw.get("ble")

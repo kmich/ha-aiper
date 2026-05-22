@@ -1,4 +1,5 @@
 """AWS IoT MQTT transport for Aiper devices."""
+
 from __future__ import annotations
 
 import asyncio

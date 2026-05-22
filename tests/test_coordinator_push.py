@@ -157,7 +157,9 @@ def test_pending_running_intent_expires() -> None:
             "pending": {
                 "running": {
                     "target": True,
-                    "since": (dt_util.utcnow() - timedelta(seconds=coordinator.PENDING_TIMEOUT_SECONDS + 1)).isoformat(),
+                    "since": (
+                        dt_util.utcnow() - timedelta(seconds=coordinator.PENDING_TIMEOUT_SECONDS + 1)
+                    ).isoformat(),
                     "source": "test",
                 }
             },

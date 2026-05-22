@@ -1,4 +1,5 @@
 """Config flow for Aiper integration."""
+
 from __future__ import annotations
 
 import logging
@@ -76,9 +77,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.ConfigFlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> config_entries.ConfigFlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
 
@@ -120,10 +119,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
-                await validate_input(self.hass, {
-                    **self._get_reauth_entry().data,
-                    **user_input,
-                })
+                await validate_input(
+                    self.hass,
+                    {
+                        **self._get_reauth_entry().data,
+                        **user_input,
+                    },
+                )
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
             except Exception:
@@ -140,7 +142,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({vol.Required(CONF_PASSWORD): str}),
             errors=errors,
         )
-
 
     @staticmethod
     @callback

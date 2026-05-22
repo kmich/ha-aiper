@@ -10,7 +10,7 @@ This changelog tracks local modernization work intended for a future pull reques
 - Added `uv` development tooling with `pyproject.toml` and `uv.lock` for pytest, Ruff, mypy, and Pyright checks.
 - Added local Home Assistant development runtime via `docker-compose.yml` and `ha-config/configuration.yaml`.
 - Added local Home Assistant brand icons for custom integration and HACS installs.
-- Added GitHub-generated release notes so release pages include change and contributor context.
+- Added ws-core-style CI, validation, and tag-triggered release workflows with GitHub-generated release notes.
 - Added pytest coverage for config-flow validation, diagnostics redaction, parser normalization, warning code handling, MQTT push updates, entity publication, command control, and probe helpers.
 - Added a test that keeps discovery-only raw AT commands out of Home Assistant services.
 - Added a Surfer S2 propeller maintenance timestamp sensor when the consumables endpoint reports propeller maintenance data.

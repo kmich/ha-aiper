@@ -1,4 +1,5 @@
 """Data update coordinator for Aiper integration."""
+
 from __future__ import annotations
 
 import logging
@@ -347,7 +348,9 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
 
                 current_device_state = (self.data or {}).get(sn) if self.data else None
                 online_entity = current_device_state.get("online") if current_device_state else None
-                online_state = online_entity.value if online_entity is not None and isinstance(online_entity.value, bool) else None
+                online_state = (
+                    online_entity.value if online_entity is not None and isinstance(online_entity.value, bool) else None
+                )
                 if online_state is None:
                     online_state = self._last_online.get(sn)
                 if online_state is None:
@@ -549,7 +552,9 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 payload = state_payload.get("reported") or {}
             else:
                 if any(key in state_payload for key in ("desired", "delta")):
-                    _LOGGER.debug("Ignoring non-reported shadow update for %s (keys=%s)", sn, list(state_payload.keys()))
+                    _LOGGER.debug(
+                        "Ignoring non-reported shadow update for %s (keys=%s)", sn, list(state_payload.keys())
+                    )
                     return
                 if isinstance(state_payload, dict):
                     payload = state_payload
@@ -899,7 +904,6 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 return v
 
         return None
-
 
     def set_clean_path_cache(self, sn: str, value: int) -> None:
         """Update cached clean-path preference."""

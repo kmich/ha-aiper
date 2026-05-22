@@ -119,4 +119,3 @@ def test_clean_path_at_commands_match_legacy_control_variants() -> None:
         "AT+CLEANPATH=0",
         "AT+SETPATH=0",
     ]
-

@@ -109,7 +109,7 @@ async def test_surfer_entity_publication_is_verified_and_not_scuba_specific(hass
             ],
             "runTime": 1673,
             "mode": 5,
-        }
+        },
     )
 
     sensor_entities = await _setup_platform(sensor, hass, entry)
@@ -199,7 +199,7 @@ async def test_scuba_entity_publication_uses_scuba_capabilities(hass: HomeAssist
             ],
             "temp": 23,
             "in_water": 1,
-        }
+        },
     )
 
     sensor_entities = await _setup_platform(sensor, hass, entry)
@@ -244,7 +244,7 @@ async def test_shark_entity_publication_keeps_consumables_unavailable_without_va
             "model": "Shark_X",
             "battLevel": 80,
             "machineStatus": 1,
-        }
+        },
     )
 
     sensor_entities = await _setup_platform(sensor, hass, entry)

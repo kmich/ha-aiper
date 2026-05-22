@@ -1,4 +1,5 @@
 """Typed command surface for Aiper devices."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

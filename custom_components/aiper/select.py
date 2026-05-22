@@ -214,9 +214,7 @@ class AiperCleaningModeSelect(AiperSelectBase):
         result = await self.controller.set_cleaning_mode(self._sn, mode_id)
         if not result.ok:
             if not self.coordinator.api.is_mqtt_connected():
-                raise HomeAssistantError(
-                    "Failed to set cleaning mode: MQTT is not connected."
-                )
+                raise HomeAssistantError("Failed to set cleaning mode: MQTT is not connected.")
             raise HomeAssistantError(f"Failed to set cleaning mode: {result.reason or 'device rejected the command'}")
 
         # Ask for a shadow refresh and a coordinator refresh.
@@ -335,8 +333,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             if _supports_clean_path(dev):
                 entities.append(AiperCleanPathSelect(coordinator, controller, sn, name))
             if _supports_mode_control(dev):
-                entities.append(
-                    AiperCleaningModeSelect(coordinator, controller, sn, name, supported_ids, mode_map)
-                )
+                entities.append(AiperCleaningModeSelect(coordinator, controller, sn, name, supported_ids, mode_map))
 
     async_add_entities(entities)

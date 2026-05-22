@@ -1,4 +1,5 @@
 """Aiper Pool Cleaner Integration for Home Assistant."""
+
 from __future__ import annotations
 
 import logging
@@ -144,7 +145,6 @@ async def _cleanup_legacy_entities(
             ent_reg.async_remove(ent.entity_id)
 
 
-
 async def _migrate_select_unique_ids(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -222,6 +222,7 @@ async def _migrate_select_unique_ids(
         suffixed = False
         try:
             import re as _re
+
             suffixed = bool(_re.search(r"_\d+$", eid))
         except Exception:
             suffixed = False
@@ -284,7 +285,6 @@ async def _migrate_select_unique_ids(
             ent_reg.async_remove(extra.entity_id)
 
 
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Aiper from a config entry."""
     hass.data.setdefault(DOMAIN, {})
@@ -310,7 +310,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         metadata_refresh_hours=entry.options.get(CONF_METADATA_REFRESH_HOURS, DEFAULT_METADATA_REFRESH_HOURS),
         config_entry=entry,
     )
-    
+
     _LOGGER.debug("Performing first data refresh...")
     await coordinator.async_config_entry_first_refresh()
     _LOGGER.info("First refresh complete, data: %s", list(coordinator.data.keys()) if coordinator.data else "None")

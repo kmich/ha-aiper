@@ -16,9 +16,7 @@ from .const import DOMAIN
 from .redaction import redact, redact_str
 
 
-async def async_get_config_entry_diagnostics(
-    hass: HomeAssistant, entry: ConfigEntry
-) -> dict[str, Any]:
+async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
 
     data = hass.data.get(DOMAIN, {}).get(entry.entry_id) or {}
@@ -49,8 +47,12 @@ async def async_get_config_entry_diagnostics(
         mqtt_client = getattr(api, "_mqtt_client", None)
         diag["api"].update(
             {
-                "iot_endpoint": redact_str(str(getattr(api, "_iot_endpoint", ""))) if getattr(api, "_iot_endpoint", None) else None,
-                "identity_id": redact_str(str(getattr(api, "_identity_id", ""))) if getattr(api, "_identity_id", None) else None,
+                "iot_endpoint": redact_str(str(getattr(api, "_iot_endpoint", "")))
+                if getattr(api, "_iot_endpoint", None)
+                else None,
+                "identity_id": redact_str(str(getattr(api, "_identity_id", "")))
+                if getattr(api, "_identity_id", None)
+                else None,
                 "aws_region": getattr(api, "_aws_region", None),
                 "mqtt_client": type(mqtt_client).__name__ if mqtt_client is not None else None,
                 "mqtt_last_error": getattr(mqtt_client, "last_error", None) if mqtt_client is not None else None,
@@ -60,14 +62,18 @@ async def async_get_config_entry_diagnostics(
                 "mqtt_last_disconnected_at": getattr(mqtt_client, "last_disconnected_at", None)
                 if mqtt_client is not None
                 else None,
-                "mqtt_reconnect_count": getattr(mqtt_client, "reconnect_count", None) if mqtt_client is not None else None,
+                "mqtt_reconnect_count": getattr(mqtt_client, "reconnect_count", None)
+                if mqtt_client is not None
+                else None,
             }
         )
 
     if coordinator is not None:
         diag["coordinator"] = {
             "last_update_success": getattr(coordinator, "last_update_success", None),
-            "update_interval_seconds": int(getattr(getattr(coordinator, "update_interval", None), "total_seconds", lambda: 0)()),
+            "update_interval_seconds": int(
+                getattr(getattr(coordinator, "update_interval", None), "total_seconds", lambda: 0)()
+            ),
         }
 
         # Device snapshot (already reasonably bounded). Redact any sensitive keys.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check release version state for the CI/CD workflow."""
+"""Check release version state for repository workflows."""
 
 from __future__ import annotations
 
@@ -44,8 +44,7 @@ def _check_matching_versions() -> str:
 
     if manifest_version != pyproject_version:
         raise SystemExit(
-            "Version mismatch: "
-            f"manifest.json has {manifest_version}, pyproject.toml has {pyproject_version}"
+            f"Version mismatch: manifest.json has {manifest_version}, pyproject.toml has {pyproject_version}"
         )
     if SEMVER_RE.fullmatch(manifest_version) is None:
         raise SystemExit(f"Version is not SemVer MAJOR.MINOR.PATCH: {manifest_version}")
@@ -57,8 +56,7 @@ def _check_matching_versions() -> str:
     )
     if lock_match and lock_match.group(1) != manifest_version:
         raise SystemExit(
-            "Version mismatch: "
-            f"uv.lock has {lock_match.group(1)}, manifest/pyproject have {manifest_version}"
+            f"Version mismatch: uv.lock has {lock_match.group(1)}, manifest/pyproject have {manifest_version}"
         )
 
     return manifest_version
@@ -89,14 +87,8 @@ def main() -> None:
     latest_version = semver_tags[-1][1:] if semver_tags else ""
 
     release_candidate = not current_tag_exists
-    if (
-        release_candidate
-        and latest_version
-        and _version_tuple(version) <= _version_tuple(latest_version)
-    ):
-        raise SystemExit(
-            f"Current version {version} has no tag, but is not newer than latest tag v{latest_version}"
-        )
+    if release_candidate and latest_version and _version_tuple(version) <= _version_tuple(latest_version):
+        raise SystemExit(f"Current version {version} has no tag, but is not newer than latest tag v{latest_version}")
 
     _write_outputs(
         {

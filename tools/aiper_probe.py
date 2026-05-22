@@ -363,6 +363,7 @@ async def probe_clean_path_query(api: AiperApi, device: dict[str, Any], sn: str)
         started = _utc_now()
         try:
             if envelope == "plain":
+
                 async def plain_query(
                     path: str = path,
                     body: dict[str, Any] = body,
@@ -374,6 +375,7 @@ async def probe_clean_path_query(api: AiperApi, device: dict[str, Any], sn: str)
                     plain_query,
                 )
             else:
+
                 async def encrypted_query(
                     path: str = path,
                     body: dict[str, Any] = body,
@@ -520,7 +522,9 @@ async def _connect_and_subscribe(api: AiperApi, sn: str, recorder: EventRecorder
         raise SystemExit(f"MQTT subscription failed for {sn}")
 
 
-def _write_manifest(path: Path, args: argparse.Namespace, command: str, sn: str | None, devices: list[dict[str, Any]]) -> None:
+def _write_manifest(
+    path: Path, args: argparse.Namespace, command: str, sn: str | None, devices: list[dict[str, Any]]
+) -> None:
     _write_json(
         path / "manifest.json",
         {
@@ -594,10 +598,7 @@ async def cmd_mqtt_auth(args: argparse.Namespace) -> int:
             f"cognito_id_region={openid['cognito_id_region']} "
             f"pool_region={openid['cognito_pool_region']}"
         )
-        print(
-            "credentials: "
-            f"ok={credentials['ok']} request_region={credentials['request_region']}"
-        )
+        print(f"credentials: ok={credentials['ok']} request_region={credentials['request_region']}")
         print(out_dir)
         return 0
 
@@ -870,7 +871,9 @@ def build_parser() -> argparse.ArgumentParser:
     at_format_parser.add_argument("--timeout", type=float, default=4.0, help="Ack wait timeout")
     at_format_parser.add_argument("--between-seconds", type=float, default=1.0)
     at_format_parser.add_argument("--observe-seconds", type=int, default=10)
-    at_format_parser.add_argument("--allow-control", action="store_true", help="Allow commands that can affect a real device")
+    at_format_parser.add_argument(
+        "--allow-control", action="store_true", help="Allow commands that can affect a real device"
+    )
     at_format_parser.set_defaults(func=cmd_at_format)
 
     contract_verify_parser = subparsers.add_parser(
@@ -883,7 +886,9 @@ def build_parser() -> argparse.ArgumentParser:
     contract_verify_parser.add_argument("--between-seconds", type=float, default=1.0)
     contract_verify_parser.add_argument("--observe-seconds", type=int, default=5)
     contract_verify_parser.add_argument("--clean-path-value", type=int, default=0)
-    contract_verify_parser.add_argument("--allow-control", action="store_true", help="Allow commands that can affect a real device")
+    contract_verify_parser.add_argument(
+        "--allow-control", action="store_true", help="Allow commands that can affect a real device"
+    )
     contract_verify_parser.set_defaults(func=cmd_contract_verify)
 
     guided_parser = subparsers.add_parser("guided", parents=[common], help="Run a guided discovery flow")

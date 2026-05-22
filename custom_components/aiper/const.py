@@ -1,4 +1,5 @@
 """Constants for the Aiper integration."""
+
 from __future__ import annotations
 
 from enum import IntEnum, StrEnum
@@ -12,6 +13,7 @@ CONF_MQTT_DEBUG = "mqtt_debug"
 CONF_METADATA_REFRESH_HOURS = "metadata_refresh_hours"
 
 DEFAULT_METADATA_REFRESH_HOURS = 24
+
 
 class ApiEndpoint(StrEnum):
     """Aiper cloud API endpoints by broad region."""
@@ -34,6 +36,7 @@ class MqttTopic(StrEnum):
     SHADOW_UPDATE_DOCUMENTS = "$aws/things/{sn}/shadow/update/documents"
     SHADOW_REPORT = "aiper/things/{sn}/shadow/report"
     SHADOW_REPORT_X9 = "aiper/things/{sn}/app/report"
+
 
 # XOR Key for message encryption
 XOR_KEY = bytes([0x12, 0x34, 0x56, 0x78])
@@ -132,6 +135,7 @@ def mode_label(mode_id: int | CleaningMode) -> str:
     """Return a conservative label for a protocol mode ID."""
     mode_value = int(mode_id)
     return MODE_MAP.get(mode_value, f"Mode {mode_value}")
+
 
 # Warning codes (partial list, expand as discovered)
 WARN_CODES = {

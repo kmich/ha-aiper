@@ -5,11 +5,10 @@ description: Perform a release for this repository. Use when the user asks to cr
 
 # Perform Release
 
-Release this HACS integration by committing a version bump to `main`. The
-`CI/CD` workflow validates that the stored versions match, runs quality checks,
-and only then tags the current commit and creates the GitHub release archive.
-
-Do not create tags locally. Do not run a separate release workflow.
+Release this HACS integration by committing a version bump to `main`, waiting
+for the `CI` and `Validate` workflows, and then pushing a matching version tag.
+The tag-triggered `Release` workflow re-runs preflight checks and creates the
+GitHub release archive.
 
 ## Release Type
 
@@ -83,22 +82,36 @@ git commit -m "Release X.Y.Z"
 git push origin main
 ```
 
-The push triggers `.github/workflows/ci-cd.yaml`. The release job will only run
-when the quality job succeeds and the version does not already have a matching
-tag. The GitHub release uses generated release notes so merged pull requests
-and contributor credit are visible on the release page.
+The push triggers `.github/workflows/ci.yml` and
+`.github/workflows/validate.yml`. Wait for both before tagging the release:
+
+```bash
+gh run list -R kmich/ha-aiper --branch main --limit 10 --json databaseId,name,displayTitle,headSha,status,conclusion,createdAt,url
+gh run watch -R kmich/ha-aiper RUN_ID --exit-status
+```
+
+After those checks pass, tag the release commit and push the tag:
+
+```bash
+git tag -a vX.Y.Z -m "vX.Y.Z"
+git push origin vX.Y.Z
+```
+
+The tag triggers `.github/workflows/release.yml`. Its preflight checks must
+pass before it publishes the GitHub release. The release uses generated notes
+so merged pull requests and contributor credit are visible on the release page.
 
 The release asset must contain the contents of `custom_components/aiper` at the
 zip root. Do not package the parent `custom_components/aiper` path inside
 `aiper.zip`, or HACS will install it as
 `/config/custom_components/aiper/custom_components/aiper`.
 
-## Follow CI/CD
+## Follow Release
 
-Find the new run and watch it:
+Find the tag-triggered release run and watch it:
 
 ```bash
-gh run list -R kmich/ha-aiper --workflow "CI/CD" --branch main --limit 10 --json databaseId,displayTitle,headSha,status,conclusion,createdAt,url
+gh run list -R kmich/ha-aiper --workflow "Release" --limit 10 --json databaseId,displayTitle,headSha,status,conclusion,createdAt,url
 gh run watch -R kmich/ha-aiper RUN_ID --exit-status
 ```
 

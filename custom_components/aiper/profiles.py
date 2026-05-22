@@ -10,6 +10,7 @@ Surfer devices report mode as read-only cleaning context, while Scuba exposes
 known selectable cleaning modes. Shark/unknown devices only expose a cleaning
 mode select when the cloud explicitly reports supported mode IDs.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -74,7 +75,13 @@ SURFER_CAPABILITIES = COMMON_CAPABILITIES | frozenset(
 
 SHARK_CAPABILITIES = COMMON_CAPABILITIES
 
-SCUBA_DEFAULT_MODE_IDS = [int(CleaningMode.SMART), int(CleaningMode.FLOOR), int(CleaningMode.WALL), int(CleaningMode.WATERLINE), int(CleaningMode.SCHEDULED)]
+SCUBA_DEFAULT_MODE_IDS = [
+    int(CleaningMode.SMART),
+    int(CleaningMode.FLOOR),
+    int(CleaningMode.WALL),
+    int(CleaningMode.WATERLINE),
+    int(CleaningMode.SCHEDULED),
+]
 SURFER_DEFAULT_MODE_IDS = [0, int(CleaningMode.SMART), int(CleaningMode.SCHEDULED)]
 
 

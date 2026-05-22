@@ -1,5 +1,10 @@
 # Aiper Pool Cleaner
 
+[![HACS][hacs-badge]][hacs-url]
+[![GitHub Release][release-badge]][release-url]
+[![License][license-badge]][license-url]
+[![Validate][validate-badge]][validate-url]
+
 ![Aiper Pool Cleaner icon](custom_components/aiper/brand/icon.png)
 
 Home Assistant custom integration for Aiper pool cleaners. It connects to
@@ -106,3 +111,12 @@ Then reference it from Lovelace as:
 - `/local/aiper/scuba_x1.png`
 
 (Any image works - it is purely cosmetic.)
+
+[hacs-badge]: https://img.shields.io/badge/HACS-Custom-41BDF5.svg
+[hacs-url]: https://github.com/hacs/integration
+[release-badge]: https://img.shields.io/github/v/release/kmich/ha-aiper
+[release-url]: https://github.com/kmich/ha-aiper/releases
+[license-badge]: https://img.shields.io/github/license/kmich/ha-aiper
+[license-url]: https://github.com/kmich/ha-aiper/blob/main/LICENSE
+[validate-badge]: https://img.shields.io/github/actions/workflow/status/kmich/ha-aiper/validate.yml?label=validate
+[validate-url]: https://github.com/kmich/ha-aiper/actions/workflows/validate.yml
