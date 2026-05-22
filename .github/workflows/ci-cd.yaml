@@ -110,4 +110,4 @@ jobs:
           git push origin "${tag}"
           gh release create "${tag}" aiper.zip \
             --title "${tag}" \
-            --notes "Release ${tag}"
+            --generate-notes

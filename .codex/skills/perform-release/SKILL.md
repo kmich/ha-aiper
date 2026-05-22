@@ -85,7 +85,8 @@ git push origin main
 
 The push triggers `.github/workflows/ci-cd.yaml`. The release job will only run
 when the quality job succeeds and the version does not already have a matching
-tag.
+tag. The GitHub release uses generated release notes so merged pull requests
+and contributor credit are visible on the release page.
 
 The release asset must contain the contents of `custom_components/aiper` at the
 zip root. Do not package the parent `custom_components/aiper` path inside
@@ -118,9 +119,9 @@ After success:
    git log --oneline --decorate -5
    ```
 2. Verify the tag points at the release commit.
-3. Verify GitHub release and `aiper.zip`:
+3. Verify GitHub release notes and `aiper.zip`:
    ```bash
-   gh release view -R kmich/ha-aiper vX.Y.Z --json tagName,name,url,assets
+   gh release view -R kmich/ha-aiper vX.Y.Z --json tagName,name,url,body,assets
    ```
 
 ## Final Response
