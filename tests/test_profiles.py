@@ -132,9 +132,7 @@ def test_hydrocomm_detected_via_model_string() -> None:
 
 def test_hydrocomm_detected_via_bt_name_fallback() -> None:
     """HydroComm is identified via btName when model field is absent."""
-    profile = derive_device_profile(
-        {"model": "", "btName": "Aiper-HydroComm-W2X60601424"}
-    )
+    profile = derive_device_profile({"model": "", "btName": "Aiper-HydroComm-W2X60601424"})
 
     assert profile.family is DeviceFamily.HYDROCOMM
     assert Capability.CLEANING_MODE_SELECT not in profile.capabilities
@@ -144,9 +142,7 @@ def test_hydrocomm_detected_via_bt_name_fallback() -> None:
 
 def test_hydrocomm_temp_evidence_does_not_add_water_temperature_capability() -> None:
     """HydroComm skips dynamic capability additions even when temp data is present."""
-    profile = derive_device_profile(
-        {"model": "HydroComm", "temp": 28.5}
-    )
+    profile = derive_device_profile({"model": "HydroComm", "temp": 28.5})
 
     assert profile.family is DeviceFamily.HYDROCOMM
     assert Capability.WATER_TEMPERATURE not in profile.capabilities
