@@ -75,6 +75,21 @@ SURFER_CAPABILITIES = COMMON_CAPABILITIES | frozenset(
 
 SHARK_CAPABILITIES = COMMON_CAPABILITIES
 
+# HydroComm is a water quality monitor, not a pool cleaner.
+# It exposes connectivity and basic identity sensors only.
+# Cleaning-specific capabilities (status, warning, mode select, run control,
+# clean path, in_water) are intentionally excluded until real API data confirms
+# what the HydroComm actually reports.
+HYDROCOMM_CAPABILITIES = frozenset(
+    {
+        Capability.BATTERY,
+        Capability.ONLINE,
+        Capability.WIFI,
+        Capability.FIRMWARE,
+        Capability.BLUETOOTH,
+    }
+)
+
 SCUBA_DEFAULT_MODE_IDS = [
     int(CleaningMode.SMART),
     int(CleaningMode.FLOOR),
@@ -108,6 +123,19 @@ def device_family(device: dict[str, Any]) -> DeviceFamily:
         return DeviceFamily.SURFER
     if DeviceFamily.SHARK.value in model:
         return DeviceFamily.SHARK
+
+    # HydroComm may not always have a clean model string.
+    # Check name and btName as fallbacks since the BT name
+    # reliably contains "HydroComm" (eg. "Aiper-HydroComm-W2X...").
+    candidate_fields = [
+        model,
+        str(device.get("name") or "").lower(),
+        str(device.get("btName") or "").lower(),
+        str(device.get("modelName") or "").lower(),
+    ]
+    if any(DeviceFamily.HYDROCOMM.value in f for f in candidate_fields):
+        return DeviceFamily.HYDROCOMM
+
     return DeviceFamily.UNKNOWN
 
 
@@ -139,6 +167,14 @@ def derive_device_profile(device: dict[str, Any]) -> DeviceProfile:
         capabilities = set(SHARK_CAPABILITIES)
         if bool(device.get("supported_modes_explicit")) and mode_ids:
             capabilities.add(Capability.CLEANING_MODE_SELECT)
+    elif family == DeviceFamily.HYDROCOMM:
+        # HydroComm is a monitor, not a cleaner. Use a fixed minimal set
+        # and skip the dynamic capability additions below.
+        return DeviceProfile(
+            family=family,
+            capabilities=HYDROCOMM_CAPABILITIES,
+            mode_map={},
+        )
     else:
         capabilities = set(COMMON_CAPABILITIES)
 

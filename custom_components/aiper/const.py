@@ -108,6 +108,7 @@ class DeviceFamily(StrEnum):
     SCUBA = "scuba"
     SURFER = "surfer"
     SHARK = "shark"
+    HYDROCOMM = "hydrocomm"
     UNKNOWN = "unknown"
 
 
