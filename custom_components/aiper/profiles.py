@@ -116,6 +116,12 @@ def device_model_string(device: dict[str, Any]) -> str:
 
 def device_family(device: dict[str, Any]) -> DeviceFamily:
     """Infer the broad device family from model payload fields."""
+    # deviceType "4" is the API-level discriminator for HydroComm monitors.
+    # Pool cleaners (Scuba, Surfer, Shark) are deviceType "3".
+    # Check this first as it is more reliable than model name matching.
+    if str(device.get("deviceType") or "") == "4":
+        return DeviceFamily.HYDROCOMM
+
     model = device_model_string(device).lower()
     if DeviceFamily.SCUBA.value in model:
         return DeviceFamily.SCUBA

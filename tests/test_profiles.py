@@ -112,6 +112,16 @@ def test_unknown_profile_does_not_invent_modes() -> None:
     assert profile.mode_map == {}
 
 
+def test_hydrocomm_detected_via_device_type() -> None:
+    """HydroComm is identified when deviceType is 4, regardless of model string."""
+    profile = derive_device_profile({"deviceType": "4", "model": ""})
+
+    assert profile.family is DeviceFamily.HYDROCOMM
+    assert Capability.CLEANING_MODE_SELECT not in profile.capabilities
+    assert Capability.STATUS not in profile.capabilities
+    assert profile.mode_map == {}
+
+
 def test_hydrocomm_detected_via_model_string() -> None:
     """HydroComm is identified when the model field contains hydrocomm."""
     profile = derive_device_profile({"model": "HydroComm"})
