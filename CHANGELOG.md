@@ -1,6 +1,28 @@
 # Changelog
 
-This changelog tracks local modernization work intended for a future pull request back to the upstream Aiper Home Assistant integration.
+## [1.0.0] - 2026-05-26
+
+### Added
+
+#### HydroComm / W2 Water Quality Monitor Support
+- Full MQTT shadow parsing for the HydroComm/W2 device family (HydroComm, HydroComm Pro/Pure, HydroHub, HydroHub Pro, W2 series).
+- Water chemistry sensors: pH, ORP, EC, TDS, Free Chlorine (mg/L), Water Quality Score, Water Quality Result. All readings carry a `sample_time` attribute from the shadow payload.
+- Probe management: per-probe install status (Installed / Not installed) for probes 1–3 and the ultrasonic sensor, each with `probe_serial`, `usage_time`, and `calibration_time` attributes merged from `W2LifeTime` payloads.
+- Charging telemetry: binary Charging and Solar Charging sensors, Charge Type text sensor (Not charging / Charging / Solar charging), Supply Voltage, Solar Voltage, Light Level, Work Current, Charge Current.
+- Calibration Status sensor (Idle / In progress).
+- HydroComm-specific station status labels: Idle, Active, Charging, Updating, Sleeping, Deep Sleep.
+- Alarm/warning decoding: full bitmask decode of `W2AlarmMessage` into readable text (probe install errors, sensor damage, out-of-range readings, battery low, etc.), with individual alarm codes exposed as attributes.
+- New capability flags: `CHARGING`, `WATER_QUALITY`, `PROBE_STATUS` used to gate entity publication by device family.
+- `include_fn` predicate on binary sensor descriptions so the `running` binary sensor is suppressed for monitor devices.
+- Cleaner-only entities (mode, running, clean path, consumables, cleaning history) are automatically hidden for HydroComm devices.
+
+#### General
+- `workflow_dispatch` trigger added to CI, Validate, and Release workflows for manual re-runs.
+
+### Fixed
+
+- **Scuba X1** — charging state and mode entity no longer misbehave during charging cycles: status code 3 (`CHARGING`) is now consistently mapped to `charging = True` and the mode entity is suppressed while the cleaner is not running.
+- `normalize_device_state` now initialises all HydroComm entity keys to stable `None` states at setup time so Home Assistant creates the entities before the first MQTT shadow report arrives.
 
 ## Unreleased
 
