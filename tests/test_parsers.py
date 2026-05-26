@@ -13,6 +13,11 @@ from custom_components.aiper.state import (
     _normalize_warn_code,
     normalize_device_state,
     normalize_machine_update,
+    normalize_w2_alarm_update,
+    normalize_w2_info_update,
+    normalize_w2_lifetime_update,
+    normalize_w2_sensor_status_update,
+    normalize_w2_wqs_update,
 )
 
 
@@ -73,11 +78,106 @@ def test_machine_status_update_coerces_status_without_losing_operating_status() 
     assert state["status"].attributes == {"code": 1}
 
 
+def test_hydrocomm_machine_status_uses_station_status_map() -> None:
+    """W2/HydroComm status 2/3 are charging states, not cleaner returning."""
+    state = normalize_machine_update(
+        {"model": "HydroComm", "profile_family": "hydrocomm"},
+        {"status": 2},
+    )
+
+    assert state["status"].value == "Charging"
+    assert state["status"].attributes == {"code": 2}
+    assert state["charging"].value is True
+    assert "running" not in state
+
+
 def test_hour_helpers_keep_field_units_explicit() -> None:
     """Known hour and centi-hour fields should not share implicit parsing."""
     assert _hours("16.73") == 16.73
     assert _centihours_to_hours(1673) == 16.73
     assert _centihours_to_hours("16.73") is None
+
+
+def test_w2_info_update_maps_battery_charging_and_solar_fields() -> None:
+    """HydroComm W2Info carries battery, charging type, and station electrical fields."""
+    state = normalize_w2_info_update(
+        {
+            "bal_cal": 76,
+            "chargeType": 2,
+            "vcvol": 4100,
+            "sunvol": 5200,
+            "lux": 320,
+            "workCur": 12,
+            "chargeCur": 150,
+            "calStatus": 1,
+        }
+    )
+
+    assert state["battery"].value == 76
+    assert state["charge_type"].value == "Solar charging"
+    assert state["charging"].value is True
+    assert state["solar_charging"].value is True
+    assert state["supply_voltage"].value == 4100
+    assert state["solar_voltage"].value == 5200
+    assert state["light_level"].value == 320
+    assert state["work_current"].value == 12
+    assert state["charge_current"].value == 150
+    assert state["calibration_status"].value == "In progress"
+
+
+def test_w2_wqs_update_maps_water_quality_values() -> None:
+    """HydroComm W2WQS is the live water-quality sensor payload."""
+    state = normalize_w2_wqs_update(
+        {
+            "time": "2026-05-26T12:00:00Z",
+            "temp": 27.4,
+            "ph": "7.3",
+            "orp": 670,
+            "ec": 1234,
+            "tds": 456,
+            "rcl": 1.2,
+            "swpi": 88,
+            "result": 0,
+        }
+    )
+
+    assert state["water_quality_result"].value == "Ready"
+    assert state["temperature"].value == 27.4
+    assert state["ph"].value == 7.3
+    assert state["orp"].value == 670.0
+    assert state["ec"].value == 1234.0
+    assert state["tds"].value == 456.0
+    assert state["rcl"].value == 1.2
+    assert state["water_quality_score"].value == 88.0
+    assert state["ph"].attributes == {"sample_time": "2026-05-26T12:00:00Z"}
+
+
+def test_w2_probe_status_and_lifetime_merge_attributes() -> None:
+    """Probe status is live, while lifetime payloads add serial/calibration attributes."""
+    current = normalize_w2_lifetime_update(
+        {
+            "sn1": "P1",
+            "usetime1": "10",
+            "ctime1": "1714608000",
+        }
+    )
+    state = normalize_w2_sensor_status_update({"sensor1": 1}, current)
+
+    assert state["probe_1_status"].value == "Installed"
+    assert state["probe_1_status"].attributes == {
+        "probe_serial": "P1",
+        "usage_time": "10",
+        "calibration_time": "1714608000",
+        "code": 1,
+    }
+
+
+def test_w2_alarm_update_decodes_alarm_bitmask() -> None:
+    """HydroComm alarm code is a bitmap of probe/property errors."""
+    state = normalize_w2_alarm_update({"time": "now", "Alarm": 256 + 8192})
+
+    assert state["warning"].value == "pH constant value, Battery low"
+    assert state["warning"].attributes == {"code": 8448, "codes": [256, 8192], "time": "now"}
 
 
 def test_parse_cleaning_history_restores_totals_and_last_record() -> None:

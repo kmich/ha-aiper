@@ -288,3 +288,60 @@ async def test_shark_entity_publication_keeps_consumables_unavailable_without_va
     assert _entity_by_key(binary_entities, "running").is_on is True
     assert select_entities == []
     assert switch_entities == []
+
+
+@pytest.mark.asyncio
+async def test_hydrocomm_entity_publication_uses_monitor_capabilities(hass: HomeAssistant) -> None:
+    """HydroComm publishes water-quality monitor entities without cleaner controls."""
+    entry, _coordinator = _hass_with_device(
+        hass,
+        {
+            "sn": "SN123",
+            "name": "HydroComm",
+            "model": "HydroComm",
+            "deviceType": "4",
+            "online": True,
+            "battLevel": 80,
+            "machineStatus": 2,
+            "temp": 27.5,
+            "ph": 7.4,
+            "orp": 668,
+            "ec": 1220,
+            "tds": 450,
+            "rcl": 1.1,
+            "water_quality_score": 91,
+            "probe_1_status": "Installed",
+        },
+    )
+
+    sensor_entities = await _setup_platform(sensor, hass, entry)
+    binary_entities = await _setup_platform(binary_sensor, hass, entry)
+    select_entities = await _setup_platform(select, hass, entry)
+    switch_entities = await _setup_platform(switch, hass, entry)
+
+    sensor_keys = _keys(sensor_entities)
+    assert {
+        "status",
+        "battery",
+        "temperature",
+        "ph",
+        "orp",
+        "ec",
+        "tds",
+        "rcl",
+        "water_quality_score",
+        "probe_1_status",
+    }.issubset(sensor_keys)
+    assert "mode" not in sensor_keys
+    assert "runtime" not in sensor_keys
+    assert "total_cleanings" not in sensor_keys
+    assert "roller_brush" not in sensor_keys
+    assert _entity_by_key(sensor_entities, "status").native_value == "Charging"
+    assert _entity_by_key(sensor_entities, "ph").native_value == 7.4
+
+    assert "online" in _keys(binary_entities)
+    assert "charging" in _keys(binary_entities)
+    assert "running" not in _keys(binary_entities)
+    assert _entity_by_key(binary_entities, "charging").is_on is True
+    assert select_entities == []
+    assert switch_entities == []

@@ -118,7 +118,8 @@ def test_hydrocomm_detected_via_device_type() -> None:
 
     assert profile.family is DeviceFamily.HYDROCOMM
     assert Capability.CLEANING_MODE_SELECT not in profile.capabilities
-    assert Capability.STATUS not in profile.capabilities
+    assert Capability.STATUS in profile.capabilities
+    assert Capability.WATER_QUALITY in profile.capabilities
     assert profile.mode_map == {}
 
 
@@ -131,8 +132,11 @@ def test_hydrocomm_detected_via_model_string() -> None:
     assert Capability.BATTERY in profile.capabilities
     assert Capability.WIFI in profile.capabilities
     assert Capability.FIRMWARE in profile.capabilities
-    assert Capability.STATUS not in profile.capabilities
-    assert Capability.WARNING not in profile.capabilities
+    assert Capability.STATUS in profile.capabilities
+    assert Capability.WARNING in profile.capabilities
+    assert Capability.WATER_TEMPERATURE in profile.capabilities
+    assert Capability.WATER_QUALITY in profile.capabilities
+    assert Capability.PROBE_STATUS in profile.capabilities
     assert Capability.CLEANING_MODE_SELECT not in profile.capabilities
     assert Capability.RUNNING_CONTROL not in profile.capabilities
     assert Capability.CLEAN_PATH not in profile.capabilities
@@ -146,13 +150,21 @@ def test_hydrocomm_detected_via_bt_name_fallback() -> None:
 
     assert profile.family is DeviceFamily.HYDROCOMM
     assert Capability.CLEANING_MODE_SELECT not in profile.capabilities
-    assert Capability.STATUS not in profile.capabilities
+    assert Capability.STATUS in profile.capabilities
     assert profile.mode_map == {}
 
 
-def test_hydrocomm_temp_evidence_does_not_add_water_temperature_capability() -> None:
-    """HydroComm skips dynamic capability additions even when temp data is present."""
+def test_hydrocomm_profile_exposes_water_quality_capabilities() -> None:
+    """HydroComm exposes monitor sensors without cleaner controls."""
     profile = derive_device_profile({"model": "HydroComm", "temp": 28.5})
 
     assert profile.family is DeviceFamily.HYDROCOMM
-    assert Capability.WATER_TEMPERATURE not in profile.capabilities
+    assert Capability.WATER_TEMPERATURE in profile.capabilities
+    assert Capability.WATER_QUALITY in profile.capabilities
+    assert Capability.RUNNING_CONTROL not in profile.capabilities
+
+
+def test_hydrohub_and_bare_w2_map_to_hydrocomm_family() -> None:
+    """The APK's W2 family includes HydroHub and bare W2 monitor models."""
+    assert derive_device_profile({"model": "HydroHub Pro"}).family is DeviceFamily.HYDROCOMM
+    assert derive_device_profile({"model": "W2"}).family is DeviceFamily.HYDROCOMM

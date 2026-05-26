@@ -60,6 +60,7 @@ def test_scuba_charging_status_is_reported_from_base_status() -> None:
     assert state["running"].value is False
     assert state["status"].value == "Charging"
     assert state["status"].attributes == {"code": 3}
+    assert state["charging"].value is True
 
 
 def test_identity_metadata_is_normalized_at_boundary() -> None:

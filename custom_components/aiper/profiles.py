@@ -30,10 +30,13 @@ class Capability(StrEnum):
     WIFI = "wifi"
     FIRMWARE = "firmware"
     MQTT_SHADOW = "mqtt_shadow"
+    CHARGING = "charging"
     CLEANING_MODE_SELECT = "mode_select"
     RUNNING_CONTROL = "running_control"
     CLEAN_PATH = "clean_path"
     WATER_TEMPERATURE = "water_temperature"
+    WATER_QUALITY = "water_quality"
+    PROBE_STATUS = "probe_status"
     IN_WATER = "in_water"
     SOLAR_CHARGING = "solar_charging"
     BLUETOOTH = "bluetooth"
@@ -52,6 +55,7 @@ COMMON_CAPABILITIES = frozenset(
         Capability.WIFI,
         Capability.FIRMWARE,
         Capability.MQTT_SHADOW,
+        Capability.CHARGING,
         Capability.BLUETOOTH,
         Capability.DEVICE_LINK,
     }
@@ -76,17 +80,23 @@ SURFER_CAPABILITIES = COMMON_CAPABILITIES | frozenset(
 SHARK_CAPABILITIES = COMMON_CAPABILITIES
 
 # HydroComm is a water quality monitor, not a pool cleaner.
-# It exposes connectivity and basic identity sensors only.
 # Cleaning-specific capabilities (status, warning, mode select, run control,
-# clean path, in_water) are intentionally excluded until real API data confirms
-# what the HydroComm actually reports.
+# clean path, in_water) are intentionally excluded.
 HYDROCOMM_CAPABILITIES = frozenset(
     {
         Capability.BATTERY,
         Capability.ONLINE,
+        Capability.STATUS,
+        Capability.WARNING,
         Capability.WIFI,
         Capability.FIRMWARE,
         Capability.BLUETOOTH,
+        Capability.MQTT_SHADOW,
+        Capability.CHARGING,
+        Capability.SOLAR_CHARGING,
+        Capability.WATER_TEMPERATURE,
+        Capability.WATER_QUALITY,
+        Capability.PROBE_STATUS,
     }
 )
 
@@ -130,16 +140,22 @@ def device_family(device: dict[str, Any]) -> DeviceFamily:
     if DeviceFamily.SHARK.value in model:
         return DeviceFamily.SHARK
 
-    # HydroComm may not always have a clean model string.
-    # Check name and btName as fallbacks since the BT name
-    # reliably contains "HydroComm" (eg. "Aiper-HydroComm-W2X...").
+    # HydroComm may not always have a clean model string. The APK groups
+    # HydroComm, HydroComm Pro/Pure, HydroHub, HydroHub Pro, and bare W2 under
+    # the same W2 model family.
     candidate_fields = [
         model,
         str(device.get("name") or "").lower(),
         str(device.get("btName") or "").lower(),
         str(device.get("modelName") or "").lower(),
+        str(device.get("bluetooth_name") or "").lower(),
     ]
-    if any(DeviceFamily.HYDROCOMM.value in f for f in candidate_fields):
+    if any(
+        DeviceFamily.HYDROCOMM.value in f
+        or "hydrohub" in f
+        or f in {"w2", "hydrocomm pro", "hydrocomm pure", "hydrohub pro"}
+        for f in candidate_fields
+    ):
         return DeviceFamily.HYDROCOMM
 
     return DeviceFamily.UNKNOWN

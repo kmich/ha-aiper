@@ -34,6 +34,11 @@ from .state import (
     normalize_netstat_update,
     normalize_opinfo_update,
     normalize_ota_update,
+    normalize_w2_alarm_update,
+    normalize_w2_info_update,
+    normalize_w2_lifetime_update,
+    normalize_w2_sensor_status_update,
+    normalize_w2_wqs_update,
     supported_mode_ids_from_payload,
 )
 
@@ -1008,6 +1013,27 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             else:
                 updates = merge_device_state(updates, normalize_clean_path_update(component))
             _cache_clean_path(updates)
+
+        for key in ("W2Info", "W2WQS", "W2LifeTime", "W2SensorStatus", "W2AlarmMessage"):
+            component = None
+            if key in payload and isinstance(payload.get(key), dict):
+                component = payload.get(key) or {}
+            elif payload.get("type") == key and isinstance(payload.get("data"), dict):
+                component = payload.get("data") or {}
+            if not isinstance(component, dict):
+                continue
+
+            interim_state = merge_device_state(current_state, updates) if updates else current_state
+            if key == "W2Info":
+                updates = merge_device_state(updates, normalize_w2_info_update(component))
+            elif key == "W2WQS":
+                updates = merge_device_state(updates, normalize_w2_wqs_update(component))
+            elif key == "W2LifeTime":
+                updates = merge_device_state(updates, normalize_w2_lifetime_update(component, interim_state))
+            elif key == "W2SensorStatus":
+                updates = merge_device_state(updates, normalize_w2_sensor_status_update(component, interim_state))
+            elif key == "W2AlarmMessage":
+                updates = merge_device_state(updates, normalize_w2_alarm_update(component))
 
         # Update last-seen time on any MQTT activity.
         try:

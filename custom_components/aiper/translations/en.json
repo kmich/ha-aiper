@@ -53,6 +53,30 @@
       },
       "warning": {
         "name": "Warning"
+      },
+      "ph": {
+        "name": "pH"
+      },
+      "orp": {
+        "name": "ORP"
+      },
+      "ec": {
+        "name": "EC"
+      },
+      "tds": {
+        "name": "TDS"
+      },
+      "rcl": {
+        "name": "Free Chlorine"
+      },
+      "water_quality_score": {
+        "name": "Water Quality Score"
+      },
+      "water_quality_result": {
+        "name": "Water Quality Result"
+      },
+      "charge_type": {
+        "name": "Charge Type"
       }
     },
     "binary_sensor": {
@@ -67,6 +91,9 @@
       },
       "solar_charging": {
         "name": "Solar Charging"
+      },
+      "charging": {
+        "name": "Charging"
       },
       "bluetooth": {
         "name": "Bluetooth"

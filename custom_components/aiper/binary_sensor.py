@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from homeassistant.components.binary_sensor import (
@@ -17,8 +18,12 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import AiperDataUpdateCoordinator
-from .profiles import Capability
+from .profiles import Capability, DeviceFamily
 from .state import DeviceState, state_has_capability
+
+
+def _is_not_hydrocomm(device: DeviceState) -> bool:
+    return device["device_family"].value != DeviceFamily.HYDROCOMM.value
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -27,6 +32,7 @@ class AiperBinarySensorEntityDescription(BinarySensorEntityDescription):
 
     enabled_default: bool = True
     capability: Capability | None = None
+    include_fn: Callable[[DeviceState], bool] = lambda _: True
 
 
 BINARY_SENSOR_DESCRIPTIONS: tuple[AiperBinarySensorEntityDescription, ...] = (
@@ -48,6 +54,14 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[AiperBinarySensorEntityDescription, ...] = (
         name="Running",
         icon="mdi:run",
         device_class=BinarySensorDeviceClass.RUNNING,
+        include_fn=_is_not_hydrocomm,
+    ),
+    AiperBinarySensorEntityDescription(
+        key="charging",
+        name="Charging",
+        icon="mdi:battery-charging",
+        device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
+        capability=Capability.CHARGING,
     ),
     AiperBinarySensorEntityDescription(
         key="solar_charging",
@@ -95,6 +109,8 @@ async def async_setup_entry(
         for sn, device_data in coordinator.data.items():
             for description in BINARY_SENSOR_DESCRIPTIONS:
                 if description.capability and not state_has_capability(device_data, description.capability):
+                    continue
+                if not description.include_fn(device_data):
                     continue
                 entities.append(
                     AiperBinarySensor(

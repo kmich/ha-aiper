@@ -17,6 +17,7 @@ def _bare_coordinator() -> AiperDataUpdateCoordinator:
     coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
     coordinator._consumables_cache = {}
     coordinator._history_cache = {}
+    coordinator._clean_path_cache = {}
     coordinator._devices = {
         "SN123": {
             "sn": "SN123",
@@ -69,6 +70,50 @@ def test_shadow_update_promotes_live_state() -> None:
     assert device["wifi_signal"].value == -79
     assert device["main_version"].value == "V7.1.0"
     assert device["mcu_version"].value == "V1.0.7.1,V1.0.6.0"
+
+
+def test_shadow_update_promotes_hydrocomm_w2_state() -> None:
+    """HydroComm/W2 shadow components should become live HA sensor state."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["W2SN"] = {
+        "sn": "W2SN",
+        "name": "HydroComm",
+        "model": "HydroComm",
+        "deviceType": "4",
+        "online": True,
+    }
+    coordinator._last_online["W2SN"] = True
+    coordinator.data["W2SN"] = normalize_device_state(dict(coordinator._devices["W2SN"]))
+
+    coordinator._on_shadow_update(
+        "W2SN",
+        {
+            "state": {
+                "reported": {
+                    "Machine": {"status": 2},
+                    "W2Info": {"bal_cal": 77, "chargeType": 2, "lux": 450},
+                    "W2WQS": {"result": 0, "temp": 27.5, "ph": 7.4, "orp": 668, "swpi": 91},
+                    "W2LifeTime": {"sn1": "P1", "usetime1": "10", "ctime1": "1714608000"},
+                    "W2SensorStatus": {"sensor1": 1, "sensor2": 0, "sensor3": 1, "ulsound": 1},
+                    "W2AlarmMessage": {"Alarm": 8192, "time": "2026-05-26T12:00:00Z"},
+                }
+            }
+        },
+    )
+
+    device = coordinator.data["W2SN"]
+    assert device["status"].value == "Charging"
+    assert device["charging"].value is True
+    assert device["battery"].value == 77
+    assert device["charge_type"].value == "Solar charging"
+    assert device["solar_charging"].value is True
+    assert device["temperature"].value == 27.5
+    assert device["ph"].value == 7.4
+    assert device["orp"].value == 668.0
+    assert device["water_quality_score"].value == 91.0
+    assert device["probe_1_status"].value == "Installed"
+    assert device["probe_1_status"].attributes["probe_serial"] == "P1"
+    assert device["warning"].value == "Battery low"
 
 
 @pytest.mark.asyncio

@@ -29,6 +29,14 @@ def _is_not_surfer(device: DeviceState) -> bool:
     return device["device_family"].value != DeviceFamily.SURFER.value
 
 
+def _is_not_hydrocomm(device: DeviceState) -> bool:
+    return device["device_family"].value != DeviceFamily.HYDROCOMM.value
+
+
+def _is_not_surfer_or_hydrocomm(device: DeviceState) -> bool:
+    return _is_not_surfer(device) and _is_not_hydrocomm(device)
+
+
 @dataclass(frozen=True, kw_only=True)
 class AiperSensorEntityDescription(SensorEntityDescription):
     """Describes Aiper sensor entity."""
@@ -60,6 +68,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         key="mode",
         name="Mode",
         icon="mdi:robot-vacuum",
+        include_fn=_is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="temperature",
@@ -88,6 +97,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         icon="mdi:timer",
         native_unit_of_measurement="h",
         state_class=SensorStateClass.MEASUREMENT,
+        include_fn=_is_not_hydrocomm,
     ),
     # --- Cleaning history (REST) ---
     AiperSensorEntityDescription(
@@ -96,6 +106,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         icon="mdi:counter",
         state_class=SensorStateClass.TOTAL_INCREASING,
         enabled_default=True,
+        include_fn=_is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="total_cleaning_time",
@@ -104,6 +115,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement="h",
         state_class=SensorStateClass.TOTAL_INCREASING,
         enabled_default=True,
+        include_fn=_is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="total_cleaning_time_minutes",
@@ -112,12 +124,14 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement="min",
         state_class=SensorStateClass.TOTAL_INCREASING,
         enabled_default=False,
+        include_fn=_is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="last_cleaning_mode",
         name="Last Cleaning Mode",
         icon="mdi:map-marker-path",
         enabled_default=True,
+        include_fn=_is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="last_cleaning_start",
@@ -125,6 +139,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
         enabled_default=True,
+        include_fn=_is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="last_cleaning_duration",
@@ -133,6 +148,148 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement="min",
         state_class=SensorStateClass.MEASUREMENT,
         enabled_default=True,
+        include_fn=_is_not_hydrocomm,
+    ),
+    # --- HydroComm / HydroHub water quality (MQTT shadow) ---
+    AiperSensorEntityDescription(
+        key="ph",
+        name="pH",
+        icon="mdi:ph",
+        state_class=SensorStateClass.MEASUREMENT,
+        capability=Capability.WATER_QUALITY,
+    ),
+    AiperSensorEntityDescription(
+        key="orp",
+        name="ORP",
+        icon="mdi:current-dc",
+        native_unit_of_measurement="mV",
+        state_class=SensorStateClass.MEASUREMENT,
+        capability=Capability.WATER_QUALITY,
+    ),
+    AiperSensorEntityDescription(
+        key="ec",
+        name="EC",
+        icon="mdi:flash",
+        native_unit_of_measurement="uS/cm",
+        state_class=SensorStateClass.MEASUREMENT,
+        capability=Capability.WATER_QUALITY,
+    ),
+    AiperSensorEntityDescription(
+        key="tds",
+        name="TDS",
+        icon="mdi:water-percent",
+        native_unit_of_measurement="ppm",
+        state_class=SensorStateClass.MEASUREMENT,
+        capability=Capability.WATER_QUALITY,
+    ),
+    AiperSensorEntityDescription(
+        key="rcl",
+        name="Free Chlorine",
+        icon="mdi:pool",
+        native_unit_of_measurement="mg/L",
+        state_class=SensorStateClass.MEASUREMENT,
+        capability=Capability.WATER_QUALITY,
+    ),
+    AiperSensorEntityDescription(
+        key="water_quality_score",
+        name="Water Quality Score",
+        icon="mdi:gauge",
+        state_class=SensorStateClass.MEASUREMENT,
+        capability=Capability.WATER_QUALITY,
+    ),
+    AiperSensorEntityDescription(
+        key="water_quality_result",
+        name="Water Quality Result",
+        icon="mdi:water-check",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        capability=Capability.WATER_QUALITY,
+    ),
+    AiperSensorEntityDescription(
+        key="charge_type",
+        name="Charge Type",
+        icon="mdi:battery-charging",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        capability=Capability.CHARGING,
+    ),
+    AiperSensorEntityDescription(
+        key="supply_voltage",
+        name="Supply Voltage",
+        icon="mdi:current-dc",
+        native_unit_of_measurement="mV",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+        capability=Capability.WATER_QUALITY,
+    ),
+    AiperSensorEntityDescription(
+        key="solar_voltage",
+        name="Solar Voltage",
+        icon="mdi:solar-power-variant",
+        native_unit_of_measurement="mV",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+        capability=Capability.WATER_QUALITY,
+    ),
+    AiperSensorEntityDescription(
+        key="light_level",
+        name="Light Level",
+        icon="mdi:brightness-5",
+        native_unit_of_measurement="lx",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+        capability=Capability.WATER_QUALITY,
+    ),
+    AiperSensorEntityDescription(
+        key="work_current",
+        name="Work Current",
+        icon="mdi:current-dc",
+        native_unit_of_measurement="mA",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+        capability=Capability.WATER_QUALITY,
+    ),
+    AiperSensorEntityDescription(
+        key="charge_current",
+        name="Charge Current",
+        icon="mdi:current-dc",
+        native_unit_of_measurement="mA",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+        capability=Capability.WATER_QUALITY,
+    ),
+    AiperSensorEntityDescription(
+        key="calibration_status",
+        name="Calibration Status",
+        icon="mdi:tune",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        capability=Capability.PROBE_STATUS,
+    ),
+    AiperSensorEntityDescription(
+        key="probe_1_status",
+        name="Probe 1 Status",
+        icon="mdi:water-thermometer",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        capability=Capability.PROBE_STATUS,
+    ),
+    AiperSensorEntityDescription(
+        key="probe_2_status",
+        name="Probe 2 Status",
+        icon="mdi:water-thermometer",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        capability=Capability.PROBE_STATUS,
+    ),
+    AiperSensorEntityDescription(
+        key="probe_3_status",
+        name="Probe 3 Status",
+        icon="mdi:water-thermometer",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        capability=Capability.PROBE_STATUS,
+    ),
+    AiperSensorEntityDescription(
+        key="ultrasonic_status",
+        name="Ultrasonic Sensor Status",
+        icon="mdi:radar",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        capability=Capability.PROBE_STATUS,
     ),
     # --- Device info / firmware (REST) ---
     AiperSensorEntityDescription(
@@ -184,7 +341,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         state_class=SensorStateClass.MEASUREMENT,
-        include_fn=_is_not_surfer,
+        include_fn=_is_not_surfer_or_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="micromesh_filter",
@@ -193,6 +350,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         state_class=SensorStateClass.MEASUREMENT,
+        include_fn=_is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="caterpillar_tread",
@@ -201,7 +359,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         state_class=SensorStateClass.MEASUREMENT,
-        include_fn=_is_not_surfer,
+        include_fn=_is_not_surfer_or_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="propeller",
@@ -210,6 +368,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         state_class=SensorStateClass.MEASUREMENT,
+        include_fn=_is_not_hydrocomm,
     ),
 )
 
