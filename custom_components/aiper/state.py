@@ -384,7 +384,9 @@ def normalize_machine_update(
             updates["status"] = EntityState(status_label(status_code), {"code": status_code})
             updates["charging"] = EntityState(status_code == int(Status.CHARGING))
 
-    if not hydrocomm and (mqtt.get("mode") is not None or (running_control and raw_status is not None and not status_running(raw_status))):
+    if not hydrocomm and (
+        mqtt.get("mode") is not None or (running_control and raw_status is not None and not status_running(raw_status))
+    ):
         mode_code = _coerce_int(mqtt.get("mode"))
         if running_control and raw_status is not None and not status_running(raw_status):
             mode_code = 0
