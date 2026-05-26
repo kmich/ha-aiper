@@ -807,8 +807,16 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     # MQTT is authoritative for live machine state. Remove stale
                     # REST-derived values so they don't overwrite live MQTT state
                     # on the 5-minute slow refresh.
-                    for _key in ("running", "status", "charging", "mode"):
-                        if current.get(_key) is not None and current[_key].value is not None:
+                    #
+                    # Use the presence of a real status code as the gate: a non-None
+                    # "code" attribute on the current status means we have authoritative
+                    # machine-state data (from MQTT or from a REST machineStatus field).
+                    # A missing code means the current status is a fallback placeholder
+                    # ("Idle" when no machineStatus is known) — in that case we let the
+                    # incoming REST values flow through freely.
+                    current_status = current.get("status")
+                    if current_status is not None and current_status.attributes.get("code") is not None:
+                        for _key in ("running", "status", "charging", "mode"):
                             normalized.pop(_key, None)
                     result[sn] = merge_device_state(current, normalized, ignore_none=True)
                 else:
