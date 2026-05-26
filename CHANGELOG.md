@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1] - 2026-05-26
+
+### Fixed
+
+- **Scuba X1** — status and charging sensors no longer flip between Returning/Charging/Idle during normal operation: the REST 5-minute refresh now only overwrites machine state (running, status, charging, mode) when no authoritative MQTT data has been received yet; once MQTT establishes live state those fields are preserved across REST polls.
+- **Scuba X1** — REST protection gate corrected: a fallback "Idle" status (produced before the first MQTT shadow arrives) is no longer mistaken for authoritative live state, allowing REST to correctly populate Charging status on startup.
+
 ## [1.0.0] - 2026-05-26
 
 ### Added
