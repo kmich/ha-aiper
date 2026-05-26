@@ -176,6 +176,65 @@ async def test_scheduled_refresh_merges_live_rest_polling(hass: HomeAssistant) -
     assert coordinator._devices["SN123"]["clean_path"] is None
 
 
+@pytest.mark.asyncio
+async def test_rest_refresh_does_not_overwrite_mqtt_live_state(hass: HomeAssistant) -> None:
+    """REST slow-refresh must not overwrite authoritative MQTT running/status/charging/mode."""
+
+    class FakeApi:
+        async def get_devices(self):
+            # REST reports stale Idle/0 for machineStatus while device is actually running
+            return [
+                {
+                    "sn": "SN123",
+                    "name": "Scuba X1",
+                    "model": "Scuba_X1",
+                    "online": True,
+                    "battLevel": 85,
+                    "machineStatus": 0,  # stale REST value: Idle
+                }
+            ]
+
+        async def get_device_info(self, sn):
+            raise AssertionError("metadata info should not be polled before refresh interval")
+
+    now = dt_util.utcnow()
+    coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
+    coordinator.hass = hass
+    coordinator.api = cast(Any, FakeApi())
+    coordinator._devices = {
+        "SN123": {
+            "sn": "SN123",
+            "name": "Scuba X1",
+            "model": "Scuba_X1",
+            "online": True,
+        }
+    }
+    coordinator._last_online = {"SN123": True}
+    coordinator.update_interval = timedelta(hours=1)
+    coordinator._metadata_refresh = timedelta(hours=24)
+    coordinator._last_metadata_fetch = {"SN123": now}
+    coordinator._history_cache = {}
+    coordinator._consumables_cache = {"SN123": []}
+    coordinator._clean_path_cache = {}
+    coordinator._command_state = {}
+    # Simulate live MQTT state: device is actively returning to base
+    coordinator.data = {
+        "SN123": {
+            **normalize_device_state({"sn": "SN123", "model": "Scuba_X1", "online": True}),
+            **normalize_device_state({"sn": "SN123", "model": "Scuba_X1", "machineStatus": 2}),
+        }
+    }
+
+    data = await coordinator._async_update_data()
+
+    # REST updated battery (non-MQTT field) should be applied
+    assert data["SN123"]["battery"].value == 85
+    # MQTT live state must be preserved despite stale REST machineStatus=0
+    assert data["SN123"]["status"].value == "Returning"
+    assert data["SN123"]["running"].value is True
+    assert data["SN123"]["charging"].value is False
+
+
 def test_pending_running_intent_confirms_from_reported_status() -> None:
     """Running intent should clear when MQTT reports matching running state."""
     coordinator = _bare_coordinator()

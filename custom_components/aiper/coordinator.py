@@ -803,7 +803,16 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             for sn, device in self._devices.items():
                 normalized = normalize_device_state(device)
                 current = (self.data or {}).get(sn) if self.data else None
-                result[sn] = merge_device_state(current, normalized, ignore_none=True) if current else normalized
+                if current:
+                    # MQTT is authoritative for live machine state. Remove stale
+                    # REST-derived values so they don't overwrite live MQTT state
+                    # on the 5-minute slow refresh.
+                    for _key in ("running", "status", "charging", "mode"):
+                        if current.get(_key) is not None and current[_key].value is not None:
+                            normalized.pop(_key, None)
+                    result[sn] = merge_device_state(current, normalized, ignore_none=True)
+                else:
+                    result[sn] = normalized
 
             _LOGGER.debug("Coordinator updated devices=%s", list(result.keys()))
             return result

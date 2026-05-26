@@ -78,6 +78,23 @@ def test_machine_status_update_coerces_status_without_losing_operating_status() 
     assert state["status"].attributes == {"code": 1}
 
 
+def test_cleaner_returning_status_is_not_charging() -> None:
+    """Status 2 (RETURNING) must not be treated as charging for pool cleaners."""
+    state = normalize_device_state({"model": "Scuba_X1", "machineStatus": 2})
+
+    assert state["status"].value == "Returning"
+    assert state["running"].value is True
+    assert state["charging"].value is False
+
+
+def test_cleaner_charging_status_is_charging() -> None:
+    """Status 3 (CHARGING) must be treated as charging for pool cleaners."""
+    state = normalize_device_state({"model": "Scuba_X1", "machineStatus": 3})
+
+    assert state["charging"].value is True
+    assert state["running"].value is False
+
+
 def test_hydrocomm_machine_status_uses_station_status_map() -> None:
     """W2/HydroComm status 2/3 are charging states, not cleaner returning."""
     state = normalize_machine_update(

@@ -740,8 +740,10 @@ def normalize_device_state(raw: RawDeviceData) -> DeviceState:
         status_text,
         {"code": status_code} if status_code is not None else {},
     )
-    charge_status = raw_status if hydrocomm else status_code
-    state["charging"] = EntityState(_charging_value(charge_status))
+    if hydrocomm:
+        state["charging"] = EntityState(_charging_value(raw_status))
+    else:
+        state["charging"] = EntityState(status_code == int(Status.CHARGING) if status_code is not None else None)
 
     mode_code = _coerce_int(raw.get("mode"))
 
