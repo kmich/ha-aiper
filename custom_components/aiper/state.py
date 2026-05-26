@@ -505,6 +505,39 @@ def normalize_device_state(raw: RawDeviceData) -> DeviceState:
     runtime = _centihours_to_hours(raw.get("runTime"))
     state["runtime"] = EntityState(runtime)
 
+    total_cleanings = (
+        raw.get("total_cleanings") if "total_cleanings" in raw else raw.get("_ha_total_cleanings")
+    )
+    total_cleaning_hours = (
+        raw.get("total_cleaning_hours")
+        if "total_cleaning_hours" in raw
+        else raw.get("_ha_total_cleaning_hours")
+    )
+    total_cleaning_minutes = (
+        raw.get("total_cleaning_minutes")
+        if "total_cleaning_minutes" in raw
+        else raw.get("_ha_total_cleaning_minutes")
+    )
+    last_cleaning_mode = (
+        raw.get("last_cleaning_mode") if "last_cleaning_mode" in raw else raw.get("_ha_last_cleaning_mode")
+    )
+    last_cleaning_start = (
+        raw.get("last_cleaning_start")
+        if "last_cleaning_start" in raw
+        else raw.get("_ha_last_cleaning_start")
+    )
+    last_cleaning_duration = (
+        raw.get("last_cleaning_duration_min")
+        if "last_cleaning_duration_min" in raw
+        else raw.get("_ha_last_cleaning_duration_min")
+    )
+    state["total_cleanings"] = EntityState(_coerce_int(total_cleanings))
+    state["total_cleaning_time"] = EntityState(_hours(total_cleaning_hours))
+    state["total_cleaning_time_minutes"] = EntityState(_coerce_int(total_cleaning_minutes))
+    state["last_cleaning_mode"] = EntityState(last_cleaning_mode)
+    state["last_cleaning_start"] = EntityState(last_cleaning_start)
+    state["last_cleaning_duration"] = EntityState(_hours(last_cleaning_duration))
+
     state["in_water"] = EntityState(_coerce_bool(raw.get("in_water")))
 
     state["solar_charging"] = EntityState(None)

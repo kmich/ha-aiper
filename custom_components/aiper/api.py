@@ -661,6 +661,38 @@ class AiperApi:
             _LOGGER.error("Failed to get consumables: %s", err)
             return None
 
+    async def get_cleaning_history(self, sn: str) -> Any:
+        """Get cleaning history/totals for a device.
+
+        Return the full decrypted payload because regional backends place
+        totals at different levels of the response body.
+        """
+
+        bodies = (
+            {"sn": sn},
+            {"sn": sn, "pageNo": 1, "pageSize": 20},
+            {"sn": sn, "pageNum": 1, "pageSize": 20},
+            {"sn": sn, "page": 1, "size": 20},
+        )
+
+        for body in bodies:
+            try:
+                async def request_history(body: dict[str, Any] = body) -> dict[str, Any]:
+                    return await self._call_encrypted("POST", "/swimming/v2/getCleanTimeBySn", body)
+
+                payload = await self._call_with_zoneid(
+                    sn,
+                    request_history,
+                )
+            except Exception as err:
+                _LOGGER.debug("Cleaning history request failed for %s with %s: %s", sn, body, err)
+                continue
+
+            if isinstance(payload, dict) and self._is_success(payload):
+                return payload
+
+        return {}
+
     # --- Clean path preference (REST) ---
 
     async def query_clean_path_setting(self, sn: str) -> int | None:
@@ -1186,7 +1218,7 @@ class AiperApi:
             self._clear_ack_fifo(sn)
             published = await self.send_command(sn, "Machine", payload)
             if not published:
-                return None
+                return False
 
             ack = await self._wait_for_ack(sn, timeout=timeout)
             if ack is None:
@@ -1261,14 +1293,22 @@ class AiperApi:
 
     async def set_cleaning_mode(self, sn: str, mode: int | CleaningMode) -> bool:
         """Set a selectable cleaning mode."""
-        _LOGGER.info("Setting cleaning mode for %s: %s", sn, mode)
+        mode_id = int(mode)
+        _LOGGER.info("Setting cleaning mode for %s: %s", sn, mode_id)
 
-        cmd_result = await self.send_machine_at(sn, f"AT+PLAN={int(mode)}")
+        # X1 firmware rejects AT+PLAN for normal mode selection. Earlier
+        # releases used AT+MODE with AT+WORKMODE fallback, which matches the
+        # app-observed command surface across Scuba firmware variants.
+        cmd_result: bool | None = False
+        for at_cmd in (f"AT+MODE={mode_id}", f"AT+WORKMODE={mode_id}"):
+            cmd_result = await self.send_machine_at(sn, at_cmd)
+            if cmd_result is True or cmd_result is None:
+                break
 
         with suppress(Exception):
             await self.request_shadow(sn)
 
-        return cmd_result is True
+        return cmd_result is True or cmd_result is None
 
     async def set_running(self, sn: str, running: bool) -> bool:
         """Start or stop running."""

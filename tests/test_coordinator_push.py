@@ -16,6 +16,7 @@ from custom_components.aiper.state import normalize_device_state
 def _bare_coordinator() -> AiperDataUpdateCoordinator:
     coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
     coordinator._consumables_cache = {}
+    coordinator._history_cache = {}
     coordinator._devices = {
         "SN123": {
             "sn": "SN123",
@@ -71,18 +72,24 @@ def test_shadow_update_promotes_live_state() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scheduled_refresh_skips_live_rest_polling(hass: HomeAssistant) -> None:
-    """Scheduled refreshes should not poll REST live device state."""
+async def test_scheduled_refresh_merges_live_rest_polling(hass: HomeAssistant) -> None:
+    """Scheduled refreshes should merge light REST state such as charging."""
 
     class FakeApi:
-        def get_devices(self):
-            raise AssertionError("live device list should not be polled")
+        async def get_devices(self):
+            return [
+                {
+                    "sn": "SN123",
+                    "name": "Scuba X1",
+                    "model": "Scuba_X1",
+                    "online": True,
+                    "battLevel": 90,
+                    "machineStatus": 131,
+                }
+            ]
 
-        def get_device_status(self, sn):
-            raise AssertionError("live status should not be polled")
-
-        def get_device_info(self, sn):
-            raise AssertionError("live info should not be polled")
+        async def get_device_info(self, sn):
+            raise AssertionError("metadata info should not be polled before refresh interval")
 
     now = dt_util.utcnow()
     coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
@@ -91,9 +98,8 @@ async def test_scheduled_refresh_skips_live_rest_polling(hass: HomeAssistant) ->
     coordinator._devices = {
         "SN123": {
             "sn": "SN123",
-            "name": "Unknown Aiper",
-            "model": "Unknown_Model",
-            "status_data": {"online": False},
+            "name": "Scuba X1",
+            "model": "Scuba_X1",
             "info": {"mainFirmwareVersion": "old"},
             "online": False,
         }
@@ -102,6 +108,7 @@ async def test_scheduled_refresh_skips_live_rest_polling(hass: HomeAssistant) ->
     coordinator.update_interval = timedelta(hours=1)
     coordinator._metadata_refresh = timedelta(hours=24)
     coordinator._last_metadata_fetch = {"SN123": now}
+    coordinator._history_cache = {}
     coordinator._consumables_cache = {"SN123": []}
     coordinator._clean_path_cache = {}
     coordinator._command_state = {}
@@ -119,7 +126,8 @@ async def test_scheduled_refresh_skips_live_rest_polling(hass: HomeAssistant) ->
 
     assert coordinator._devices["SN123"]["online"] is True
     assert data["SN123"]["online"].value is True
-    assert data["SN123"]["battery"].value == 70
+    assert data["SN123"]["battery"].value == 90
+    assert data["SN123"]["status"].value == "Charging"
     assert coordinator._devices["SN123"]["clean_path"] is None
 
 
@@ -147,6 +155,19 @@ def test_pending_stopped_intent_confirms_from_idle_status() -> None:
 
     assert coordinator.get_pending_command_target("SN123", "running") is None
     assert coordinator.get_command_state("SN123")["last"]["running"]["result"] == "confirmed"
+
+
+def test_pending_mode_intent_confirms_from_reported_mode() -> None:
+    """Mode intent should use the same command bucket that the coordinator confirms."""
+    coordinator = _bare_coordinator()
+    coordinator.note_command_sent("SN123", "mode", 2, source="test")
+
+    assert coordinator.get_pending_command_target("SN123", "mode") == 2
+
+    coordinator._confirm_pending_commands("SN123", {"mode": 2})
+
+    assert coordinator.get_pending_command_target("SN123", "mode") is None
+    assert coordinator.get_command_state("SN123")["last"]["mode"]["result"] == "confirmed"
 
 
 def test_pending_running_intent_expires() -> None:

@@ -89,6 +89,51 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement="h",
         state_class=SensorStateClass.MEASUREMENT,
     ),
+    # --- Cleaning history (REST) ---
+    AiperSensorEntityDescription(
+        key="total_cleanings",
+        name="Total Cleanings",
+        icon="mdi:counter",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        enabled_default=True,
+    ),
+    AiperSensorEntityDescription(
+        key="total_cleaning_time",
+        name="Total Cleaning Time",
+        icon="mdi:timer-outline",
+        native_unit_of_measurement="h",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        enabled_default=True,
+    ),
+    AiperSensorEntityDescription(
+        key="total_cleaning_time_minutes",
+        name="Total Cleaning Time Minutes",
+        icon="mdi:timer-outline",
+        native_unit_of_measurement="min",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        enabled_default=False,
+    ),
+    AiperSensorEntityDescription(
+        key="last_cleaning_mode",
+        name="Last Cleaning Mode",
+        icon="mdi:map-marker-path",
+        enabled_default=True,
+    ),
+    AiperSensorEntityDescription(
+        key="last_cleaning_start",
+        name="Last Cleaning Start",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        enabled_default=True,
+    ),
+    AiperSensorEntityDescription(
+        key="last_cleaning_duration",
+        name="Last Cleaning Duration",
+        icon="mdi:timer",
+        native_unit_of_measurement="min",
+        state_class=SensorStateClass.MEASUREMENT,
+        enabled_default=True,
+    ),
     # --- Device info / firmware (REST) ---
     AiperSensorEntityDescription(
         key="device_family",

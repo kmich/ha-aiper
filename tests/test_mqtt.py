@@ -124,3 +124,35 @@ async def test_mqtt_paths_use_transport() -> None:
     )
     assert transport.published[2][0] == MqttTopic.WRITE.format(sn="SN123")
     assert '"status":1' in str(transport.published[2][1])
+
+
+@pytest.mark.asyncio
+async def test_set_cleaning_mode_uses_mode_at_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    """X1 mode selection should use AT+MODE, not AT+PLAN."""
+    api, _transport = _api_with_fake_mqtt()
+    calls: list[str] = []
+
+    async def fake_send_machine_at(sn: str, at_cmd: str, timeout: float = 4.0) -> bool | None:
+        calls.append(at_cmd)
+        return True
+
+    monkeypatch.setattr(api, "send_machine_at", fake_send_machine_at)
+
+    assert await api.set_cleaning_mode("SN123", 2) is True
+    assert calls == ["AT+MODE=2"]
+
+
+@pytest.mark.asyncio
+async def test_set_cleaning_mode_falls_back_to_workmode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Some firmwares expose selectable mode as AT+WORKMODE."""
+    api, _transport = _api_with_fake_mqtt()
+    calls: list[str] = []
+
+    async def fake_send_machine_at(sn: str, at_cmd: str, timeout: float = 4.0) -> bool | None:
+        calls.append(at_cmd)
+        return at_cmd == "AT+WORKMODE=3"
+
+    monkeypatch.setattr(api, "send_machine_at", fake_send_machine_at)
+
+    assert await api.set_cleaning_mode("SN123", 3) is True
+    assert calls == ["AT+MODE=3", "AT+WORKMODE=3"]

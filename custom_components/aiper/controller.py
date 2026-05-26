@@ -53,17 +53,17 @@ class AiperDeviceController:
         if not state_has_capability(self._device(sn), Capability.CLEANING_MODE_SELECT):
             return self._unsupported("cleaning_mode", mode, Capability.CLEANING_MODE_SELECT)
 
-        self.coordinator.note_command_sent(sn, "cleaning_mode", mode, source="controller")
+        self.coordinator.note_command_sent(sn, "mode", mode, source="controller")
         try:
             ok = await self.api.set_cleaning_mode(sn, mode)
         except Exception as err:
             reason = str(err)
-            self.coordinator.note_command_failed(sn, "cleaning_mode", mode, reason=reason, source="controller")
+            self.coordinator.note_command_failed(sn, "mode", mode, reason=reason, source="controller")
             return AiperCommandResult(ok=False, command="cleaning_mode", target=mode, reason=reason)
 
         if not ok:
             reason = "device rejected"
-            self.coordinator.note_command_failed(sn, "cleaning_mode", mode, reason=reason, source="controller")
+            self.coordinator.note_command_failed(sn, "mode", mode, reason=reason, source="controller")
             return AiperCommandResult(ok=False, command="cleaning_mode", target=mode, reason=reason)
 
         return AiperCommandResult(ok=True, command="cleaning_mode", target=mode)

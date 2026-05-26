@@ -17,6 +17,7 @@ from .const import (
     CLEAN_PATH_LABEL_TO_VALUE,
     DEFAULT_METADATA_REFRESH_HOURS,
     DOMAIN,
+    mode_label,
     status_running,
 )
 from .profiles import Capability, derive_device_profile, has_capability
@@ -63,6 +64,8 @@ LIVE_STATE_KEYS = frozenset(
     }
 )
 
+LIVE_REFRESH_INTERVAL = timedelta(minutes=5)
+
 
 def _ensure_utc_aware(value: datetime | None) -> datetime | None:
     """Ensure a datetime is timezone-aware in UTC."""
@@ -93,14 +96,26 @@ def _norm_key(key: str) -> str:
     return "".join(ch for ch in (key or "").lower() if ch.isalnum())
 
 
-def _merge_static_metadata(existing: RawDeviceData, discovered: RawDeviceData) -> RawDeviceData:
-    """Merge discovery metadata without overwriting MQTT-owned live state."""
+def _merge_discovery_metadata(
+    existing: RawDeviceData,
+    discovered: RawDeviceData,
+    *,
+    include_live: bool = False,
+) -> RawDeviceData:
+    """Merge discovery metadata while preserving cached fields."""
     merged = dict(existing)
     for key, value in discovered.items():
-        if key in LIVE_STATE_KEYS:
+        if value is None:
+            continue
+        if not include_live and key in LIVE_STATE_KEYS:
             continue
         merged[key] = value
     return merged
+
+
+def _merge_static_metadata(existing: RawDeviceData, discovered: RawDeviceData) -> RawDeviceData:
+    """Merge discovery metadata without overwriting MQTT-owned live state."""
+    return _merge_discovery_metadata(existing, discovered, include_live=False)
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -191,14 +206,251 @@ def _clean_path_value(val: Any) -> int | None:
     return None
 
 
-def _parse_consumables(raw: Any) -> list[dict[str, Any]]:
-    """Normalize consumables payload into a list.
+def _deep_get(item: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    """Find a value by fuzzy key match in a nested dict/list payload."""
+    wanted = {_norm_key(key) for key in keys}
+    stack: list[Any] = [item]
+    while stack:
+        obj = stack.pop()
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if isinstance(key, str) and _norm_key(key) in wanted:
+                    return value
+                if isinstance(value, (dict, list)):
+                    stack.append(value)
+        elif isinstance(obj, list):
+            stack.extend(value for value in obj if isinstance(value, (dict, list)))
+    return None
 
-    Verified payloads return `data` as the item list directly. Parse only
-    observed consumable fields; do not derive maintenance percentages from
-    unrelated counters.
-    """
-    data = raw.get("data") if isinstance(raw, dict) else None
+
+def _number(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        digits = "".join(ch for ch in text if ch.isdigit() or ch in ".-")
+        if not digits or digits in {".", "-", "-."}:
+            return None
+        try:
+            return float(digits)
+        except ValueError:
+            return None
+    return None
+
+
+def _parse_cleaning_history(raw: Any) -> tuple[int | None, float | None, list[dict[str, Any]]]:
+    """Parse cleaning history/totals payloads from regional Aiper APIs."""
+    root = raw if isinstance(raw, dict) else {}
+    data = root.get("data") if isinstance(root.get("data"), (dict, list)) else raw
+
+    rec_list: list[Any] = []
+    if isinstance(data, list):
+        rec_list = data
+    elif isinstance(data, dict):
+        for list_key in ("list", "records", "recordList", "history", "items"):
+            if isinstance(data.get(list_key), list):
+                rec_list = data[list_key]
+                break
+        if not rec_list:
+            for container_key in ("data", "result", "page"):
+                sub = data.get(container_key)
+                if not isinstance(sub, dict):
+                    continue
+                for list_key in ("list", "records", "recordList", "history", "items"):
+                    if isinstance(sub.get(list_key), list):
+                        rec_list = sub[list_key]
+                        break
+                if rec_list:
+                    break
+
+    count_keys = (
+        "totalNumberOfCleanings",
+        "totalCleanCount",
+        "totalCleanings",
+        "totalNumber",
+        "totalCount",
+        "totalTimes",
+        "totalCleanTimes",
+        "totalRecords",
+        "cleanCount",
+        "cleanTimes",
+        "total",
+    )
+    time_keys = (
+        "totalCleaningTime",
+        "totalCleanTime",
+        "totalCleanHour",
+        "totalCleanHours",
+        "totalCleaningHours",
+        "totalCleanMinute",
+        "totalCleanMinutes",
+        "totalCleaningMinutes",
+        "totalCleanSeconds",
+        "totalDuration",
+        "totalCleaningDuration",
+        "cleanTimeTotal",
+        "totalWorkTime",
+        "totalTime",
+        "totalHours",
+        "totalMinutes",
+        "totalSeconds",
+        "sumTime",
+        "sumCleanTime",
+    )
+
+    def _walk(obj: Any) -> list[tuple[str, Any]]:
+        pairs: list[tuple[str, Any]] = []
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if isinstance(key, str):
+                    pairs.append((key, value))
+                if isinstance(value, (dict, list)):
+                    pairs.extend(_walk(value))
+        elif isinstance(obj, list):
+            for value in obj:
+                if isinstance(value, (dict, list)):
+                    pairs.extend(_walk(value))
+        return pairs
+
+    all_pairs = _walk(root)
+    total_count: int | None = None
+    for key in count_keys:
+        value = next((value for found_key, value in all_pairs if _norm_key(found_key) == _norm_key(key)), None)
+        num = _number(value)
+        if num is not None and num >= 0:
+            total_count = int(num)
+            break
+
+    def _hours_from_value(key: str, value: Any) -> float | None:
+        num = _number(value)
+        if num is None or num < 0:
+            return None
+        key_norm = _norm_key(key)
+        value_text = str(value).strip().lower() if isinstance(value, str) else ""
+        if "hour" in key_norm or "hour" in value_text or value_text.endswith("h"):
+            return num
+        if "second" in key_norm or "sec" in value_text or value_text.endswith("s"):
+            return num / 3600.0
+        if "minute" in key_norm or "min" in value_text:
+            return num / 60.0
+        return num / 60.0
+
+    total_hours: float | None = None
+    for key in time_keys:
+        value = next((value for found_key, value in all_pairs if _norm_key(found_key) == _norm_key(key)), None)
+        hours = _hours_from_value(key, value)
+        if hours is not None:
+            total_hours = round(hours, 3)
+            break
+
+    def _minutes_from_value(value: Any) -> float | None:
+        num = _number(value)
+        if num is None or num < 0:
+            return None
+        text = str(value).strip().lower() if isinstance(value, str) else ""
+        if "hour" in text or text.endswith("h"):
+            return num * 60.0
+        if "sec" in text or text.endswith("s"):
+            return num / 60.0
+        if "min" in text:
+            return num
+        return num / 60.0 if num > 300 else num
+
+    def _find_dt_any(item: dict[str, Any]) -> Any:
+        for key in (
+            "utcStartTimeStamp",
+            "utcEndTimeStamp",
+            "utcStartTime",
+            "utcEndTime",
+            "utcBeginTimeStamp",
+            "utcBeginTime",
+            "utcFinishTimeStamp",
+            "utcFinishTime",
+            "startTimeStamp",
+            "endTimeStamp",
+            "startTimestamp",
+            "endTimestamp",
+            "startTime",
+            "cleanStartTime",
+            "beginTime",
+            "createTime",
+            "cleanTime",
+            "cleanDate",
+            "recordTime",
+            "dateTime",
+            "start",
+            "begin",
+            "time",
+        ):
+            if item.get(key) is not None:
+                return item.get(key)
+        for _key, value in _walk(item):
+            if isinstance(value, str):
+                text = value.strip()
+                if any(ch.isdigit() for ch in text) and (":" in text or "-" in text or "/" in text):
+                    return value
+            elif isinstance(value, (int, float)) and value > 1_000_000_000:
+                return value
+        return None
+
+    records: list[dict[str, Any]] = []
+    for item in rec_list:
+        if not isinstance(item, dict):
+            continue
+        mode_id = _deep_get(item, ("modeId", "mode_id", "cleanMode", "cleanType", "mode", "type"))
+        mode_name = _deep_get(item, ("modeName", "cleanModeName", "mode_name", "name", "cleanTypeName"))
+        mode_id_num = _number(mode_id)
+        mode_id_int = int(mode_id_num) if mode_id_num is not None else None
+        if mode_name is None and mode_id_int is not None:
+            mode_name = mode_label(mode_id_int)
+        if mode_name is None and mode_id is not None:
+            mode_name = str(mode_id)
+
+        duration_value = _deep_get(
+            item,
+            ("duration", "durationTime", "cleaningTime", "runTime", "useTime", "lastTime", "timeUsed"),
+        )
+        duration_min = _minutes_from_value(duration_value)
+        records.append(
+            {
+                "mode_id": mode_id_int,
+                "mode": str(mode_name or "Unknown"),
+                "start": _parse_dt(_find_dt_any(item)),
+                "duration_min": round(duration_min, 1) if duration_min is not None else None,
+                "raw": item,
+            }
+        )
+
+    records.sort(key=lambda record: record.get("start") or datetime.min.replace(tzinfo=UTC), reverse=True)
+
+    if total_count is None and records:
+        total_count = len(records)
+    if total_hours is None:
+        try:
+            duration_sum = sum(float(record["duration_min"]) for record in records if record.get("duration_min") is not None)
+        except Exception:
+            duration_sum = 0.0
+        if duration_sum > 0:
+            total_hours = round(duration_sum / 60.0, 3)
+
+    return total_count, total_hours, records
+
+
+def _parse_consumables(raw: Any) -> list[dict[str, Any]]:
+    """Normalize consumables payloads into a list."""
+    data = raw.get("data") if isinstance(raw, dict) and "data" in raw else raw
+    if isinstance(data, dict):
+        for list_key in ("list", "consumables", "consumableList", "consumablesList", "items"):
+            value = data.get(list_key)
+            if isinstance(value, list):
+                data = value
+                break
+            if isinstance(value, dict) and isinstance(value.get("list"), list):
+                data = value.get("list")
+                break
+
     if not isinstance(data, list):
         return []
 
@@ -215,30 +467,113 @@ def _parse_consumables(raw: Any) -> list[dict[str, Any]]:
         return None
 
     out: list[dict[str, Any]] = []
-
     for item in data:
         if not isinstance(item, dict):
             continue
 
-        name = item.get("consumableName")
+        name = _deep_get(item, ("consumablesName", "consumableName", "name", "title", "consumable", "consumables"))
         if not name:
-            name = _dynamic_value(item, "consumable_name")
+            name = _dynamic_value(item, "consumable_name", "consumablesName", "consumableName", "name")
         if not name:
-            continue
+            name = item.get("type") or item.get("consumableType") or "Consumable"
         name = str(name)
 
-        last_val = item.get("maintainLastChangeTime")
+        remaining = _deep_get(
+            item,
+            (
+                "componentReplaceRemainHour",
+                "component_replace_remain_hour",
+                "componentReplaceRemainHours",
+                "componentReplaceRemainTime",
+                "componentReplaceRemain",
+                "componentReplacementRemainHour",
+                "replaceRemainHour",
+                "remainTime",
+                "remaining",
+                "remainingTime",
+                "remain",
+                "remain_time",
+                "leftTime",
+                "left_time",
+                "timeLeft",
+                "remainHours",
+            ),
+        )
+        if remaining is None:
+            remaining = _dynamic_value(item, "component_replace")
+        remaining_hours = _number(remaining)
+
+        if remaining_hours is None:
+            for key, value in item.items():
+                if not isinstance(key, str):
+                    continue
+                key_norm = _norm_key(key)
+                if ("remain" in key_norm or "left" in key_norm) and ("hour" in key_norm or key_norm.endswith("h")):
+                    remaining_hours = _number(value)
+                    if remaining_hours is not None:
+                        break
+
+        percent_left = None
+        used_percent = _number(_deep_get(item, ("usePercentage", "use_percent", "usedPercent", "used_percentage")))
+        if used_percent is not None:
+            percent_left = max(0.0, min(100.0, 100.0 - used_percent))
+
+        if percent_left is None:
+            percent = _number(
+                _deep_get(
+                    item,
+                    ("percent", "remainPercent", "remainingPercent", "leftPercent", "left_percent", "remainPct", "remain_rate"),
+                )
+            )
+            if percent is not None:
+                percent_left = max(0.0, min(100.0, percent))
+
+        if percent_left is None and remaining_hours is not None:
+            longest = _number(_deep_get(item, ("longestUseTime", "maxUseTime", "max_time", "longest_use_time")))
+            if longest and longest > 0:
+                percent_left = max(0.0, min(100.0, (remaining_hours / longest) * 100.0))
+
+        last_val = _deep_get(
+            item,
+            (
+                "componentReplaceLastTime",
+                "componentReplaceLastTimestamp",
+                "componentReplaceLastTimeStamp",
+                "maintainLastChangeTime",
+                "lastChangeTime",
+                "lastReplacementTime",
+                "lastReplaceTime",
+                "lastReplace",
+                "replaceTime",
+                "lastReplacement",
+                "last_replacement_time",
+            ),
+        )
+        if last_val is None:
+            last_val = _dynamic_value(item, "lastChangeTime")
         last_rep = _parse_dt(last_val)
 
-        cid = item.get("id")
+        if last_rep is None:
+            for key, value in item.items():
+                if not isinstance(key, str):
+                    continue
+                key_norm = _norm_key(key)
+                if "last" in key_norm and "time" in key_norm and not any(
+                    marker in key_norm for marker in ("start", "end", "create", "update")
+                ):
+                    last_rep = _parse_dt(value)
+                    if last_rep is not None:
+                        break
+
+        cid = item.get("id") or item.get("consumableId") or item.get("type")
         key = _slugify(f"{cid}_{name}" if cid else name)
 
         out.append(
             {
                 "key": key,
                 "name": name,
-                "remaining_hours": None,
-                "percent_left": None,
+                "remaining_hours": remaining_hours,
+                "percent_left": round(percent_left, 1) if percent_left is not None else None,
                 "last_replacement": last_rep,
                 "raw": item,
             }
@@ -265,11 +600,12 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             _LOGGER,
             config_entry=config_entry,
             name=DOMAIN,
-            update_interval=self._metadata_refresh,
+            update_interval=min(self._metadata_refresh, LIVE_REFRESH_INTERVAL),
         )
         self.api = api
         self._devices: dict[str, RawDeviceData] = {}
         self._last_metadata_fetch: dict[str, datetime] = {}
+        self._history_cache: dict[str, dict[str, Any]] = {}
         self._consumables_cache: dict[str, list[dict[str, Any]]] = {}
         self._clean_path_cache: dict[str, int] = {}
 
@@ -303,13 +639,22 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 self._last_metadata_fetch[_sn] = _ensure_utc_aware(_ts) or dt_util.utcnow()
 
             discovered_devices: list[RawDeviceData] | None = None
-            if not self._devices:
+            try:
                 discovered_devices = await self.api.get_devices()
                 _LOGGER.debug("Got %d devices from API", len(discovered_devices))
                 for discovered in discovered_devices:
                     sn = discovered.get("sn")
                     if sn:
-                        self._devices[str(sn)] = dict(discovered)
+                        serial = str(sn)
+                        self._devices[serial] = _merge_discovery_metadata(
+                            self._devices.get(serial, {}),
+                            dict(discovered),
+                            include_live=True,
+                        )
+            except Exception as err:
+                if not self._devices:
+                    raise
+                _LOGGER.debug("Live device refresh failed, using cached device state: %s", err)
 
             devices = list(self._devices.values())
             metadata_due_serials: set[str] = set()
@@ -321,24 +666,6 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 if last_metadata is None or (now - last_metadata) >= self._metadata_refresh:
                     metadata_due_serials.add(str(sn))
 
-            if metadata_due_serials:
-                try:
-                    if discovered_devices is None:
-                        discovered_devices = await self.api.get_devices()
-                    for discovered in discovered_devices:
-                        discovered_sn = discovered.get("sn")
-                        if discovered_sn:
-                            sn = str(discovered_sn)
-                            self._devices[sn] = _merge_static_metadata(
-                                self._devices.get(sn, {}),
-                                dict(discovered),
-                            )
-                            if self._last_metadata_fetch.get(sn) is None:
-                                metadata_due_serials.add(sn)
-                    devices = list(self._devices.values())
-                except Exception as err:
-                    _LOGGER.debug("Device metadata refresh failed: %s", err)
-
             for device in devices:
                 sn = device.get("sn")
                 if not sn:
@@ -349,13 +676,15 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
 
                 current_device_state = (self.data or {}).get(sn) if self.data else None
                 online_entity = current_device_state.get("online") if current_device_state else None
-                online_state = (
-                    online_entity.value if online_entity is not None and isinstance(online_entity.value, bool) else None
-                )
+                online_state = _coerce_bool((self._devices.get(sn) or {}).get("online"))
+                if online_state is None:
+                    online_state = (
+                        online_entity.value
+                        if online_entity is not None and isinstance(online_entity.value, bool)
+                        else None
+                    )
                 if online_state is None:
                     online_state = self._last_online.get(sn)
-                if online_state is None:
-                    online_state = _coerce_bool((self._devices.get(sn) or {}).get("online"))
 
                 self._last_online[sn] = online_state
 
@@ -377,6 +706,24 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     if isinstance(info, dict):
                         self._devices[sn]["info"] = info
 
+                    raw_hist = None
+                    try:
+                        raw_hist = await self.api.get_cleaning_history(sn)
+                    except Exception as err:
+                        _LOGGER.debug("Cleaning history fetch failed for %s: %s", sn, err)
+                    if raw_hist is not None:
+                        try:
+                            total_count, total_hours, records = _parse_cleaning_history(raw_hist)
+                        except Exception as err:
+                            _LOGGER.debug("Cleaning history parse failed for %s: %s", sn, err)
+                            total_count, total_hours, records = None, None, []
+                        self._history_cache[sn] = {
+                            "total_count": total_count,
+                            "total_hours": total_hours,
+                            "records": records,
+                            "raw": raw_hist,
+                        }
+
                     raw_cons = None
                     try:
                         raw_cons = await self.api.get_consumables(sn)
@@ -388,6 +735,21 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     if raw_cons is not None:
                         self._consumables_cache[sn] = cons_list
                     self._last_metadata_fetch[sn] = now
+
+                hist = self._history_cache.get(sn) or {}
+                total_hours = hist.get("total_hours")
+                records = hist.get("records") or []
+                last_record = records[0] if isinstance(records, list) and records else None
+                self._devices[sn]["total_cleanings"] = hist.get("total_count")
+                self._devices[sn]["total_cleaning_hours"] = total_hours
+                self._devices[sn]["total_cleaning_minutes"] = (
+                    round(float(total_hours) * 60) if isinstance(total_hours, (int, float)) else None
+                )
+                self._devices[sn]["cleaning_records"] = records
+                if isinstance(last_record, dict):
+                    self._devices[sn]["last_cleaning_mode"] = last_record.get("mode")
+                    self._devices[sn]["last_cleaning_start"] = last_record.get("start")
+                    self._devices[sn]["last_cleaning_duration_min"] = last_record.get("duration_min")
 
                 # Derive supported modes only from observed info metadata.
                 # Family profiles provide typed defaults when the list is absent.
@@ -769,6 +1131,10 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         st = self._command_state.get(sn) or {}
         pending = st.get("pending") or {}
         info = pending.get(kind) if isinstance(pending, dict) else None
+        if info is None and kind == "mode" and isinstance(pending, dict):
+            info = pending.get("cleaning_mode")
+        elif info is None and kind == "cleaning_mode" and isinstance(pending, dict):
+            info = pending.get("mode")
         return info.get("target") if isinstance(info, dict) else None
 
     def expire_pending_commands(self, sn: str) -> None:
@@ -829,11 +1195,13 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         now = dt_util.utcnow().isoformat()
         changed = False
 
-        if "mode" in pend:
-            tgt = _to_int((pend.get("mode") or {}).get("target"))
+        for mode_kind in ("mode", "cleaning_mode"):
+            if mode_kind not in pend:
+                continue
+            tgt = _to_int((pend.get(mode_kind) or {}).get("target"))
             if tgt is not None and reported_mode is not None and tgt == reported_mode:
-                pend.pop("mode", None)
-                st.setdefault("last", {})["mode"] = {
+                pend.pop(mode_kind, None)
+                st.setdefault("last", {})[mode_kind] = {
                     "target": tgt,
                     "time": now,
                     "source": "device_report",

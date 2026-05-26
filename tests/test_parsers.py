@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any
 
-from custom_components.aiper.coordinator import _clean_path_value, _parse_consumables
+from custom_components.aiper.coordinator import _clean_path_value, _parse_cleaning_history, _parse_consumables
 from custom_components.aiper.state import (
     _centihours_to_hours,
     _collect_warning_codes,
@@ -80,24 +80,61 @@ def test_hour_helpers_keep_field_units_explicit() -> None:
     assert _centihours_to_hours("16.73") is None
 
 
-def test_parse_consumables_rejects_unverified_wrappers() -> None:
-    """Consumables should not support guessed response wrappers."""
-    assert (
-        _parse_consumables(
-            {
-                "data": {
-                    "list": [
-                        {
-                            "id": "brush",
-                            "consumableName": "Roller Brush",
-                            "maintainLastChangeTime": 1_714_608_000_000,
-                        }
-                    ]
-                }
-            }
-        )
-        == []
+def test_parse_cleaning_history_restores_totals_and_last_record() -> None:
+    """Cleaning history totals and last record should survive regional wrappers."""
+    total_count, total_hours, records = _parse_cleaning_history(
+        {
+            "code": "200",
+            "data": {
+                "totalCleanings": 2,
+                "totalCleaningMinutes": 95,
+                "list": [
+                    {
+                        "modeId": 2,
+                        "modeName": "Floor",
+                        "startTime": "2026-05-24 09:00:00",
+                        "durationTime": "35 min",
+                    },
+                    {
+                        "modeId": 3,
+                        "modeName": "Wall",
+                        "startTime": "2026-05-25 10:00:00",
+                        "durationTime": "3600s",
+                    },
+                ],
+            },
+        }
     )
+
+    assert total_count == 2
+    assert total_hours == 1.583
+    assert records[0]["mode"] == "Wall"
+    assert records[0]["start"] == datetime(2026, 5, 25, 10, 0, tzinfo=UTC)
+    assert records[0]["duration_min"] == 60.0
+
+
+def test_parse_consumables_handles_scuba_wrapper_payload() -> None:
+    """Scuba consumables use wrapper/list payloads with remaining-hour fields."""
+    consumables = _parse_consumables(
+        {
+            "data": {
+                "list": [
+                    {
+                        "id": "brush",
+                        "consumableName": "Roller Brush",
+                        "componentReplaceRemainHour": 500,
+                        "longestUseTime": 1000,
+                        "lastChangeTime": 1_714_608_000_000,
+                    }
+                ]
+            }
+        }
+    )
+
+    assert consumables[0]["key"] == "brush_roller_brush"
+    assert consumables[0]["remaining_hours"] == 500
+    assert consumables[0]["percent_left"] == 50.0
+    assert consumables[0]["last_replacement"].tzinfo == UTC
 
 
 def test_parse_consumables_handles_surfer_s2_direct_list_payload() -> None:

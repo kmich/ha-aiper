@@ -78,7 +78,7 @@ async def test_set_cleaning_mode_uses_typed_controller_and_records_command_state
     assert result.ok is True
     assert result.command == "cleaning_mode"
     assert api.modes == [("SN123", 2)]
-    assert coordinator.sent == [("SN123", "cleaning_mode", CleaningMode.FLOOR, "controller")]
+    assert coordinator.sent == [("SN123", "mode", CleaningMode.FLOOR, "controller")]
     assert coordinator.failed == []
 
 
@@ -106,7 +106,7 @@ async def test_set_cleaning_mode_records_device_rejection() -> None:
 
     assert result.ok is False
     assert result.reason == "device rejected"
-    assert coordinator.failed == [("SN123", "cleaning_mode", CleaningMode.SCHEDULED, "device rejected", "controller")]
+    assert coordinator.failed == [("SN123", "mode", CleaningMode.SCHEDULED, "device rejected", "controller")]
 
 
 @pytest.mark.asyncio

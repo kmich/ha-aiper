@@ -184,14 +184,41 @@ class AiperCleaningModeSelect(AiperSelectBase):
                 options.append(label)
         self._attr_options = options
 
+    def _mode_id_for_label(self, label: Any) -> int | None:
+        if label is None:
+            return None
+        label_text = str(label).strip()
+        if not label_text:
+            return None
+        for mid, known_label in self._mode_map.items():
+            if known_label == label_text:
+                return int(mid)
+        for mid in self._mode_ids:
+            if mode_label(mid) == label_text:
+                return int(mid)
+        return None
+
     def _get_current_mode_id(self) -> int | None:
         dev = (self.coordinator.data or {})[self._sn]
-        return _coerce_int(dev["mode"].attributes.get("code"))
+        reported = _coerce_int(dev["mode"].attributes.get("code"))
+        if reported in self._mode_ids:
+            return reported
+
+        pending = _coerce_int(self.coordinator.get_pending_command_target(self._sn, "mode"))
+        if pending in self._mode_ids:
+            return pending
+
+        last_mode = dev.get("last_cleaning_mode")
+        history_mode = self._mode_id_for_label(last_mode.value if last_mode else None)
+        if history_mode in self._mode_ids:
+            return history_mode
+
+        return reported
 
     @property
     def current_option(self) -> str | None:
         mid = self._get_current_mode_id()
-        if mid is None:
+        if mid is None or mid not in self._mode_ids:
             return None
         return self._mode_map.get(mid) or mode_label(mid)
 

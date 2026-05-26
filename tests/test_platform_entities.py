@@ -199,6 +199,10 @@ async def test_scuba_entity_publication_uses_scuba_capabilities(hass: HomeAssist
             ],
             "temp": 23,
             "in_water": 1,
+            "total_cleanings": 12,
+            "total_cleaning_hours": 6.5,
+            "last_cleaning_mode": "Floor",
+            "last_cleaning_duration_min": 42,
         },
     )
 
@@ -207,9 +211,17 @@ async def test_scuba_entity_publication_uses_scuba_capabilities(hass: HomeAssist
     select_entities = await _setup_platform(select, hass, entry)
     switch_entities = await _setup_platform(switch, hass, entry)
 
-    assert {"temperature", "roller_brush", "micromesh_filter", "caterpillar_tread", "propeller"}.issubset(
-        _keys(sensor_entities)
-    )
+    assert {
+        "temperature",
+        "roller_brush",
+        "micromesh_filter",
+        "caterpillar_tread",
+        "propeller",
+        "total_cleanings",
+        "total_cleaning_time",
+        "last_cleaning_mode",
+        "last_cleaning_duration",
+    }.issubset(_keys(sensor_entities))
     assert _entity_by_key(sensor_entities, "propeller").available is False
     roller_brush = _entity_by_key(sensor_entities, "roller_brush")
     assert roller_brush.native_value == 50
@@ -219,17 +231,27 @@ async def test_scuba_entity_publication_uses_scuba_capabilities(hass: HomeAssist
     }
     device_family = _entity_by_key(sensor_entities, "device_family")
     assert device_family.native_value == "scuba"
+    assert _entity_by_key(sensor_entities, "total_cleanings").native_value == 12
+    assert _entity_by_key(sensor_entities, "total_cleaning_time").native_value == 6.5
+    assert _entity_by_key(sensor_entities, "last_cleaning_mode").native_value == "Floor"
+    assert _entity_by_key(sensor_entities, "last_cleaning_duration").native_value == 42.0
     diagnostic_entities = [
         entity for entity in sensor_entities if entity.entity_description.entity_category == EntityCategory.DIAGNOSTIC
     ]
     assert diagnostic_entities
-    assert all(entity._attr_entity_registry_enabled_default is False for entity in diagnostic_entities)
+    assert all(
+        entity._attr_entity_registry_enabled_default is False
+        for entity in diagnostic_entities
+        if entity.entity_description.key != "last_cleaning_start"
+    )
     assert "mode" in _keys(sensor_entities)
     assert _entity_by_key(sensor_entities, "mode").available is False
     assert "in_water" in _keys(binary_entities)
     assert "running" in _keys(binary_entities)
     assert _entity_by_key(binary_entities, "running").is_on is True
     assert _select_keys(select_entities) == {"mode_selection", "clean_path"}
+    mode_select = next(entity for entity in select_entities if entity._key == "mode_selection")
+    assert mode_select.current_option == "Floor"
     assert switch_entities == []
 
 
