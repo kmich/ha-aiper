@@ -429,7 +429,9 @@ def _parse_cleaning_history(raw: Any) -> tuple[int | None, float | None, list[di
         total_count = len(records)
     if total_hours is None:
         try:
-            duration_sum = sum(float(record["duration_min"]) for record in records if record.get("duration_min") is not None)
+            duration_sum = sum(
+                float(record["duration_min"]) for record in records if record.get("duration_min") is not None
+            )
         except Exception:
             duration_sum = 0.0
         if duration_sum > 0:
@@ -522,7 +524,15 @@ def _parse_consumables(raw: Any) -> list[dict[str, Any]]:
             percent = _number(
                 _deep_get(
                     item,
-                    ("percent", "remainPercent", "remainingPercent", "leftPercent", "left_percent", "remainPct", "remain_rate"),
+                    (
+                        "percent",
+                        "remainPercent",
+                        "remainingPercent",
+                        "leftPercent",
+                        "left_percent",
+                        "remainPct",
+                        "remain_rate",
+                    ),
                 )
             )
             if percent is not None:
@@ -558,8 +568,10 @@ def _parse_consumables(raw: Any) -> list[dict[str, Any]]:
                 if not isinstance(key, str):
                     continue
                 key_norm = _norm_key(key)
-                if "last" in key_norm and "time" in key_norm and not any(
-                    marker in key_norm for marker in ("start", "end", "create", "update")
+                if (
+                    "last" in key_norm
+                    and "time" in key_norm
+                    and not any(marker in key_norm for marker in ("start", "end", "create", "update"))
                 ):
                     last_rep = _parse_dt(value)
                     if last_rep is not None:

@@ -677,6 +677,7 @@ class AiperApi:
 
         for body in bodies:
             try:
+
                 async def request_history(body: dict[str, Any] = body) -> dict[str, Any]:
                     return await self._call_encrypted("POST", "/swimming/v2/getCleanTimeBySn", body)
 
