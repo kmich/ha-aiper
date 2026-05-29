@@ -52,6 +52,7 @@ class AwsIotMqttTransport:
         credentials: AwsIotCredentials,
         connect_timeout: float = 10.0,
         operation_timeout: float = 5.0,
+        on_reconnected: Callable[[bool], None] | None = None,
     ) -> None:
         self.endpoint = endpoint
         self.region = region
@@ -59,6 +60,7 @@ class AwsIotMqttTransport:
         self.credentials = credentials
         self.connect_timeout = connect_timeout
         self.operation_timeout = operation_timeout
+        self.on_reconnected = on_reconnected
 
         self._connection: Any = None
         self._connected = False
@@ -275,6 +277,11 @@ class AwsIotMqttTransport:
             return_code,
             session_present,
         )
+        if self.on_reconnected is not None:
+            try:
+                self.on_reconnected(session_present)
+            except Exception as err:
+                _LOGGER.debug("on_reconnected callback failed: %s", err)
 
     def _on_connection_failure(self, connection: Any, callback_data: Any, **kwargs: Any) -> None:
         error = getattr(callback_data, "error", None)
