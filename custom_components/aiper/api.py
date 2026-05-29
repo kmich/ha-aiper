@@ -990,6 +990,7 @@ class AiperApi:
                 ),
                 connect_timeout=10.0,
                 operation_timeout=5.0,
+                on_reconnected=self._on_mqtt_reconnected,
             )
 
             if await self._mqtt_client.async_connect():
@@ -1011,6 +1012,38 @@ class AiperApi:
         Exposed for entity availability and diagnostics.
         """
         return bool(self._mqtt_connected and self._mqtt_client and self._mqtt_client.is_connected())
+
+    def _on_mqtt_reconnected(self, session_present: bool) -> None:
+        """Called from the AWS CRT thread when MQTT auto-reconnects.
+
+        When session_present is False the broker has no record of our
+        subscriptions, so we must re-subscribe for shadow updates to resume.
+        We always re-subscribe to be safe — MQTT re-subscribe is idempotent.
+        """
+        loop = self._async_loop
+        if loop is None or not loop.is_running():
+            return
+        asyncio.run_coroutine_threadsafe(self._resubscribe_all_devices(), loop)
+
+    async def _resubscribe_all_devices(self) -> None:
+        """Re-subscribe to all device topics after an MQTT reconnect."""
+        if not self.is_mqtt_connected():
+            return
+        with self._lock:
+            sns = list(self._shadow_callbacks.keys())
+        for sn in sns:
+            _LOGGER.info("Re-subscribing MQTT topics for %s after reconnect", sn)
+
+            def on_message(topic: str, payload_bytes: bytes, _sn: str = sn) -> None:
+                self._handle_device_message(_sn, topic, payload_bytes)
+
+            for topic in self._subscription_topics_for_sn(sn):
+                try:
+                    await self._mqtt_client.async_subscribe(topic, on_message, 1)
+                except Exception as err:
+                    _LOGGER.debug("Re-subscribe failed for %s topic %s: %s", sn, topic, err)
+            with suppress(Exception):
+                await self.request_shadow(sn)
 
     async def request_shadow(self, sn: str) -> bool:
         """Request the current AWS IoT thing shadow."""
@@ -1297,19 +1330,95 @@ class AiperApi:
         mode_id = int(mode)
         _LOGGER.info("Setting cleaning mode for %s: %s", sn, mode_id)
 
+        # Try MQTT AT commands first (preferred — low latency, confirmed by ack).
         # X1 firmware rejects AT+PLAN for normal mode selection. Earlier
         # releases used AT+MODE with AT+WORKMODE fallback, which matches the
         # app-observed command surface across Scuba firmware variants.
         cmd_result: bool | None = False
-        for at_cmd in (f"AT+MODE={mode_id}", f"AT+WORKMODE={mode_id}"):
-            cmd_result = await self.send_machine_at(sn, at_cmd)
-            if cmd_result is True or cmd_result is None:
+        if self.is_mqtt_connected():
+            for at_cmd in (f"AT+MODE={mode_id}", f"AT+WORKMODE={mode_id}"):
+                cmd_result = await self.send_machine_at(sn, at_cmd)
+                if cmd_result is True or cmd_result is None:
+                    break
+
+        if cmd_result is True or cmd_result is None:
+            with suppress(Exception):
+                await self.request_shadow(sn)
+            return True
+
+        # MQTT unavailable or rejected — fall back to REST endpoints.
+        # Probe multiple path/body combinations; the working one varies by firmware.
+        dev = self._devices.get(sn) or {}
+        equip_id = dev.get("equipmentId") or dev.get("deviceId") or dev.get("id")
+        if equip_id is None:
+            with suppress(Exception):
+                await self.get_devices()
+            dev = self._devices.get(sn) or {}
+            equip_id = dev.get("equipmentId") or dev.get("deviceId") or dev.get("id")
+
+        rest_paths = [
+            "/equipmentCleanMode/updateCleanMode",
+            "/equipmentCleanMode/setCleanMode",
+            "/equipmentCleanMode/updateCleanModeBySn",
+            "/swimming/v2/updateCleanMode",
+            "/swimming/v2/setCleanMode",
+            "/network/cleanMode",
+            "/network/clean_mode",
+        ]
+        key_variants = ("cleanMode", "mode", "workMode", "cleaningMode")
+        base_bodies: list[dict[str, Any]] = [{"sn": sn, k: mode_id} for k in key_variants]
+        bodies: list[dict[str, Any]] = []
+        if equip_id is not None:
+            for bb in base_bodies:
+                for idk in ("id", "equipmentId", "deviceId"):
+                    b = dict(bb)
+                    b[idk] = equip_id
+                    bodies.append(b)
+        bodies.extend(base_bodies)
+
+        rest_ok = False
+        for path in rest_paths:
+            for body in bodies:
+                payload = None
+                try:
+
+                    async def encrypted_mode(
+                        _p: str = path,
+                        _b: dict[str, Any] = body,
+                    ) -> Any:
+                        return await self._call_encrypted("POST", _p, _b)
+
+                    payload = await self._call_with_zoneid(sn, encrypted_mode)
+                except Exception as err:
+                    _LOGGER.debug("Cleaning mode REST encrypted failed (%s): %s", path, err)
+                if not payload or not self._is_success(payload):
+                    try:
+
+                        async def plain_mode(
+                            _p: str = path,
+                            _b: dict[str, Any] = body,
+                        ) -> Any:
+                            return await self._call_plain("POST", _p, _b)
+
+                        payload = await self._call_with_zoneid(sn, plain_mode)
+                    except Exception as err:
+                        _LOGGER.debug("Cleaning mode REST plain failed (%s): %s", path, err)
+                if payload and self._is_success(payload):
+                    rest_ok = True
+                    _LOGGER.debug(
+                        "Cleaning mode REST OK via %s (code=%s) keys=%s",
+                        path,
+                        payload.get("code"),
+                        list(body.keys()),
+                    )
+                    break
+            if rest_ok:
                 break
 
         with suppress(Exception):
             await self.request_shadow(sn)
 
-        return cmd_result is True or cmd_result is None
+        return rest_ok
 
     async def set_running(self, sn: str, running: bool) -> bool:
         """Start or stop running."""
