@@ -1381,18 +1381,26 @@ class AiperApi:
             for body in bodies:
                 payload = None
                 try:
-                    payload = await self._call_with_zoneid(
-                        sn,
-                        lambda _p=path, _b=body: self._call_encrypted("POST", _p, _b),
-                    )
+
+                    async def encrypted_mode(
+                        _p: str = path,
+                        _b: dict[str, Any] = body,
+                    ) -> Any:
+                        return await self._call_encrypted("POST", _p, _b)
+
+                    payload = await self._call_with_zoneid(sn, encrypted_mode)
                 except Exception as err:
                     _LOGGER.debug("Cleaning mode REST encrypted failed (%s): %s", path, err)
                 if not payload or not self._is_success(payload):
                     try:
-                        payload = await self._call_with_zoneid(
-                            sn,
-                            lambda _p=path, _b=body: self._call_plain("POST", _p, _b),
-                        )
+
+                        async def plain_mode(
+                            _p: str = path,
+                            _b: dict[str, Any] = body,
+                        ) -> Any:
+                            return await self._call_plain("POST", _p, _b)
+
+                        payload = await self._call_with_zoneid(sn, plain_mode)
                     except Exception as err:
                         _LOGGER.debug("Cleaning mode REST plain failed (%s): %s", path, err)
                 if payload and self._is_success(payload):
