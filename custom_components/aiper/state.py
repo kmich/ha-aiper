@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from .const import CLEAN_PATH_MAP, Status, mode_label, status_label, status_running, status_value
@@ -535,6 +536,12 @@ def normalize_w2_wqs_update(w2_wqs: dict[str, Any]) -> DeviceState:
         for key in ("temperature", "ph", "orp", "ec", "tds", "rcl", "water_quality_score"):
             if key in updates:
                 updates[key] = EntityState(updates[key].value, {"sample_time": sampled_at})
+        sample_dt: datetime | None = None
+        try:
+            sample_dt = datetime.fromtimestamp(int(sampled_at), tz=UTC)
+        except (TypeError, ValueError, OSError):
+            pass
+        updates["wqs_sample_time"] = EntityState(sample_dt)
 
     return updates
 
@@ -850,6 +857,7 @@ def normalize_device_state(raw: RawDeviceData) -> DeviceState:
         "probe_2_status",
         "probe_3_status",
         "ultrasonic_status",
+        "wqs_sample_time",
     ):
         state[key] = EntityState(raw.get(key))
 

@@ -205,6 +205,14 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         capability=Capability.WATER_QUALITY,
     ),
     AiperSensorEntityDescription(
+        key="wqs_sample_time",
+        name="Water Sample Time",
+        icon="mdi:clock-outline",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        capability=Capability.WATER_QUALITY,
+    ),
+    AiperSensorEntityDescription(
         key="charge_type",
         name="Charge Type",
         icon="mdi:battery-charging",
