@@ -119,6 +119,7 @@ The entities exposed depend on the device family and the capabilities Aiper repo
 | Work Current | Sensor | mA, diagnostic |
 | Charge Current | Sensor | mA, diagnostic |
 | Firmware Version | Sensor | Diagnostic |
+| Water Sample Time | Sensor | Diagnostic |
 | Online | Binary sensor | |
 
 ## Development
