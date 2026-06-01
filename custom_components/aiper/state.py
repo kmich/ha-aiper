@@ -538,8 +538,8 @@ def normalize_w2_wqs_update(w2_wqs: dict[str, Any]) -> DeviceState:
                 updates[key] = EntityState(updates[key].value, {"sample_time": sampled_at})
         sample_dt: datetime | None = None
         try:
-            sample_dt = datetime.fromtimestamp(int(sampled_at), tz=UTC)
-        except (TypeError, ValueError, OSError):
+            sample_dt = datetime.fromisoformat(sampled_at.replace("Z", "+00:00"))
+        except (TypeError, ValueError):
             pass
         updates["wqs_sample_time"] = EntityState(sample_dt)
 

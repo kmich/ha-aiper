@@ -167,6 +167,7 @@ def test_w2_wqs_update_maps_water_quality_values() -> None:
     assert state["rcl"].value == 1.2
     assert state["water_quality_score"].value == 88.0
     assert state["ph"].attributes == {"sample_time": "2026-05-26T12:00:00Z"}
+    assert state["wqs_sample_time"].value == datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC)
 
 
 def test_w2_probe_status_and_lifetime_merge_attributes() -> None:
