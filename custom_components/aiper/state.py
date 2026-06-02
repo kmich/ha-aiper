@@ -405,8 +405,9 @@ def normalize_machine_update(
         updates["runtime"] = EntityState(_centihours_to_hours(mqtt.get("run_time")))
     if mqtt.get("in_water") is not None:
         updates["in_water"] = EntityState(bool(mqtt.get("in_water")))
-    if mqtt.get("solar_status") is not None:
-        updates["solar_charging"] = EntityState(mqtt.get("solar_status") == 1)
+    solar_status_raw = mqtt.get("solar_status") if "solar_status" in mqtt else mqtt.get("solarStatus")
+    if solar_status_raw is not None:
+        updates["solar_charging"] = EntityState(solar_status_raw == 1)
     if mqtt.get("link") is not None:
         updates["linked"] = EntityState(online and mqtt.get("link") == 1)
     if mqtt.get("cleanPath") is not None:

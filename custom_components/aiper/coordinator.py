@@ -400,6 +400,26 @@ def _parse_cleaning_history(raw: Any) -> tuple[int | None, float | None, list[di
                 return value
         return None
 
+    # Duration key lookup table: (key, unit_hint). Keys with explicit unit hints in
+    # their name (e.g. "cleanTimeMin") bypass the heuristic unit detection.
+    _DURATION_KEY_UNITS: tuple[tuple[str, str | None], ...] = (
+        ("cleanTimeMin", "min"),
+        ("cleanTimeMinute", "min"),
+        ("cleaningTimeMin", "min"),
+        ("cleanTimeSec", "sec"),
+        ("cleanTimeSecond", "sec"),
+        ("cleanTimeHour", "hour"),
+        ("cleanTimeHours", "hour"),
+        ("duration", None),
+        ("durationTime", None),
+        ("cleanTime", None),
+        ("cleaningTime", None),
+        ("runTime", None),
+        ("useTime", None),
+        ("lastTime", None),
+        ("timeUsed", None),
+    )
+
     records: list[dict[str, Any]] = []
     for item in rec_list:
         if not isinstance(item, dict):
@@ -413,11 +433,25 @@ def _parse_cleaning_history(raw: Any) -> tuple[int | None, float | None, list[di
         if mode_name is None and mode_id is not None:
             mode_name = str(mode_id)
 
-        duration_value = _deep_get(
-            item,
-            ("duration", "durationTime", "cleaningTime", "runTime", "useTime", "lastTime", "timeUsed"),
-        )
-        duration_min = _minutes_from_value(duration_value)
+        duration_min: float | None = None
+        for _dur_key, _unit_hint in _DURATION_KEY_UNITS:
+            _dur_val = item.get(_dur_key)
+            if _dur_val is None:
+                _dur_val = _deep_get(item, (_dur_key,))
+            if _dur_val is None:
+                continue
+            _num = _number(_dur_val)
+            if _num is None or _num < 0:
+                continue
+            if _unit_hint == "min":
+                duration_min = _num
+            elif _unit_hint == "sec":
+                duration_min = _num / 60.0
+            elif _unit_hint == "hour":
+                duration_min = _num * 60.0
+            else:
+                duration_min = _minutes_from_value(_dur_val)
+            break
         records.append(
             {
                 "mode_id": mode_id_int,
@@ -729,11 +763,19 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     except Exception as err:
                         _LOGGER.debug("Cleaning history fetch failed for %s: %s", sn, err)
                     if raw_hist is not None:
+                        _LOGGER.debug("Cleaning history raw for %s: %s", sn, raw_hist)
                         try:
                             total_count, total_hours, records = _parse_cleaning_history(raw_hist)
                         except Exception as err:
                             _LOGGER.debug("Cleaning history parse failed for %s: %s", sn, err)
                             total_count, total_hours, records = None, None, []
+                        _LOGGER.debug(
+                            "Cleaning history parsed for %s: count=%s hours=%s records=%d",
+                            sn,
+                            total_count,
+                            total_hours,
+                            len(records),
+                        )
                         self._history_cache[sn] = {
                             "total_count": total_count,
                             "total_hours": total_hours,
@@ -979,6 +1021,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 "warn_code",
                 "temp",
                 "solar_status",
+                "solarStatus",
                 "link",
                 "cleanPath",
                 "clean_path",
