@@ -126,6 +126,23 @@ async def _cleanup_legacy_entities(
             ent_reg.async_remove(ent.entity_id)
 
     # Remove legacy sensors by unique_id / entity_id patterns.
+    # v0.7.0 used separate _remaining/_percent/_last_replacement entities per
+    # consumable; later releases merged these into a single percent sensor per
+    # consumable type (roller_brush, micromesh_filter, caterpillar_tread, propeller).
+    _LEGACY_CONSUMABLE_SUFFIXES = (
+        "_roller_brush_remaining",
+        "_roller_brush_percent",
+        "_roller_brush_last_replacement",
+        "_micromesh_remaining",
+        "_micromesh_percent",
+        "_micromesh_last_replacement",
+        "_tread_remaining",
+        "_tread_percent",
+        "_tread_last_replacement",
+        "_propeller_remaining",
+        "_propeller_percent",
+        "_propeller_last_replacement",
+    )
     legacy_unique_ids: set[str] = set()
     for sn in serial_numbers:
         legacy_unique_ids.update(
@@ -136,6 +153,7 @@ async def _cleanup_legacy_entities(
                 f"{sn}_power",
             }
         )
+        legacy_unique_ids.update(f"{sn}{suffix}" for suffix in _LEGACY_CONSUMABLE_SUFFIXES)
 
     for ent in list(entries):
         if ent.domain != "sensor":

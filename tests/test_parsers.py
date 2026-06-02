@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+import pytest
+
 from custom_components.aiper.coordinator import _clean_path_value, _parse_cleaning_history, _parse_consumables
 from custom_components.aiper.state import (
     _centihours_to_hours,
@@ -67,6 +69,12 @@ def test_machine_solar_status_uses_observed_integer_payload() -> None:
     """Solar charging comes from MQTT Machine.solar_status as an integer flag."""
     assert normalize_machine_update({"model": "Surfer_S2"}, {"solar_status": 1})["solar_charging"].value is True
     assert normalize_machine_update({"model": "Surfer_S2"}, {"solar_status": 0})["solar_charging"].value is False
+
+
+def test_machine_solar_status_camel_case_alias() -> None:
+    """solarStatus (camelCase) is treated as an alias for solar_status."""
+    assert normalize_machine_update({"model": "Surfer_S2"}, {"solarStatus": 1})["solar_charging"].value is True
+    assert normalize_machine_update({"model": "Surfer_S2"}, {"solarStatus": 0})["solar_charging"].value is False
 
 
 def test_machine_status_update_coerces_status_without_losing_operating_status() -> None:
@@ -196,6 +204,41 @@ def test_w2_alarm_update_decodes_alarm_bitmask() -> None:
 
     assert state["warning"].value == "pH constant value, Battery low"
     assert state["warning"].attributes == {"code": 8448, "codes": [256, 8192], "time": "now"}
+
+
+def test_parse_cleaning_history_surfer_s2_clean_time_min_keys() -> None:
+    """Surfer S2 history records may use cleanTimeMin (minutes) as the duration key."""
+    total_count, total_hours, records = _parse_cleaning_history(
+        {
+            "code": "200",
+            "data": {
+                "totalCleanCount": 3,
+                "list": [
+                    {
+                        "mode": 1,
+                        "cleanDate": "2026-05-24",
+                        "cleanTimeMin": 45,
+                    },
+                    {
+                        "mode": 1,
+                        "cleanDate": "2026-05-25",
+                        "cleanTimeMin": 90,
+                    },
+                    {
+                        "mode": 1,
+                        "cleanDate": "2026-05-26",
+                        "cleanTimeMin": 60,
+                    },
+                ],
+            },
+        }
+    )
+
+    assert total_count == 3
+    assert records[0]["duration_min"] == 60.0
+    assert records[1]["duration_min"] == 90.0
+    # total_hours derived from record sum: (45+90+60)/60 = 3.25 h
+    assert total_hours == pytest.approx(3.25, rel=0.01)
 
 
 def test_parse_cleaning_history_restores_totals_and_last_record() -> None:

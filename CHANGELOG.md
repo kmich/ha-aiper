@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.4] - 2026-06-02
+
+### Fixed
+
+- **Surfer S2** — Last Cleaning Duration and Total Cleaning Time sensors now populate correctly for S2 devices whose history API uses `cleanTimeMin` (integer minutes) or related `cleanTimeMinute` / `cleaningTimeMin` / `cleanTimeSec` / `cleanTimeHour` keys. Unit detection is now key-name-aware so no ambiguous heuristic applies to those fields.
+- **Surfer S2** — Solar Charging binary sensor now updates from MQTT payloads that send `solarStatus` (camelCase) instead of `solar_status`.
+- **All devices** — Stale "Unavailable" consumable entities left over from v0.7.0 (Roller Brush Remaining, Roller Brush Remaining %, MicroMesh Filter Remaining, etc.) are automatically removed from the entity registry on startup. Those entities were replaced by consolidated percent sensors (Roller Brush, MicroMesh Filter, Caterpillar Tread) in a prior refactor; the old registrations persisted and caused the duplicate-entity appearance in the Diagnostics view.
+- Added debug-level logging of the raw and parsed cleaning history response to assist future diagnostics.
+
 ## [1.0.1] - 2026-05-26
 
 ### Fixed
