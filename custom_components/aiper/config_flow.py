@@ -163,24 +163,18 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> OptionsFlowHandler:
-        return OptionsFlowHandler(config_entry)
+        return OptionsFlowHandler()
 
 
 class OptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options for the integration."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        # Home Assistant exposes a read-only `config_entry` property on OptionsFlow.
-        # Internally, it reads from `_config_entry`, so set that attribute instead
-        # of attempting to assign to the property.
-        self._config_entry = config_entry
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> config_entries.ConfigFlowResult:
         """Manage the options."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        current = self._config_entry.options
+        current = self.config_entry.options
         schema = vol.Schema(
             {
                 vol.Optional(CONF_MQTT_DEBUG, default=current.get(CONF_MQTT_DEBUG, False)): bool,
