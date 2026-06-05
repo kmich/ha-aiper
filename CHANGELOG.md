@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.5] - 2026-06-05
+
+### Fixed
+
+- **HA 2026.6 compatibility** — `OptionsFlowHandler` no longer overrides `__init__` to store `config_entry`; it now uses the native `self.config_entry` property injected by the framework, eliminating a deprecated pattern that would break in a future HA release.
+
 ## [1.0.4] - 2026-06-02
 
 ### Fixed
