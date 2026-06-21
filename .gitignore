@@ -74,3 +74,7 @@ ha-config/**
 # Release artifacts
 *.zip
 *.tar.gz
+
+# Local Debug Artifacts
+probe-output/
+.claude/
