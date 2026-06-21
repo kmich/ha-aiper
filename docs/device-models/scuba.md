@@ -136,7 +136,14 @@ Run a Scuba contract verification process:
 uv run tools/aiper_probe.py snapshot --sn <sn>
 uv run tools/aiper_probe.py consumables --sn <sn>
 uv run tools/aiper_probe.py contract-verify --sn <sn> --allow-control
+uv run tools/aiper_probe.py guided --profile scuba-x1-features --sn <sn>
 ```
 
 The contract verifier still includes legacy clean-path REST and AT variants
 because those are the Scuba questions most likely to retire fallback code.
+Use the guided Scuba scan around app actions to capture current X1 behavior for:
+
+- cleaning mode and clean-path changes from the app
+- cleaning progress, remaining time, completion, and history clues
+- basket/filter state beyond long-term consumable wear
+- pause, return, charge, surface, park, or pickup state transitions

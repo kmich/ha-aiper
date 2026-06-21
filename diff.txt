@@ -1,0 +1,441 @@
+﻿diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 143debc..9b78d75 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,11 @@
+ # Changelog
+ 
++## Unreleased
++
++### Added
++
++- Added safe per-device buttons for manual state recovery: Refresh Shadow, Refresh Metadata, and disabled-by-default Clear Command State.
++
+ ## [1.0.5] - 2026-06-05
+ 
+ ### Fixed
+@@ -46,7 +52,7 @@
+ - **Scuba X1** έΑΦ charging state and mode entity no longer misbehave during charging cycles: status code 3 (`CHARGING`) is now consistently mapped to `charging = True` and the mode entity is suppressed while the cleaner is not running.
+ - `normalize_device_state` now initialises all HydroComm entity keys to stable `None` states at setup time so Home Assistant creates the entities before the first MQTT shadow report arrives.
+ 
+-## Unreleased
++## Earlier Development Notes
+ 
+ ### Added
+ 
+diff --git a/README.md b/README.md
+index a2386be..6127852 100644
+--- a/README.md
++++ b/README.md
+@@ -33,6 +33,7 @@ Corrected status code handling for the Scuba X1: charging state is now correctly
+ - Config flow setup from the Home Assistant UI.
+ - Live MQTT-backed device state with AWS IoT WebSocket transport.
+ - Model-capability profiles έΑΦ each device family only exposes the entities it actually supports.
++- Safe per-device buttons for refreshing MQTT shadow state, refreshing slow cloud metadata, and clearing local command-state tracking.
+ - HACS release ZIPs for normal installs and upgrades.
+ 
+ ## Installation
+@@ -66,6 +67,14 @@ The integration uses Aiper's cloud services. Credentials, tokens, serial numbers
+ 
+ The entities exposed depend on the device family and the capabilities Aiper reports for it.
+ 
++### Device Buttons
++
++| Entity | Type | Notes |
++|--------|------|-------|
++| Refresh Shadow | Button | Requests a current MQTT shadow snapshot; available only while MQTT is connected |
++| Refresh Metadata | Button | Forces the slow cloud metadata refresh now |
++| Clear Command State | Button | Diagnostic, disabled by default; clears local pending/last command tracking only |
++
+ ### Pool Cleaners (Scuba X1, Surfer S2, Shark)
+ 
+ | Entity | Type | Notes |
+diff --git a/custom_components/aiper/__init__.py b/custom_components/aiper/__init__.py
+index ecf7753..0635fe5 100644
+--- a/custom_components/aiper/__init__.py
++++ b/custom_components/aiper/__init__.py
+@@ -32,6 +32,7 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+ PLATFORMS: list[Platform] = [
+     Platform.SENSOR,
+     Platform.BINARY_SENSOR,
++    Platform.BUTTON,
+     Platform.SELECT,
+     Platform.SWITCH,
+ ]
+diff --git a/custom_components/aiper/coordinator.py b/custom_components/aiper/coordinator.py
+index baeb455..221f23d 100644
+--- a/custom_components/aiper/coordinator.py
++++ b/custom_components/aiper/coordinator.py
+@@ -1223,6 +1223,16 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
+             "last": dict(st.get("last", {})),
+         }
+ 
++    async def async_refresh_metadata(self, sn: str) -> None:
++        """Force a slow metadata refresh for one device."""
++        self._last_metadata_fetch.pop(sn, None)
++        await self.async_request_refresh()
++
++    def clear_command_state(self, sn: str) -> None:
++        """Clear local pending/last command tracking for one device."""
++        if self._command_state.pop(sn, None) is not None:
++            self.async_update_listeners()
++
+     def get_pending_command_target(self, sn: str, kind: str) -> Any:
+         """Return a non-expired pending command target, if present."""
+         self.expire_pending_commands(sn)
+diff --git a/custom_components/aiper/sensor.py b/custom_components/aiper/sensor.py
+index 7d99009..dfe653a 100644
+--- a/custom_components/aiper/sensor.py
++++ b/custom_components/aiper/sensor.py
+@@ -6,12 +6,8 @@ from collections.abc import Callable
+ from dataclasses import dataclass
+ from typing import Any
+ 
+-from homeassistant.components.sensor import (
+-    SensorDeviceClass,
+-    SensorEntity,
+-    SensorEntityDescription,
+-    SensorStateClass,
+-)
++from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
++from homeassistant.components.sensor.const import SensorDeviceClass, SensorStateClass
+ from homeassistant.config_entries import ConfigEntry
+ from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTemperature
+ from homeassistant.core import HomeAssistant
+diff --git a/custom_components/aiper/strings.json b/custom_components/aiper/strings.json
+index e882f20..aac3dd6 100644
+--- a/custom_components/aiper/strings.json
++++ b/custom_components/aiper/strings.json
+@@ -104,6 +104,17 @@
+       "linked": {
+         "name": "Device Linked"
+       }
++    },
++    "button": {
++      "refresh_shadow": {
++        "name": "Refresh Shadow"
++      },
++      "refresh_metadata": {
++        "name": "Refresh Metadata"
++      },
++      "clear_command_state": {
++        "name": "Clear Command State"
++      }
+     }
+   }
+ }
+diff --git a/custom_components/aiper/translations/en.json b/custom_components/aiper/translations/en.json
+index e882f20..aac3dd6 100644
+--- a/custom_components/aiper/translations/en.json
++++ b/custom_components/aiper/translations/en.json
+@@ -104,6 +104,17 @@
+       "linked": {
+         "name": "Device Linked"
+       }
++    },
++    "button": {
++      "refresh_shadow": {
++        "name": "Refresh Shadow"
++      },
++      "refresh_metadata": {
++        "name": "Refresh Metadata"
++      },
++      "clear_command_state": {
++        "name": "Clear Command State"
++      }
+     }
+   }
+ }
+diff --git a/docs/device-models/scuba.md b/docs/device-models/scuba.md
+index 9852ca9..da5573c 100644
+--- a/docs/device-models/scuba.md
++++ b/docs/device-models/scuba.md
+@@ -136,7 +136,14 @@ Run a Scuba contract verification process:
+ uv run tools/aiper_probe.py snapshot --sn <sn>
+ uv run tools/aiper_probe.py consumables --sn <sn>
+ uv run tools/aiper_probe.py contract-verify --sn <sn> --allow-control
++uv run tools/aiper_probe.py guided --profile scuba-x1-features --sn <sn>
+ ```
+ 
+ The contract verifier still includes legacy clean-path REST and AT variants
+ because those are the Scuba questions most likely to retire fallback code.
++Use the guided Scuba scan around app actions to capture current X1 behavior for:
++
++- cleaning mode and clean-path changes from the app
++- cleaning progress, remaining time, completion, and history clues
++- basket/filter state beyond long-term consumable wear
++- pause, return, charge, surface, park, or pickup state transitions
+diff --git a/docs/device-models/surfer.md b/docs/device-models/surfer.md
+index e01ac2b..8aab96a 100644
+--- a/docs/device-models/surfer.md
++++ b/docs/device-models/surfer.md
+@@ -184,4 +184,16 @@ Useful live probes, with credentials in environment variables:
+ uv run tools/aiper_probe.py consumables --region asia --sn <sn>
+ uv run tools/aiper_probe.py contract-verify --region asia --sn <sn> --allow-control
+ uv run tools/aiper_probe.py guided --region asia --profile surfer-s2 --sn <sn>
++uv run tools/aiper_probe.py guided --region asia --profile surfer-s2-features --sn <sn>
+ ```
++
++Use `surfer-s2-features` before adding wider Surfer controls. Its separate
++capture steps are intended to answer the next feature questions:
++
++- whether cleaning progress, remaining time, or cycle history is visible in
++  REST or MQTT state
++- whether basket/filter state exists separately from propeller maintenance
++- whether an app clean-path change creates reported-state evidence beyond the
++  already-verified persisted REST preference
++- whether pause, return, charge, park, or pickup app actions have distinct
++  device state transitions
+diff --git a/docs/discovery.md b/docs/discovery.md
+index b92897e..d1f1ff1 100644
+--- a/docs/discovery.md
++++ b/docs/discovery.md
+@@ -118,6 +118,28 @@ uv run tools/aiper_probe.py guided --profile surfer-s2 --sn T1B50900024
+ 
+ Available flows live in `tools/discovery_flows/`.
+ 
++Use the focused Surfer feature scan when looking for the next user-facing
++entities or controls:
++
++```bash
++uv run tools/aiper_probe.py guided --profile surfer-s2-features --sn T1B50900024
++```
++
++Use the Scuba X1 scan for current X1 contract and feature work:
++
++```bash
++uv run tools/aiper_probe.py guided --profile scuba-x1-features --sn T1B50900024
++```
++
++These flows separate the evidence questions that are easy to blur together in a
++single app-action capture:
++
++- cycle progress, duration, remaining-time, and history data
++- basket, filter, debris, and maintenance state
++- clean-path changes and the state that follows them
++- pause/stop behavior
++- return, charge, park, or pickup behavior when the app exposes it
++
+ Run the contract verifier when checking current REST bodies and legacy control
+ fallbacks:
+ 
+@@ -231,7 +253,8 @@ guesses.
+ 1. Run `snapshot` for the device.
+ 2. Run targeted probes for known protocol questions:
+    `consumables`, `at-format`, or `contract-verify`.
+-3. Run `guided --profile generic` or a more specific app-action flow
++3. Run `guided --profile generic`, `guided --profile scuba-x1-features`,
++   `guided --profile surfer-s2-features`, or a more specific app-action flow
+    when the missing evidence depends on official app workflows.
+ 4. During guided steps, use the official Aiper app to perform the requested
+    action while the probe captures REST/shadow/MQTT evidence.
+@@ -261,8 +284,12 @@ Useful questions to answer from the evidence:
+ - Which topics does it publish to?
+ - Which component carries online, battery, status, warnings, and run time?
+ - Does it report modes as numeric IDs, strings, or another structure?
++- Does it expose cycle progress, remaining time, history, or completion state?
++- Does it report basket/filter state separately from long-term consumables?
+ - Are start/stop/mode changes sent through REST, downChan, shadow desired state,
+   or multiple paths?
++- Do app return, pickup, park, pause, or charge actions produce distinct state
++  transitions or command traffic?
+ - Which fields change after official app actions?
+ 
+ ## Known Limitations
+diff --git a/hacs.json b/hacs.json
+index ad59f60..6eb637d 100644
+--- a/hacs.json
++++ b/hacs.json
+@@ -1,5 +1,5 @@
+ {
+-  "name": "Aiper Pool Cleaner",
++  "name": "Aiper Pool Cleaner & Water Quality Monitor",
+   "render_readme": true,
+   "zip_release": true,
+   "filename": "aiper.zip"
+diff --git a/tests/test_aiper_probe.py b/tests/test_aiper_probe.py
+index b065009..339a3d4 100644
+--- a/tests/test_aiper_probe.py
++++ b/tests/test_aiper_probe.py
+@@ -19,6 +19,37 @@ def test_load_discovery_flow() -> None:
+     assert flow["steps"][0]["id"] == "baseline_idle"
+ 
+ 
++def test_surfer_feature_scan_keeps_feature_questions_separate() -> None:
++    """The feature scan should capture future Surfer controls as distinct steps."""
++    flow = aiper_probe._load_discovery_flow("surfer-s2-features")
++    step_ids = [step["id"] for step in flow["steps"]]
++
++    assert flow["name"] == "Surfer S2 Feature Scan"
++    assert {
++        "cleaning_cycle_details",
++        "basket_or_filter_state",
++        "clean_path_change",
++        "pause_or_stop",
++        "return_or_pickup",
++    }.issubset(step_ids)
++
++
++def test_scuba_feature_scan_covers_mode_and_feature_questions() -> None:
++    """The X1 feature scan should capture current control and lifecycle evidence."""
++    flow = aiper_probe._load_discovery_flow("scuba-x1-features")
++    step_ids = [step["id"] for step in flow["steps"]]
++
++    assert flow["name"] == "Scuba X1 Feature Scan"
++    assert {
++        "cleaning_mode_change",
++        "clean_path_change",
++        "cleaning_cycle_details",
++        "basket_or_filter_state",
++        "pause_or_stop",
++        "return_or_pickup",
++    }.issubset(step_ids)
++
++
+ @pytest.mark.asyncio
+ async def test_at_command_requires_explicit_control_permission() -> None:
+     """The probe should not send control commands by default."""
+diff --git a/tests/test_api_session.py b/tests/test_api_session.py
+index b19a7b8..3abdaa5 100644
+--- a/tests/test_api_session.py
++++ b/tests/test_api_session.py
+@@ -123,7 +123,7 @@ async def test_persistent_session_conflict_enters_cooldown(monkeypatch: pytest.M
+ async def test_request_with_backoff_classifies_retryable_http_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+     """Repeated retryable HTTP responses should become a connection error."""
+     api = _api()
+-    api._async_session = type("Session", (), {"request": lambda *args, **kwargs: FakeResponse(503)})()
++    api._async_session = cast(Any, type("Session", (), {"request": lambda *args, **kwargs: FakeResponse(503)})())
+ 
+     async def no_wait() -> None:
+         return None
+@@ -146,7 +146,7 @@ async def test_request_with_backoff_classifies_connection_failures(monkeypatch:
+     def fail_request(*args, **kwargs):
+         raise aiohttp.ClientConnectionError("network down")
+ 
+-    api._async_session = type("Session", (), {"request": fail_request})()
++    api._async_session = cast(Any, type("Session", (), {"request": fail_request})())
+ 
+     async def no_wait() -> None:
+         return None
+diff --git a/tests/test_platform_entities.py b/tests/test_platform_entities.py
+index f437f67..dedfea2 100644
+--- a/tests/test_platform_entities.py
++++ b/tests/test_platform_entities.py
+@@ -11,7 +11,7 @@ from homeassistant.const import EntityCategory
+ from homeassistant.core import HomeAssistant
+ from pytest_homeassistant_custom_component.common import MockConfigEntry
+ 
+-from custom_components.aiper import binary_sensor, select, sensor, switch
++from custom_components.aiper import binary_sensor, button, select, sensor, switch
+ from custom_components.aiper.const import DOMAIN
+ from custom_components.aiper.controller import AiperDeviceController
+ from custom_components.aiper.profiles import derive_device_profile
+@@ -22,9 +22,17 @@ from custom_components.aiper.state import normalize_device_state
+ class FakeApi:
+     """Minimal API object needed by entity availability attributes."""
+ 
++    shadow_requested: list[str] | None = None
++
+     def is_mqtt_connected(self) -> bool:
+         return True
+ 
++    async def request_shadow(self, sn: str) -> bool:
++        if self.shadow_requested is None:
++            self.shadow_requested = []
++        self.shadow_requested.append(sn)
++        return True
++
+ 
+ @dataclass
+ class FakeCoordinator:
+@@ -34,10 +42,22 @@ class FakeCoordinator:
+     api: FakeApi
+     last_update_success: bool = True
+     pending_targets: dict[tuple[str, str], Any] | None = None
++    metadata_refreshed: list[str] | None = None
++    command_state_cleared: list[str] | None = None
+ 
+     def get_pending_command_target(self, sn: str, kind: str) -> Any:
+         return (self.pending_targets or {}).get((sn, kind))
+ 
++    async def async_refresh_metadata(self, sn: str) -> None:
++        if self.metadata_refreshed is None:
++            self.metadata_refreshed = []
++        self.metadata_refreshed.append(sn)
++
++    def clear_command_state(self, sn: str) -> None:
++        if self.command_state_cleared is None:
++            self.command_state_cleared = []
++        self.command_state_cleared.append(sn)
++
+ 
+ def _profiled_device(device: dict[str, Any]) -> dict[str, Any]:
+     profile = derive_device_profile(device)
+@@ -290,6 +310,41 @@ async def test_shark_entity_publication_keeps_consumables_unavailable_without_va
+     assert switch_entities == []
+ 
+ 
++@pytest.mark.asyncio
++async def test_button_entities_are_safe_device_actions(hass: HomeAssistant) -> None:
++    """Buttons expose safe refresh and local command-state actions."""
++    entry, coordinator = _hass_with_device(
++        hass,
++        {
++            "sn": "SN123",
++            "name": "Scuba X1",
++            "model": "Scuba_X1",
++            "battLevel": 80,
++            "machineStatus": 1,
++        },
++    )
++
++    button_entities = await _setup_platform(button, hass, entry)
++
++    assert _keys(button_entities) == {"refresh_shadow", "refresh_metadata", "clear_command_state"}
++    assert _unique_ids(button_entities) == {
++        "SN123_refresh_shadow",
++        "SN123_refresh_metadata",
++        "SN123_clear_command_state",
++    }
++    clear_command_state = _entity_by_key(button_entities, "clear_command_state")
++    assert clear_command_state.entity_description.entity_category == EntityCategory.DIAGNOSTIC
++    assert clear_command_state._attr_entity_registry_enabled_default is False
++
++    await _entity_by_key(button_entities, "refresh_shadow").async_press()
++    await _entity_by_key(button_entities, "refresh_metadata").async_press()
++    await clear_command_state.async_press()
++
++    assert coordinator.api.shadow_requested == ["SN123"]
++    assert coordinator.metadata_refreshed == ["SN123"]
++    assert coordinator.command_state_cleared == ["SN123"]
++
++
+ @pytest.mark.asyncio
+ async def test_hydrocomm_entity_publication_uses_monitor_capabilities(hass: HomeAssistant) -> None:
+     """HydroComm publishes water-quality monitor entities without cleaner controls."""
+diff --git a/tools/aiper_probe.py b/tools/aiper_probe.py
+index 7315177..301b7b9 100644
+--- a/tools/aiper_probe.py
++++ b/tools/aiper_probe.py
+@@ -124,7 +124,8 @@ def _credentials(args: argparse.Namespace) -> tuple[str, str, str]:
+ @asynccontextmanager
+ async def _make_api(args: argparse.Namespace) -> AsyncIterator[AiperApi]:
+     username, password, region = _credentials(args)
+-    async with aiohttp.ClientSession() as session:
++    connector = aiohttp.TCPConnector(resolver=aiohttp.ThreadedResolver())
++    async with aiohttp.ClientSession(connector=connector) as session:
+         api = AiperApi(username=username, password=password, region=region, async_session=session)
+         api.mqtt_debug = bool(getattr(args, "mqtt_debug", False))
+         if not await api.login():
+@@ -903,6 +904,11 @@ def build_parser() -> argparse.ArgumentParser:
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
++    if sys.platform == "win32":
++        # aiohttp can pick aiodns from the dev environment, and aiodns requires
++        # a selector loop on Windows.
++        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
++
+     parser = build_parser()
+     args = parser.parse_args(argv)
+     return int(asyncio.run(args.func(args)))

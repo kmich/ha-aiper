@@ -123,7 +123,7 @@ async def test_persistent_session_conflict_enters_cooldown(monkeypatch: pytest.M
 async def test_request_with_backoff_classifies_retryable_http_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     """Repeated retryable HTTP responses should become a connection error."""
     api = _api()
-    api._async_session = type("Session", (), {"request": lambda *args, **kwargs: FakeResponse(503)})()
+    api._async_session = cast(Any, type("Session", (), {"request": lambda *args, **kwargs: FakeResponse(503)})())
 
     async def no_wait() -> None:
         return None
@@ -146,7 +146,7 @@ async def test_request_with_backoff_classifies_connection_failures(monkeypatch: 
     def fail_request(*args, **kwargs):
         raise aiohttp.ClientConnectionError("network down")
 
-    api._async_session = type("Session", (), {"request": fail_request})()
+    api._async_session = cast(Any, type("Session", (), {"request": fail_request})())
 
     async def no_wait() -> None:
         return None

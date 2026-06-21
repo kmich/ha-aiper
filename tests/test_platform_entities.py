@@ -11,7 +11,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.aiper import binary_sensor, select, sensor, switch
+from custom_components.aiper import binary_sensor, button, select, sensor, switch
 from custom_components.aiper.const import DOMAIN
 from custom_components.aiper.controller import AiperDeviceController
 from custom_components.aiper.profiles import derive_device_profile
@@ -22,7 +22,15 @@ from custom_components.aiper.state import normalize_device_state
 class FakeApi:
     """Minimal API object needed by entity availability attributes."""
 
+    shadow_requested: list[str] | None = None
+
     def is_mqtt_connected(self) -> bool:
+        return True
+
+    async def request_shadow(self, sn: str) -> bool:
+        if self.shadow_requested is None:
+            self.shadow_requested = []
+        self.shadow_requested.append(sn)
         return True
 
 
@@ -34,9 +42,21 @@ class FakeCoordinator:
     api: FakeApi
     last_update_success: bool = True
     pending_targets: dict[tuple[str, str], Any] | None = None
+    metadata_refreshed: list[str] | None = None
+    command_state_cleared: list[str] | None = None
 
     def get_pending_command_target(self, sn: str, kind: str) -> Any:
         return (self.pending_targets or {}).get((sn, kind))
+
+    async def async_refresh_metadata(self, sn: str) -> None:
+        if self.metadata_refreshed is None:
+            self.metadata_refreshed = []
+        self.metadata_refreshed.append(sn)
+
+    def clear_command_state(self, sn: str) -> None:
+        if self.command_state_cleared is None:
+            self.command_state_cleared = []
+        self.command_state_cleared.append(sn)
 
 
 def _profiled_device(device: dict[str, Any]) -> dict[str, Any]:
@@ -288,6 +308,41 @@ async def test_shark_entity_publication_keeps_consumables_unavailable_without_va
     assert _entity_by_key(binary_entities, "running").is_on is True
     assert select_entities == []
     assert switch_entities == []
+
+
+@pytest.mark.asyncio
+async def test_button_entities_are_safe_device_actions(hass: HomeAssistant) -> None:
+    """Buttons expose safe refresh and local command-state actions."""
+    entry, coordinator = _hass_with_device(
+        hass,
+        {
+            "sn": "SN123",
+            "name": "Scuba X1",
+            "model": "Scuba_X1",
+            "battLevel": 80,
+            "machineStatus": 1,
+        },
+    )
+
+    button_entities = await _setup_platform(button, hass, entry)
+
+    assert _keys(button_entities) == {"refresh_shadow", "refresh_metadata", "clear_command_state"}
+    assert _unique_ids(button_entities) == {
+        "SN123_refresh_shadow",
+        "SN123_refresh_metadata",
+        "SN123_clear_command_state",
+    }
+    clear_command_state = _entity_by_key(button_entities, "clear_command_state")
+    assert clear_command_state.entity_description.entity_category == EntityCategory.DIAGNOSTIC
+    assert clear_command_state._attr_entity_registry_enabled_default is False
+
+    await _entity_by_key(button_entities, "refresh_shadow").async_press()
+    await _entity_by_key(button_entities, "refresh_metadata").async_press()
+    await clear_command_state.async_press()
+
+    assert coordinator.api.shadow_requested == ["SN123"]
+    assert coordinator.metadata_refreshed == ["SN123"]
+    assert coordinator.command_state_cleared == ["SN123"]
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.0] - 2026-06-21
+
+### Added
+
+- **Adoption & Trust Overhaul** — Complete rewrite of the integration README to clarify cloud dependencies and highlight supported models.
+- **Diagnostic Safety** — Added automated GitHub issue templates to guide users in submitting safe, redacted diagnostics for unsupported models.
+- **Entity UX** — Disabled low-value telemetry sensors by default to declutter new user dashboards.
+- **Manual State Recovery** — Added safe per-device buttons for Refresh Shadow, Refresh Metadata, and disabled-by-default Clear Command State.
+
 ## [1.0.5] - 2026-06-05
 
 ### Fixed
@@ -46,7 +55,7 @@
 - **Scuba X1** — charging state and mode entity no longer misbehave during charging cycles: status code 3 (`CHARGING`) is now consistently mapped to `charging = True` and the mode entity is suppressed while the cleaner is not running.
 - `normalize_device_state` now initialises all HydroComm entity keys to stable `None` states at setup time so Home Assistant creates the entities before the first MQTT shadow report arrives.
 
-## Unreleased
+## Earlier Development Notes
 
 ### Added
 

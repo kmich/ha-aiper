@@ -19,6 +19,37 @@ def test_load_discovery_flow() -> None:
     assert flow["steps"][0]["id"] == "baseline_idle"
 
 
+def test_surfer_feature_scan_keeps_feature_questions_separate() -> None:
+    """The feature scan should capture future Surfer controls as distinct steps."""
+    flow = aiper_probe._load_discovery_flow("surfer-s2-features")
+    step_ids = [step["id"] for step in flow["steps"]]
+
+    assert flow["name"] == "Surfer S2 Feature Scan"
+    assert {
+        "cleaning_cycle_details",
+        "basket_or_filter_state",
+        "clean_path_change",
+        "pause_or_stop",
+        "return_or_pickup",
+    }.issubset(step_ids)
+
+
+def test_scuba_feature_scan_covers_mode_and_feature_questions() -> None:
+    """The X1 feature scan should capture current control and lifecycle evidence."""
+    flow = aiper_probe._load_discovery_flow("scuba-x1-features")
+    step_ids = [step["id"] for step in flow["steps"]]
+
+    assert flow["name"] == "Scuba X1 Feature Scan"
+    assert {
+        "cleaning_mode_change",
+        "clean_path_change",
+        "cleaning_cycle_details",
+        "basket_or_filter_state",
+        "pause_or_stop",
+        "return_or_pickup",
+    }.issubset(step_ids)
+
+
 @pytest.mark.asyncio
 async def test_at_command_requires_explicit_control_permission() -> None:
     """The probe should not send control commands by default."""

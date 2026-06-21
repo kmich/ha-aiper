@@ -1,50 +1,46 @@
 name: Bug Report
-description: Report an issue with Aiper Pool Cleaner
-labels: ["bug"]
+description: Create a report to help us improve ha-aiper.
+labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting an Aiper issue. Please include diagnostics when
-        possible and redact credentials, tokens, MQTT payloads, and other
-        identifying device data before posting logs.
+        Thanks for taking the time to fill out this bug report! 
+        Please remember that this integration uses unofficial cloud APIs. "Session Conflict" errors (Error 402) happen if you open the official mobile app while Home Assistant is running. This is a known limitation.
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Aiper Device Model
+      description: e.g., Scuba X1, Surfer S2, HydroComm
+    validations:
+      required: true
   - type: input
     id: version
     attributes:
-      label: Integration version
-      placeholder: "e.g. 0.9.0"
+      label: Integration Version
+      description: e.g., v1.1.0
     validations:
       required: true
   - type: input
     id: ha_version
     attributes:
-      label: Home Assistant version
-      placeholder: "e.g. 2026.5.0"
-    validations:
-      required: true
-  - type: input
-    id: device_model
-    attributes:
-      label: Aiper device model
-      placeholder: "e.g. Surfer S2 or Scuba X1"
-    validations:
-      required: true
-  - type: textarea
-    id: description
-    attributes:
-      label: Describe the bug
-      placeholder: What happened? What did you expect?
+      label: Home Assistant Version
+      description: e.g., 2026.6.0
     validations:
       required: true
   - type: textarea
     id: logs
     attributes:
-      label: Relevant log output
-      description: Paste relevant Home Assistant logs after removing secrets and identifying payload data.
-      render: shell
-  - type: textarea
-    id: diagnostics
-    attributes:
-      label: Diagnostics JSON
-      description: Paste a redacted diagnostics export when it helps explain the issue.
-      render: json
+      label: Debug Logs or Diagnostics
+      description: |
+        CRITICAL: Please scrub your email, password, and AWS Access Keys before pasting.
+        Go to Settings > Devices & Services > Aiper > click your device > "Download diagnostics".
+    validations:
+      required: true

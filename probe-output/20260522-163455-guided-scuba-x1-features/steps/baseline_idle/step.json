@@ -1,0 +1,6 @@
+{
+  "completed_at": "2026-05-22T16:35:49+00:00",
+  "id": "baseline_idle",
+  "observe_seconds": 30,
+  "prompt": "Make sure the Scuba X1 is online and idle. Keep the Aiper app open on the device overview."
+}

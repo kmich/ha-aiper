@@ -6,12 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from homeassistant.components.sensor import (
-    SensorDeviceClass,
-    SensorEntity,
-    SensorEntityDescription,
-    SensorStateClass,
-)
+from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
+from homeassistant.components.sensor.const import SensorDeviceClass, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTemperature
 from homeassistant.core import HomeAssistant
@@ -105,7 +101,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         name="Total Cleanings",
         icon="mdi:counter",
         state_class=SensorStateClass.TOTAL_INCREASING,
-        enabled_default=True,
+        enabled_default=False,
         include_fn=_is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
@@ -114,7 +110,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         icon="mdi:timer-outline",
         native_unit_of_measurement="h",
         state_class=SensorStateClass.TOTAL_INCREASING,
-        enabled_default=True,
+        enabled_default=False,
         include_fn=_is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
@@ -130,7 +126,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         key="last_cleaning_mode",
         name="Last Cleaning Mode",
         icon="mdi:map-marker-path",
-        enabled_default=True,
+        enabled_default=False,
         include_fn=_is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
@@ -138,7 +134,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         name="Last Cleaning Start",
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
-        enabled_default=True,
+        enabled_default=False,
         include_fn=_is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
@@ -147,7 +143,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         icon="mdi:timer",
         native_unit_of_measurement="min",
         state_class=SensorStateClass.MEASUREMENT,
-        enabled_default=True,
+        enabled_default=False,
         include_fn=_is_not_hydrocomm,
     ),
     # --- HydroComm / HydroHub water quality (MQTT shadow) ---

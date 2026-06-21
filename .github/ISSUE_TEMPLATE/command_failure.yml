@@ -1,0 +1,33 @@
+name: Command Failure
+description: Use this if a command (like changing mode or start/stop) does not work.
+labels: [bug, command]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Aiper robots often reject commands if they are offline, charging, or asleep. Please ensure your robot is awake and not on the charger before submitting this issue.
+  - type: input
+    id: model
+    attributes:
+      label: Device Model
+      description: Which model are you trying to control?
+    validations:
+      required: true
+  - type: dropdown
+    id: command
+    attributes:
+      label: Which command failed?
+      options:
+        - Mode Change (Select)
+        - Start/Stop (Switch)
+        - Clean Path (Select)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug Logs
+      description: Please enable debug logging for the integration, attempt the command, and attach the logs here.
+    validations:
+      required: true

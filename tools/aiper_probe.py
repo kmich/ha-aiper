@@ -124,7 +124,8 @@ def _credentials(args: argparse.Namespace) -> tuple[str, str, str]:
 @asynccontextmanager
 async def _make_api(args: argparse.Namespace) -> AsyncIterator[AiperApi]:
     username, password, region = _credentials(args)
-    async with aiohttp.ClientSession() as session:
+    connector = aiohttp.TCPConnector(resolver=aiohttp.ThreadedResolver())
+    async with aiohttp.ClientSession(connector=connector) as session:
         api = AiperApi(username=username, password=password, region=region, async_session=session)
         api.mqtt_debug = bool(getattr(args, "mqtt_debug", False))
         if not await api.login():
@@ -903,6 +904,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if sys.platform == "win32":
+        # aiohttp can pick aiodns from the dev environment, and aiodns requires
+        # a selector loop on Windows.
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     parser = build_parser()
     args = parser.parse_args(argv)
     return int(asyncio.run(args.func(args)))

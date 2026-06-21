@@ -104,6 +104,17 @@
       "linked": {
         "name": "Device Linked"
       }
+    },
+    "button": {
+      "refresh_shadow": {
+        "name": "Refresh Shadow"
+      },
+      "refresh_metadata": {
+        "name": "Refresh Metadata"
+      },
+      "clear_command_state": {
+        "name": "Clear Command State"
+      }
     }
   }
 }

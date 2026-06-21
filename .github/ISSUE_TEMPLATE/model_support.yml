@@ -1,0 +1,27 @@
+name: Unsupported Model / Payload Request
+description: Use this if your Aiper model is not showing all entities, or is listed as Experimental.
+labels: [enhancement, new-device]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        To support a new model, we need the exact JSON payload your device sends to the cloud.
+  - type: input
+    id: model
+    attributes:
+      label: Aiper Device Model
+      description: What is the exact name of your device? (e.g., Scuba X1 Pro)
+    validations:
+      required: true
+  - type: textarea
+    id: payload
+    attributes:
+      label: Device Diagnostics Payload
+      description: |
+        1. Go to Settings > Devices & Services > Aiper.
+        2. Click on your Device.
+        3. Click "Download diagnostics".
+        4. Paste the contents here.
+        CRITICAL: Ensure `email`, `password`, and AWS tokens are redacted (the diagnostic tool usually handles this, but please double check).
+    validations:
+      required: true

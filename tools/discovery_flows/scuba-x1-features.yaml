@@ -1,0 +1,57 @@
+name: Scuba X1 Feature Scan
+description: Guided capture for Scuba X1 feature candidates and current clean-path behavior.
+steps:
+  - id: baseline_idle
+    prompt: Make sure the Scuba X1 is online and idle. Keep the Aiper app open on the device overview.
+    capture:
+      rest: true
+      shadow: true
+      observe_seconds: 30
+  - id: cleaning_mode_change
+    prompt: Change the cleaning mode once in the Aiper app if the device is ready for that control.
+    capture:
+      rest: true
+      shadow: true
+      observe_seconds: 60
+  - id: clean_path_change
+    prompt: Change the clean-path preference once in the Aiper app if that control is available.
+    capture:
+      rest: true
+      shadow: true
+      observe_seconds: 60
+  - id: cleaning_start_and_progress
+    prompt: Start a cleaning run in the Aiper app. Leave any progress, duration, or end-time view visible.
+    capture:
+      rest: true
+      shadow: true
+      observe_seconds: 75
+  - id: cleaning_cycle_details
+    prompt: Inspect any cleaning progress, history, elapsed time, remaining time, or completion estimate shown in the app.
+    capture:
+      rest: true
+      shadow: true
+      observe_seconds: 45
+  - id: basket_or_filter_state
+    prompt: Inspect any basket, filter, debris, or maintenance state in the app. Do not reset maintenance during this step.
+    capture:
+      rest: true
+      shadow: true
+      observe_seconds: 45
+  - id: pause_or_stop
+    prompt: Use pause if the app exposes it; otherwise stop the cleaning run. Leave the app on the resulting state view.
+    capture:
+      rest: true
+      shadow: true
+      observe_seconds: 75
+  - id: return_or_pickup
+    prompt: If the app exposes return, charge, park, surface, or pickup control, trigger it now; otherwise continue without an action.
+    capture:
+      rest: true
+      shadow: true
+      observe_seconds: 75
+  - id: settle
+    prompt: Leave the device untouched so final REST and MQTT state can settle.
+    capture:
+      rest: true
+      shadow: true
+      observe_seconds: 60

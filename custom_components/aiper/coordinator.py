@@ -1223,6 +1223,16 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             "last": dict(st.get("last", {})),
         }
 
+    async def async_refresh_metadata(self, sn: str) -> None:
+        """Force a slow metadata refresh for one device."""
+        self._last_metadata_fetch.pop(sn, None)
+        await self.async_request_refresh()
+
+    def clear_command_state(self, sn: str) -> None:
+        """Clear local pending/last command tracking for one device."""
+        if self._command_state.pop(sn, None) is not None:
+            self.async_update_listeners()
+
     def get_pending_command_target(self, sn: str, kind: str) -> Any:
         """Return a non-expired pending command target, if present."""
         self.expire_pending_commands(sn)

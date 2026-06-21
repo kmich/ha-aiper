@@ -118,6 +118,28 @@ uv run tools/aiper_probe.py guided --profile surfer-s2 --sn T1B50900024
 
 Available flows live in `tools/discovery_flows/`.
 
+Use the focused Surfer feature scan when looking for the next user-facing
+entities or controls:
+
+```bash
+uv run tools/aiper_probe.py guided --profile surfer-s2-features --sn T1B50900024
+```
+
+Use the Scuba X1 scan for current X1 contract and feature work:
+
+```bash
+uv run tools/aiper_probe.py guided --profile scuba-x1-features --sn T1B50900024
+```
+
+These flows separate the evidence questions that are easy to blur together in a
+single app-action capture:
+
+- cycle progress, duration, remaining-time, and history data
+- basket, filter, debris, and maintenance state
+- clean-path changes and the state that follows them
+- pause/stop behavior
+- return, charge, park, or pickup behavior when the app exposes it
+
 Run the contract verifier when checking current REST bodies and legacy control
 fallbacks:
 
@@ -231,7 +253,8 @@ guesses.
 1. Run `snapshot` for the device.
 2. Run targeted probes for known protocol questions:
    `consumables`, `at-format`, or `contract-verify`.
-3. Run `guided --profile generic` or a more specific app-action flow
+3. Run `guided --profile generic`, `guided --profile scuba-x1-features`,
+   `guided --profile surfer-s2-features`, or a more specific app-action flow
    when the missing evidence depends on official app workflows.
 4. During guided steps, use the official Aiper app to perform the requested
    action while the probe captures REST/shadow/MQTT evidence.
@@ -261,8 +284,12 @@ Useful questions to answer from the evidence:
 - Which topics does it publish to?
 - Which component carries online, battery, status, warnings, and run time?
 - Does it report modes as numeric IDs, strings, or another structure?
+- Does it expose cycle progress, remaining time, history, or completion state?
+- Does it report basket/filter state separately from long-term consumables?
 - Are start/stop/mode changes sent through REST, downChan, shadow desired state,
   or multiple paths?
+- Do app return, pickup, park, pause, or charge actions produce distinct state
+  transitions or command traffic?
 - Which fields change after official app actions?
 
 ## Known Limitations

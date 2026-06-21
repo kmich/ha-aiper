@@ -184,4 +184,16 @@ Useful live probes, with credentials in environment variables:
 uv run tools/aiper_probe.py consumables --region asia --sn <sn>
 uv run tools/aiper_probe.py contract-verify --region asia --sn <sn> --allow-control
 uv run tools/aiper_probe.py guided --region asia --profile surfer-s2 --sn <sn>
+uv run tools/aiper_probe.py guided --region asia --profile surfer-s2-features --sn <sn>
 ```
+
+Use `surfer-s2-features` before adding wider Surfer controls. Its separate
+capture steps are intended to answer the next feature questions:
+
+- whether cleaning progress, remaining time, or cycle history is visible in
+  REST or MQTT state
+- whether basket/filter state exists separately from propeller maintenance
+- whether an app clean-path change creates reported-state evidence beyond the
+  already-verified persisted REST preference
+- whether pause, return, charge, park, or pickup app actions have distinct
+  device state transitions
