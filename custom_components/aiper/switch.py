@@ -5,37 +5,16 @@ from __future__ import annotations
 from contextlib import suppress
 
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import AiperConfigEntry
 from .const import DOMAIN
 from .controller import AiperDeviceController
 from .coordinator import AiperDataUpdateCoordinator
-from .profiles import Capability
-from .state import DeviceState, state_has_capability
-
-
-def _device_online(coordinator: AiperDataUpdateCoordinator, sn: str) -> bool | None:
-    dev = (coordinator.data or {}).get(sn)
-    if dev is None:
-        return None
-    try:
-        value = dev["online"].value
-    except KeyError:
-        return None
-    return value if isinstance(value, bool) else None
-
-
-def _device_name(dev: DeviceState, sn: str) -> str:
-    return str(dev["device_info"].value or sn)
-
-
-def _supports_running_control(dev: DeviceState) -> bool:
-    """Return whether the device supports simple on/off running control."""
-    return state_has_capability(dev, Capability.RUNNING_CONTROL)
+from .helpers import device_name, device_online, supports_running_control
 
 
 class AiperRunningSwitch(CoordinatorEntity[AiperDataUpdateCoordinator], SwitchEntity):
@@ -76,7 +55,7 @@ class AiperRunningSwitch(CoordinatorEntity[AiperDataUpdateCoordinator], SwitchEn
         if not self.coordinator.api.is_mqtt_connected():
             return False
 
-        online = _device_online(self.coordinator, self._sn)
+        online = device_online(self.coordinator, self._sn)
         return online is not False
 
     @property
@@ -92,7 +71,7 @@ class AiperRunningSwitch(CoordinatorEntity[AiperDataUpdateCoordinator], SwitchEn
         if not self.coordinator.api.is_mqtt_connected():
             raise HomeAssistantError("Aiper MQTT connection is not available; cannot send this command.")
 
-        online = _device_online(self.coordinator, self._sn)
+        online = device_online(self.coordinator, self._sn)
         if online is False:
             raise HomeAssistantError("Device is offline; controls are disabled.")
 
@@ -117,15 +96,15 @@ class AiperRunningSwitch(CoordinatorEntity[AiperDataUpdateCoordinator], SwitchEn
         await self._set_running(False)
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
+async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry, async_add_entities) -> None:
     """Set up switch entities from a config entry."""
-    coordinator: AiperDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    controller: AiperDeviceController = hass.data[DOMAIN][entry.entry_id]["controller"]
+    coordinator: AiperDataUpdateCoordinator = entry.runtime_data.coordinator
+    controller: AiperDeviceController = entry.runtime_data.controller
 
     entities: list[SwitchEntity] = []
     if coordinator.data:
         for sn, dev in coordinator.data.items():
-            if _supports_running_control(dev):
-                entities.append(AiperRunningSwitch(coordinator, controller, sn, _device_name(dev, sn)))
+            if supports_running_control(dev):
+                entities.append(AiperRunningSwitch(coordinator, controller, sn, device_name(dev, sn)))
 
     async_add_entities(entities)

@@ -1,3 +1,4 @@
+
 """Tests for the Aiper config flow helpers."""
 
 from __future__ import annotations
@@ -6,6 +7,7 @@ from collections.abc import Iterator
 from typing import Any, cast
 
 import pytest
+import pytest_homeassistant_custom_component.common
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
@@ -18,12 +20,18 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from custom_components.aiper import config_flow as aiper_config_flow
-from custom_components.aiper.api import AiperConnectionError, AiperResponseError
+from custom_components.aiper.api import (
+    AiperAuthenticationError,
+    AiperConnectionError,
+    AiperResponseError,
+    AiperSessionConflict,
+)
 from custom_components.aiper.config_flow import (
     CONF_REGION,
     CannotConnect,
     InvalidAuth,
     InvalidResponse,
+    SessionConflict,
     validate_input,
 )
 from custom_components.aiper.const import (
@@ -380,3 +388,225 @@ async def test_options_flow_defaults_and_updates(hass: HomeAssistant, aiper_flow
 
     assert result["type"] == "create_entry"
     assert result["data"] == user_input
+
+
+@pytest.mark.asyncio
+async def test_validate_input_session_conflict_raises(
+    hass: HomeAssistant,
+    fake_api: type[FakeAiperApi],
+) -> None:
+    fake_api.login_error = AiperSessionConflict("Conflict")
+    data = {
+        CONF_USERNAME: "user@example.com",
+        CONF_PASSWORD: "secret",
+        CONF_REGION: "eu",
+    }
+
+    with pytest.raises(SessionConflict):
+        await validate_input(hass, data)
+
+    assert FakeAiperApi.instances[0].disconnected is True
+
+
+@pytest.mark.asyncio
+async def test_user_step_session_conflict_returns_form_error(
+    hass: HomeAssistant,
+    aiper_flow_handler: None,
+    fake_api: type[FakeAiperApi],
+) -> None:
+    fake_api.login_error = AiperSessionConflict("conflict")
+    result = cast(
+        dict[str, Any],
+        await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={CONF_USERNAME: "u", CONF_PASSWORD: "p", CONF_REGION: "eu"},
+        ),
+    )
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "session_conflict"}
+
+
+
+
+@pytest.mark.asyncio
+async def test_reauth_step_session_conflict_returns_form_error(
+    hass: HomeAssistant,
+    fake_api: type[FakeAiperApi],
+    aiper_flow_handler: None,
+) -> None:
+    entry = pytest_homeassistant_custom_component.common.MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry-1",
+        unique_id="user@example.com",
+        data={CONF_USERNAME: "u", CONF_PASSWORD: "p", CONF_REGION: "eu"}
+    )
+    entry.add_to_hass(hass)
+
+    fake_api.login_error = AiperSessionConflict("conflict")
+    result = cast(
+        dict[str, Any],
+        await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id, "unique_id": entry.unique_id},
+            data=entry.data,
+        ),
+    )
+    result2 = cast(dict[str, Any], await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PASSWORD: "new"}))
+    assert result2["type"] == "form"
+    assert result2["errors"] == {"base": "session_conflict"}
+
+
+@pytest.mark.asyncio
+async def test_validate_input_auth_error_raises(
+    hass: HomeAssistant,
+    fake_api: type[FakeAiperApi],
+) -> None:
+    fake_api.login_error = AiperAuthenticationError("Auth failed")
+    data = {
+        CONF_USERNAME: "user@example.com",
+        CONF_PASSWORD: "secret",
+        CONF_REGION: "eu",
+    }
+    with pytest.raises(InvalidAuth):
+        await validate_input(hass, data)
+    assert FakeAiperApi.instances[0].disconnected is True
+
+@pytest.mark.asyncio
+async def test_validate_input_unknown_error_raises(
+    hass: HomeAssistant,
+    fake_api: type[FakeAiperApi],
+) -> None:
+    fake_api.login_error = Exception("wtf")
+    data = {
+        CONF_USERNAME: "user@example.com",
+        CONF_PASSWORD: "secret",
+        CONF_REGION: "eu",
+    }
+    with pytest.raises(Exception):  # noqa: B017
+        await validate_input(hass, data)
+
+@pytest.mark.asyncio
+async def test_reauth_step_unknown_returns_form_error(
+    hass: HomeAssistant,
+    aiper_flow_handler: None,
+    fake_api: type[FakeAiperApi],
+) -> None:
+    entry = pytest_homeassistant_custom_component.common.MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry-1",
+        unique_id="user@example.com",
+        data={CONF_USERNAME: "u", CONF_PASSWORD: "p", CONF_REGION: "eu"}
+    )
+    entry.add_to_hass(hass)
+
+    fake_api.login_error = Exception("conflict")
+    result = cast(
+        dict[str, Any],
+        await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id, "unique_id": entry.unique_id},
+            data=entry.data,
+        ),
+    )
+    result2 = cast(dict[str, Any], await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PASSWORD: "new"}))
+    assert result2["type"] == "form"
+    assert result2["errors"] == {"base": "unknown"}
+
+@pytest.mark.asyncio
+async def test_reauth_step_invalid_auth_returns_form_error(
+    hass: HomeAssistant,
+    aiper_flow_handler: None,
+    fake_api: type[FakeAiperApi],
+) -> None:
+    entry = pytest_homeassistant_custom_component.common.MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry-1",
+        unique_id="user@example.com",
+        data={CONF_USERNAME: "u", CONF_PASSWORD: "p", CONF_REGION: "eu"}
+    )
+    entry.add_to_hass(hass)
+
+    fake_api.login_error = AiperAuthenticationError("auth")
+    result = cast(
+        dict[str, Any],
+        await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id, "unique_id": entry.unique_id},
+            data=entry.data,
+        ),
+    )
+    result2 = cast(dict[str, Any], await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PASSWORD: "new"}))
+    assert result2["type"] == "form"
+    assert result2["errors"] == {"base": "invalid_auth"}
+
+@pytest.mark.asyncio
+async def test_reauth_step_cannot_connect_returns_form_error(
+    hass: HomeAssistant,
+    aiper_flow_handler: None,
+    fake_api: type[FakeAiperApi],
+) -> None:
+    entry = pytest_homeassistant_custom_component.common.MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry-1",
+        unique_id="user@example.com",
+        data={CONF_USERNAME: "u", CONF_PASSWORD: "p", CONF_REGION: "eu"}
+    )
+    entry.add_to_hass(hass)
+
+    fake_api.login_error = AiperConnectionError("conn")
+    result = cast(
+        dict[str, Any],
+        await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id, "unique_id": entry.unique_id},
+            data=entry.data,
+        ),
+    )
+    result2 = cast(dict[str, Any], await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PASSWORD: "new"}))
+    assert result2["type"] == "form"
+    assert result2["errors"] == {"base": "cannot_connect"}
+
+@pytest.mark.asyncio
+async def test_reauth_step_invalid_response_returns_form_error(
+    hass: HomeAssistant,
+    aiper_flow_handler: None,
+    fake_api: type[FakeAiperApi],
+) -> None:
+    entry = pytest_homeassistant_custom_component.common.MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry-1",
+        unique_id="user@example.com",
+        data={CONF_USERNAME: "u", CONF_PASSWORD: "p", CONF_REGION: "eu"}
+    )
+    entry.add_to_hass(hass)
+
+    fake_api.login_error = AiperResponseError("resp")
+    result = cast(
+        dict[str, Any],
+        await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id, "unique_id": entry.unique_id},
+            data=entry.data,
+        ),
+    )
+    result2 = cast(dict[str, Any], await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PASSWORD: "new"}))
+    assert result2["type"] == "form"
+    assert result2["errors"] == {"base": "invalid_response"}
+@pytest.mark.asyncio
+async def test_user_step_unknown_exception_returns_form_error(
+    hass: HomeAssistant,
+    aiper_flow_handler: None,
+    fake_api: type[FakeAiperApi],
+) -> None:
+    fake_api.login_error = Exception("wtf")
+    result = cast(
+        dict[str, Any],
+        await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={CONF_USERNAME: "u", CONF_PASSWORD: "p", CONF_REGION: "eu"},
+        ),
+    )
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "unknown"}

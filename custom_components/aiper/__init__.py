@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -37,21 +39,31 @@ PLATFORMS: list[Platform] = [
     Platform.SWITCH,
 ]
 
+@dataclass
+class AiperRuntimeData:
+    """Data for the Aiper integration."""
+
+    api: AiperApi
+    controller: AiperDeviceController
+    coordinator: AiperDataUpdateCoordinator
+    unsub_keepalive: Callable[[], None] | None = None
+
+type AiperConfigEntry = ConfigEntry[AiperRuntimeData]
+
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     """Set up the Aiper integration."""
-    hass.data.setdefault(DOMAIN, {})
     return True
 
 
-async def _options_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def _options_update_listener(hass: HomeAssistant, entry: AiperConfigEntry) -> None:
     """Handle options updates by reloading the config entry."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_remove_config_entry_device(
     hass: HomeAssistant,
-    config_entry: ConfigEntry,
+    config_entry: AiperConfigEntry,
     device_entry: dr.DeviceEntry,
 ) -> bool:
     """Allow HA to remove stale Aiper device-registry entries."""
@@ -61,8 +73,7 @@ async def async_remove_config_entry_device(
         if domain == DOMAIN and isinstance(identifier, str)
     }
 
-    runtime_data = hass.data.get(DOMAIN, {}).get(config_entry.entry_id) or {}
-    coordinator = runtime_data.get("coordinator")
+    coordinator = config_entry.runtime_data.coordinator if hasattr(config_entry, "runtime_data") else None
     current_serials: set[str] = set()
     coordinator_data = getattr(coordinator, "data", None)
     if isinstance(coordinator_data, dict):
@@ -91,7 +102,7 @@ async def async_remove_config_entry_device(
 
 async def _cleanup_legacy_entities(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: AiperConfigEntry,
     serial_numbers: list[str],
 ) -> None:
     """Remove legacy entities that are no longer provided.
@@ -167,7 +178,7 @@ async def _cleanup_legacy_entities(
 
 async def _migrate_select_unique_ids(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: AiperConfigEntry,
     serial_numbers: list[str],
 ) -> None:
     """Normalize select unique_ids and remove duplicates deterministically.
@@ -304,9 +315,8 @@ async def _migrate_select_unique_ids(
             ent_reg.async_remove(extra.entity_id)
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> bool:
     """Set up Aiper from a config entry."""
-    hass.data.setdefault(DOMAIN, {})
 
     api = AiperApi(
         username=entry.data["username"],
@@ -346,12 +356,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await _migrate_select_unique_ids(hass, entry, serials)
     await _cleanup_legacy_entities(hass, entry, serials)
 
-    hass.data[DOMAIN][entry.entry_id] = {
-        "api": api,
-        "controller": AiperDeviceController(api, coordinator),
-        "coordinator": coordinator,
-        "_unsub_keepalive": unsub_keepalive,
-    }
+    entry.runtime_data = AiperRuntimeData(
+        api=api,
+        controller=AiperDeviceController(api, coordinator),
+        coordinator=coordinator,
+        unsub_keepalive=unsub_keepalive,
+    )
 
     entry.async_on_unload(entry.add_update_listener(_options_update_listener))
 
@@ -388,15 +398,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        data = hass.data[DOMAIN].pop(entry.entry_id)
-        unsub = data.get("_unsub_keepalive")
-        if callable(unsub):
+        if entry.runtime_data.unsub_keepalive:
             with suppress(Exception):
-                unsub()
-        api: AiperApi = data["api"]
-        await api.disconnect()
+                entry.runtime_data.unsub_keepalive()
+        await entry.runtime_data.api.disconnect()
 
     return unload_ok

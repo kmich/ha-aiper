@@ -1,0 +1,121 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Aiper 账户",
+        "description": "输入您的 Aiper 应用凭据。",
+        "data": {
+          "username": "邮箱 / 手机号",
+          "password": "密码",
+          "region": "地区"
+        }
+      },
+      "reauth_confirm": {
+        "title": "重新验证 Aiper",
+        "description": "请重新输入 {username} 的密码。",
+        "data": {
+          "password": "密码"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "无法连接到 Aiper 服务器",
+      "invalid_auth": "用户名或密码无效",
+      "invalid_response": "Aiper 返回了意外的响应",
+      "unknown": "发生意外错误",
+      "session_conflict": "您的 Aiper 账户在其他会话（如手机 App）中处于活动状态。请稍候几分钟再试。"
+    },
+    "abort": {
+      "already_configured": "该账户已配置"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Aiper 选项",
+        "description": "MQTT 诊断和云元数据刷新的可选设置。",
+        "data": {
+          "metadata_refresh_hours": "云元数据刷新间隔（小时）",
+          "mqtt_debug": "MQTT 调试日志"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": {
+        "name": "电池"
+      },
+      "status": {
+        "name": "状态"
+      },
+      "temperature": {
+        "name": "水温"
+      },
+      "warning": {
+        "name": "警告"
+      },
+      "ph": {
+        "name": "pH值"
+      },
+      "orp": {
+        "name": "ORP"
+      },
+      "ec": {
+        "name": "EC"
+      },
+      "tds": {
+        "name": "TDS"
+      },
+      "rcl": {
+        "name": "游离氯"
+      },
+      "water_quality_score": {
+        "name": "水质得分"
+      },
+      "water_quality_result": {
+        "name": "水质结果"
+      },
+      "charge_type": {
+        "name": "充电类型"
+      }
+    },
+    "binary_sensor": {
+      "online": {
+        "name": "在线"
+      },
+      "in_water": {
+        "name": "在水中"
+      },
+      "warning": {
+        "name": "警告活动"
+      },
+      "solar_charging": {
+        "name": "太阳能充电"
+      },
+      "charging": {
+        "name": "充电中"
+      },
+      "bluetooth": {
+        "name": "蓝牙"
+      },
+      "wifi": {
+        "name": "已连接WiFi"
+      },
+      "linked": {
+        "name": "设备已链接"
+      }
+    },
+    "button": {
+      "refresh_shadow": {
+        "name": "刷新影子"
+      },
+      "refresh_metadata": {
+        "name": "刷新元数据"
+      },
+      "clear_command_state": {
+        "name": "清除命令状态"
+      }
+    }
+  }
+}

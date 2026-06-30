@@ -14,12 +14,12 @@ from contextlib import suppress
 from typing import Any
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import AiperConfigEntry
 from .const import (
     CLEAN_PATH_MAP,
     DOMAIN,
@@ -27,44 +27,9 @@ from .const import (
 )
 from .controller import AiperDeviceController
 from .coordinator import AiperDataUpdateCoordinator
-from .profiles import Capability
-from .state import DeviceState, state_has_capability
+from .helpers import coerce_int, device_online, supports_clean_path, supports_mode_control
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def _coerce_int(val: Any) -> int | None:
-    if isinstance(val, bool) or val is None:
-        return None
-    if isinstance(val, int):
-        return val
-    if isinstance(val, float):
-        return int(val)
-    if isinstance(val, str) and val.strip().lstrip("-").isdigit():
-        return int(val.strip())
-    return None
-
-
-def _device_online(coordinator: AiperDataUpdateCoordinator, sn: str) -> bool | None:
-    """Return the normalized online state for control availability."""
-    dev = (coordinator.data or {}).get(sn)
-    if dev is None:
-        return None
-    try:
-        value = dev["online"].value
-    except KeyError:
-        return None
-    return value if isinstance(value, bool) else None
-
-
-def _supports_clean_path(dev: DeviceState) -> bool:
-    """Return whether the clean-path control should be exposed."""
-    return state_has_capability(dev, Capability.CLEAN_PATH)
-
-
-def _supports_mode_control(dev: DeviceState) -> bool:
-    """Return whether mode control has enough evidence to be exposed."""
-    return state_has_capability(dev, Capability.CLEANING_MODE_SELECT)
 
 
 class AiperSelectBase(CoordinatorEntity[AiperDataUpdateCoordinator], SelectEntity):
@@ -120,14 +85,14 @@ class AiperSelectBase(CoordinatorEntity[AiperDataUpdateCoordinator], SelectEntit
         if not self._requires_online:
             return True
 
-        online = _device_online(self.coordinator, self._sn)
+        online = device_online(self.coordinator, self._sn)
         return online is not False
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         attrs: dict[str, Any] = {}
 
-        online = _device_online(self.coordinator, self._sn)
+        online = device_online(self.coordinator, self._sn)
         if online is not None:
             attrs["device_online"] = online
 
@@ -136,7 +101,7 @@ class AiperSelectBase(CoordinatorEntity[AiperDataUpdateCoordinator], SelectEntit
         return attrs
 
     def _raise_if_control_blocked(self) -> None:
-        online = _device_online(self.coordinator, self._sn)
+        online = device_online(self.coordinator, self._sn)
 
         if self._requires_mqtt and not self.coordinator.api.is_mqtt_connected():
             raise HomeAssistantError("Aiper MQTT connection is not available; cannot send this command.")
@@ -200,11 +165,11 @@ class AiperCleaningModeSelect(AiperSelectBase):
 
     def _get_current_mode_id(self) -> int | None:
         dev = (self.coordinator.data or {})[self._sn]
-        reported = _coerce_int(dev["mode"].attributes.get("code"))
+        reported = coerce_int(dev["mode"].attributes.get("code"))
         if reported in self._mode_ids:
             return reported
 
-        pending = _coerce_int(self.coordinator.get_pending_command_target(self._sn, "mode"))
+        pending = coerce_int(self.coordinator.get_pending_command_target(self._sn, "mode"))
         if pending in self._mode_ids:
             return pending
 
@@ -309,7 +274,7 @@ class AiperCleanPathSelect(AiperSelectBase):
             raise HomeAssistantError(f"Invalid clean path: {option}")
 
         dev = (self.coordinator.data or {})[self._sn]
-        cur = _coerce_int(dev["clean_path"].attributes.get("code"))
+        cur = coerce_int(dev["clean_path"].attributes.get("code"))
         if cur is not None and cur == path_id:
             return
 
@@ -333,10 +298,10 @@ class AiperCleanPathSelect(AiperSelectBase):
         await self.coordinator.async_request_refresh()
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
+async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry, async_add_entities) -> None:
     """Set up select entities from a config entry."""
-    coordinator: AiperDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    controller: AiperDeviceController = hass.data[DOMAIN][entry.entry_id]["controller"]
+    coordinator: AiperDataUpdateCoordinator = entry.runtime_data.coordinator
+    controller: AiperDeviceController = entry.runtime_data.controller
 
     entities: list[SelectEntity] = []
     if coordinator.data:
@@ -352,9 +317,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             if not isinstance(mode_map, dict):
                 mode_map = {mode_id: mode_label(mode_id) for mode_id in supported_ids}
 
-            if _supports_clean_path(dev):
+            if supports_clean_path(dev):
                 entities.append(AiperCleanPathSelect(coordinator, controller, sn, name))
-            if _supports_mode_control(dev):
+            if supports_mode_control(dev):
                 entities.append(AiperCleaningModeSelect(coordinator, controller, sn, name, supported_ids, mode_map))
 
     async_add_entities(entities)

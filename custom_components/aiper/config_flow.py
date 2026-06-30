@@ -65,7 +65,10 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     except AiperAuthenticationError as err:
         _LOGGER.debug("Aiper rejected login credentials during validation: %s", err)
         raise InvalidAuth from err
-    except (AiperConnectionError, AiperSessionConflict) as err:
+    except AiperSessionConflict as err:
+        _LOGGER.error("Aiper session conflict: %s", err)
+        raise SessionConflict from err
+    except AiperConnectionError as err:
         _LOGGER.error("Aiper connection validation failed: %s", err)
         raise CannotConnect from err
     except AiperResponseError as err:
@@ -96,6 +99,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
+            except SessionConflict:
+                errors["base"] = "session_conflict"
             except InvalidResponse:
                 errors["base"] = "invalid_response"
             except Exception:
@@ -140,6 +145,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
+            except SessionConflict:
+                errors["base"] = "session_conflict"
             except InvalidResponse:
                 errors["base"] = "invalid_response"
             except Exception:
@@ -201,3 +208,7 @@ class InvalidAuth(HomeAssistantError):
 
 class InvalidResponse(HomeAssistantError):
     """Error to indicate Aiper returned an unexpected response."""
+
+
+class SessionConflict(HomeAssistantError):
+    """Error to indicate Aiper account is active in another session."""

@@ -1,0 +1,121 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Aiper Account",
+        "description": "Voer uw Aiper app inloggegevens in.",
+        "data": {
+          "username": "E-mail / Telefoon",
+          "password": "Wachtwoord",
+          "region": "Regio"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Aiper opnieuw authenticeren",
+        "description": "Voer uw wachtwoord voor {username} opnieuw in.",
+        "data": {
+          "password": "Wachtwoord"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kan geen verbinding maken met Aiper-servers",
+      "invalid_auth": "Ongeldige gebruikersnaam of wachtwoord",
+      "invalid_response": "Aiper gaf een onverwachte reactie",
+      "unknown": "Er is een onverwachte fout opgetreden",
+      "session_conflict": "Uw Aiper-account is actief in een andere sessie (bijv. de mobiele app). Wacht een paar minuten en probeer het opnieuw."
+    },
+    "abort": {
+      "already_configured": "Dit account is al geconfigureerd"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Aiper Opties",
+        "description": "Optionele instellingen voor MQTT-diagnose en cloud-metadata-vernieuwing.",
+        "data": {
+          "metadata_refresh_hours": "Interval voor vernieuwen van cloud-metadata (uren)",
+          "mqtt_debug": "MQTT-foutopsporing inloggen"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": {
+        "name": "Batterij"
+      },
+      "status": {
+        "name": "Status"
+      },
+      "temperature": {
+        "name": "Watertemperatuur"
+      },
+      "warning": {
+        "name": "Waarschuwing"
+      },
+      "ph": {
+        "name": "pH"
+      },
+      "orp": {
+        "name": "ORP"
+      },
+      "ec": {
+        "name": "EC"
+      },
+      "tds": {
+        "name": "TDS"
+      },
+      "rcl": {
+        "name": "Vrij Chloor"
+      },
+      "water_quality_score": {
+        "name": "Waterkwaliteitsscore"
+      },
+      "water_quality_result": {
+        "name": "Waterkwaliteit Resultaat"
+      },
+      "charge_type": {
+        "name": "Laadtype"
+      }
+    },
+    "binary_sensor": {
+      "online": {
+        "name": "Online"
+      },
+      "in_water": {
+        "name": "In het water"
+      },
+      "warning": {
+        "name": "Waarschuwing Actief"
+      },
+      "solar_charging": {
+        "name": "Zonne-oplading"
+      },
+      "charging": {
+        "name": "Opladen"
+      },
+      "bluetooth": {
+        "name": "Bluetooth"
+      },
+      "wifi": {
+        "name": "WiFi Verbonden"
+      },
+      "linked": {
+        "name": "Apparaat Gekoppeld"
+      }
+    },
+    "button": {
+      "refresh_shadow": {
+        "name": "Schaduw Vernieuwen"
+      },
+      "refresh_metadata": {
+        "name": "Metadata Vernieuwen"
+      },
+      "clear_command_state": {
+        "name": "Commando-status Wissen"
+      }
+    }
+  }
+}

@@ -21,6 +21,7 @@
     "error": {
       "cannot_connect": "Failed to connect to Aiper servers",
       "invalid_auth": "Invalid username or password",
+      "session_conflict": "Your Aiper account is active in another session (e.g., the mobile app). Please wait a few minutes and try again.",
       "invalid_response": "Aiper returned an unexpected response",
       "unknown": "An unexpected error occurred"
     },

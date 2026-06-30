@@ -8,29 +8,18 @@ from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
 from homeassistant.components.sensor.const import SensorDeviceClass, SensorStateClass
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import AiperConfigEntry
 from .const import DOMAIN
 from .coordinator import AiperDataUpdateCoordinator
-from .profiles import Capability, DeviceFamily
+from .helpers import is_not_hydrocomm, is_not_surfer_or_hydrocomm
+from .profiles import Capability
 from .state import DeviceState, state_has_capability
-
-
-def _is_not_surfer(device: DeviceState) -> bool:
-    return device["device_family"].value != DeviceFamily.SURFER.value
-
-
-def _is_not_hydrocomm(device: DeviceState) -> bool:
-    return device["device_family"].value != DeviceFamily.HYDROCOMM.value
-
-
-def _is_not_surfer_or_hydrocomm(device: DeviceState) -> bool:
-    return _is_not_surfer(device) and _is_not_hydrocomm(device)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -64,7 +53,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         key="mode",
         name="Mode",
         icon="mdi:robot-vacuum",
-        include_fn=_is_not_hydrocomm,
+        include_fn=is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="temperature",
@@ -93,7 +82,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         icon="mdi:timer",
         native_unit_of_measurement="h",
         state_class=SensorStateClass.MEASUREMENT,
-        include_fn=_is_not_hydrocomm,
+        include_fn=is_not_hydrocomm,
     ),
     # --- Cleaning history (REST) ---
     AiperSensorEntityDescription(
@@ -102,7 +91,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         icon="mdi:counter",
         state_class=SensorStateClass.TOTAL_INCREASING,
         enabled_default=False,
-        include_fn=_is_not_hydrocomm,
+        include_fn=is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="total_cleaning_time",
@@ -111,7 +100,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement="h",
         state_class=SensorStateClass.TOTAL_INCREASING,
         enabled_default=False,
-        include_fn=_is_not_hydrocomm,
+        include_fn=is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="total_cleaning_time_minutes",
@@ -120,14 +109,14 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement="min",
         state_class=SensorStateClass.TOTAL_INCREASING,
         enabled_default=False,
-        include_fn=_is_not_hydrocomm,
+        include_fn=is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="last_cleaning_mode",
         name="Last Cleaning Mode",
         icon="mdi:map-marker-path",
         enabled_default=False,
-        include_fn=_is_not_hydrocomm,
+        include_fn=is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="last_cleaning_start",
@@ -135,7 +124,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
         enabled_default=False,
-        include_fn=_is_not_hydrocomm,
+        include_fn=is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="last_cleaning_duration",
@@ -144,7 +133,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement="min",
         state_class=SensorStateClass.MEASUREMENT,
         enabled_default=False,
-        include_fn=_is_not_hydrocomm,
+        include_fn=is_not_hydrocomm,
     ),
     # --- HydroComm / HydroHub water quality (MQTT shadow) ---
     AiperSensorEntityDescription(
@@ -345,7 +334,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         state_class=SensorStateClass.MEASUREMENT,
-        include_fn=_is_not_surfer_or_hydrocomm,
+        include_fn=is_not_surfer_or_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="micromesh_filter",
@@ -354,7 +343,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         state_class=SensorStateClass.MEASUREMENT,
-        include_fn=_is_not_hydrocomm,
+        include_fn=is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="caterpillar_tread",
@@ -363,7 +352,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         state_class=SensorStateClass.MEASUREMENT,
-        include_fn=_is_not_surfer_or_hydrocomm,
+        include_fn=is_not_surfer_or_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="propeller",
@@ -372,18 +361,18 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         state_class=SensorStateClass.MEASUREMENT,
-        include_fn=_is_not_hydrocomm,
+        include_fn=is_not_hydrocomm,
     ),
 )
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: AiperConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Aiper sensors based on a config entry."""
-    coordinator: AiperDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    coordinator: AiperDataUpdateCoordinator = entry.runtime_data.coordinator
 
     entities: list[AiperSensor] = []
 

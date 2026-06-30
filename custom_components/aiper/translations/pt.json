@@ -1,0 +1,121 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Conta Aiper",
+        "description": "Introduza as suas credenciais da app Aiper.",
+        "data": {
+          "username": "Email / Telefone",
+          "password": "Palavra-passe",
+          "region": "Região"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reautenticar Aiper",
+        "description": "Por favor, reinsira a sua palavra-passe para {username}.",
+        "data": {
+          "password": "Palavra-passe"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Falha ao conectar aos servidores da Aiper",
+      "invalid_auth": "Nome de utilizador ou palavra-passe inválidos",
+      "invalid_response": "Aiper retornou uma resposta inesperada",
+      "unknown": "Ocorreu um erro inesperado",
+      "session_conflict": "A sua conta Aiper está ativa noutra sessão (ex: app móvel). Por favor aguarde alguns minutos e tente novamente."
+    },
+    "abort": {
+      "already_configured": "Esta conta já está configurada"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opções Aiper",
+        "description": "Definições opcionais para diagnósticos MQTT e atualização de metadados na nuvem.",
+        "data": {
+          "metadata_refresh_hours": "Intervalo de atualização de metadados na nuvem (horas)",
+          "mqtt_debug": "Registo de depuração MQTT"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": {
+        "name": "Bateria"
+      },
+      "status": {
+        "name": "Estado"
+      },
+      "temperature": {
+        "name": "Temperatura da Água"
+      },
+      "warning": {
+        "name": "Aviso"
+      },
+      "ph": {
+        "name": "pH"
+      },
+      "orp": {
+        "name": "ORP"
+      },
+      "ec": {
+        "name": "EC"
+      },
+      "tds": {
+        "name": "TDS"
+      },
+      "rcl": {
+        "name": "Cloro Livre"
+      },
+      "water_quality_score": {
+        "name": "Pontuação de Qualidade da Água"
+      },
+      "water_quality_result": {
+        "name": "Resultado de Qualidade da Água"
+      },
+      "charge_type": {
+        "name": "Tipo de Carga"
+      }
+    },
+    "binary_sensor": {
+      "online": {
+        "name": "Online"
+      },
+      "in_water": {
+        "name": "Na Água"
+      },
+      "warning": {
+        "name": "Aviso Ativo"
+      },
+      "solar_charging": {
+        "name": "Carregamento Solar"
+      },
+      "charging": {
+        "name": "A carregar"
+      },
+      "bluetooth": {
+        "name": "Bluetooth"
+      },
+      "wifi": {
+        "name": "WiFi Ligado"
+      },
+      "linked": {
+        "name": "Dispositivo Vinculado"
+      }
+    },
+    "button": {
+      "refresh_shadow": {
+        "name": "Atualizar Sombra"
+      },
+      "refresh_metadata": {
+        "name": "Atualizar Metadados"
+      },
+      "clear_command_state": {
+        "name": "Limpar Estado do Comando"
+      }
+    }
+  }
+}

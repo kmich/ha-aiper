@@ -1,0 +1,121 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Учетная запись Aiper",
+        "description": "Введите учетные данные приложения Aiper.",
+        "data": {
+          "username": "Email / Телефон",
+          "password": "Пароль",
+          "region": "Регион"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Повторная аутентификация Aiper",
+        "description": "Пожалуйста, введите пароль для {username} снова.",
+        "data": {
+          "password": "Пароль"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Не удалось подключиться к серверам Aiper",
+      "invalid_auth": "Неверное имя пользователя или пароль",
+      "invalid_response": "Aiper вернул неожиданный ответ",
+      "unknown": "Произошла непредвиденная ошибка",
+      "session_conflict": "Ваш аккаунт Aiper активен в другой сессии (например, в мобильном приложении). Подождите несколько минут и попробуйте снова."
+    },
+    "abort": {
+      "already_configured": "Эта учетная запись уже настроена"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Опции Aiper",
+        "description": "Дополнительные настройки для диагностики MQTT и обновления метаданных облака.",
+        "data": {
+          "metadata_refresh_hours": "Интервал обновления метаданных облака (часы)",
+          "mqtt_debug": "Отладка MQTT"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": {
+        "name": "Батарея"
+      },
+      "status": {
+        "name": "Статус"
+      },
+      "temperature": {
+        "name": "Температура воды"
+      },
+      "warning": {
+        "name": "Предупреждение"
+      },
+      "ph": {
+        "name": "pH"
+      },
+      "orp": {
+        "name": "ОВП"
+      },
+      "ec": {
+        "name": "EC"
+      },
+      "tds": {
+        "name": "TDS"
+      },
+      "rcl": {
+        "name": "Свободный хлор"
+      },
+      "water_quality_score": {
+        "name": "Оценка качества воды"
+      },
+      "water_quality_result": {
+        "name": "Результат качества воды"
+      },
+      "charge_type": {
+        "name": "Тип зарядки"
+      }
+    },
+    "binary_sensor": {
+      "online": {
+        "name": "В сети"
+      },
+      "in_water": {
+        "name": "В воде"
+      },
+      "warning": {
+        "name": "Предупреждение активно"
+      },
+      "solar_charging": {
+        "name": "Солнечная зарядка"
+      },
+      "charging": {
+        "name": "Заряжается"
+      },
+      "bluetooth": {
+        "name": "Bluetooth"
+      },
+      "wifi": {
+        "name": "WiFi подключен"
+      },
+      "linked": {
+        "name": "Устройство связано"
+      }
+    },
+    "button": {
+      "refresh_shadow": {
+        "name": "Обновить тень"
+      },
+      "refresh_metadata": {
+        "name": "Обновить метаданные"
+      },
+      "clear_command_state": {
+        "name": "Очистить статус команды"
+      }
+    }
+  }
+}

@@ -14,6 +14,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.aiper import binary_sensor, button, select, sensor, switch
 from custom_components.aiper.const import DOMAIN
 from custom_components.aiper.controller import AiperDeviceController
+from custom_components.aiper import AiperRuntimeData, AiperConfigEntry
 from custom_components.aiper.profiles import derive_device_profile
 from custom_components.aiper.state import normalize_device_state
 
@@ -70,14 +71,16 @@ def _profiled_device(device: dict[str, Any]) -> dict[str, Any]:
 def _hass_with_device(hass: HomeAssistant, device: dict[str, Any]) -> tuple[ConfigEntry, FakeCoordinator]:
     coordinator = FakeCoordinator(data={"SN123": _profiled_device(device)}, api=FakeApi())
     entry = MockConfigEntry(domain=DOMAIN, entry_id="entry-1", options={})
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
-        "controller": AiperDeviceController(cast(Any, coordinator.api), cast(Any, coordinator)),
-        "coordinator": coordinator,
-    }
+    entry.runtime_data = AiperRuntimeData(
+        api=coordinator.api,
+        controller=AiperDeviceController(cast(Any, coordinator.api), cast(Any, coordinator)),
+        coordinator=coordinator,
+        unsub_keepalive=None
+    )
     return entry, coordinator
 
 
-async def _setup_platform(platform_module, hass: HomeAssistant, entry: ConfigEntry) -> list[Any]:
+async def _setup_platform(platform_module, hass: HomeAssistant, entry: AiperConfigEntry) -> list[Any]:
     entities: list[Any] = []
 
     def add_entities(new_entities) -> None:

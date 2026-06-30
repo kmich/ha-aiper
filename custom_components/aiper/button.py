@@ -6,7 +6,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -14,6 +13,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import AiperConfigEntry
 from .const import DOMAIN
 from .controller import AiperDeviceController
 from .coordinator import AiperDataUpdateCoordinator
@@ -73,12 +73,12 @@ BUTTON_DESCRIPTIONS: tuple[AiperButtonEntityDescription, ...] = (
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: AiperConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Aiper buttons based on a config entry."""
-    coordinator: AiperDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    controller: AiperDeviceController = hass.data[DOMAIN][entry.entry_id]["controller"]
+    coordinator: AiperDataUpdateCoordinator = entry.runtime_data.coordinator
+    controller: AiperDeviceController = entry.runtime_data.controller
 
     entities: list[ButtonEntity] = []
     if coordinator.data:

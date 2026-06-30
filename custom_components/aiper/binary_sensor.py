@@ -10,20 +10,17 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import AiperConfigEntry
 from .const import DOMAIN
 from .coordinator import AiperDataUpdateCoordinator
-from .profiles import Capability, DeviceFamily
+from .helpers import is_not_hydrocomm
+from .profiles import Capability
 from .state import DeviceState, state_has_capability
-
-
-def _is_not_hydrocomm(device: DeviceState) -> bool:
-    return device["device_family"].value != DeviceFamily.HYDROCOMM.value
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -54,7 +51,7 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[AiperBinarySensorEntityDescription, ...] = (
         name="Running",
         icon="mdi:run",
         device_class=BinarySensorDeviceClass.RUNNING,
-        include_fn=_is_not_hydrocomm,
+        include_fn=is_not_hydrocomm,
     ),
     AiperBinarySensorEntityDescription(
         key="charging",
@@ -97,11 +94,11 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[AiperBinarySensorEntityDescription, ...] = (
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: AiperConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Aiper binary sensors based on a config entry."""
-    coordinator: AiperDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    coordinator: AiperDataUpdateCoordinator = entry.runtime_data.coordinator
 
     entities: list[AiperBinarySensor] = []
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from custom_components.aiper.select import _supports_clean_path, _supports_mode_control
+from custom_components.aiper.helpers import supports_clean_path, supports_mode_control
 from custom_components.aiper.state import normalize_device_state
 
 
@@ -17,8 +17,8 @@ def test_surfer_s2_does_not_expose_select_controls() -> None:
         }
     )
 
-    assert _supports_clean_path(dev) is False
-    assert _supports_mode_control(dev) is False
+    assert supports_clean_path(dev) is False
+    assert supports_mode_control(dev) is False
 
 
 def test_mode_capability_allows_mode_control() -> None:
@@ -32,4 +32,4 @@ def test_mode_capability_allows_mode_control() -> None:
         }
     )
 
-    assert _supports_mode_control(dev) is True
+    assert supports_mode_control(dev) is True
