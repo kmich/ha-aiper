@@ -32,6 +32,8 @@ View live status, battery, charging state, cleaning modes, consumables, and wate
 
 ### Configuration
 
+[![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=aiper)
+
 1. Open **Settings -> Devices & Services**.
 2. Select **Add Integration**.
 3. Search for **Aiper Pool Cleaner**.

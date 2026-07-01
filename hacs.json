@@ -1,6 +1,6 @@
 {
   "name": "Aiper Pool Cleaner & Water Quality Monitor",
-  "render_readme": true,
+  "render_readme": false,
   "zip_release": true,
   "filename": "aiper.zip"
 }
