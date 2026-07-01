@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.2.0] - 2026-07-01
+
+### Added
+- Added HA 2024.4+ Compliance using `ConfigEntry` typing (`AiperRuntimeData`).
+- Added HACS `info.md` with "My Home Assistant" badges for simplified installation.
+- Expanded device support: Surfer S2, HydroComm Pro, W2 Series, and Shark are now marked as officially Verified.
+
+### Changed
+- Refactored all platform files to remove legacy `hass.data` dictionary access.
+- Updated integration Quality Scale to Silver tier compliance.
+
+### Fixed
+- Fixed Config Flow handling with proper error class routing (`CannotConnect`, `InvalidAuth`, `SessionConflict`, `InvalidResponse`).
+- Fixed helper function `EntityState` object evaluation bugs leading to missing entities and incorrect device names.
+
 ## [1.1.0] - 2026-06-21
 
 ### Added
