@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.2] - 2026-07-01
+
+### Fixed
+- Fixed HACS release notes display timing issue by ensuring the GitHub Release is fully built before clients poll the new tag.
+
 ## [1.2.1] - 2026-07-01
 
 ### Fixed
