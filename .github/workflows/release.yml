@@ -92,10 +92,11 @@ jobs:
           pattern = re.compile(rf"## \[{re.escape(tag)}\].*?\n(.*?)(?=\n## \[|\Z)", re.DOTALL)
           match = pattern.search(content)
           with open("RELEASE_NOTES.md", "w", encoding="utf-8") as out:
+              out.write(f"# Release v{tag}\n\n")
               if match:
                   out.write(match.group(1).strip())
               else:
-                  out.write(f"Release {tag}")
+                  out.write(f"Release v{tag}")
           PY
 
       - name: Create Release
@@ -106,3 +107,4 @@ jobs:
           prerelease: false
           files: aiper.zip
           body_path: RELEASE_NOTES.md
+          generate_release_notes: true

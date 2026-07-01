@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.3] - 2026-07-01
+
+### Fixed
+- Fixed HACS release notes layout bug by combining custom release notes with GitHub's `generate_release_notes` format.
+
 ## [1.2.2] - 2026-07-01
 
 ### Fixed
