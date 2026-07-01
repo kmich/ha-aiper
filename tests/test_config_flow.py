@@ -1,4 +1,3 @@
-
 """Tests for the Aiper config flow helpers."""
 
 from __future__ import annotations
@@ -427,8 +426,6 @@ async def test_user_step_session_conflict_returns_form_error(
     assert result["errors"] == {"base": "session_conflict"}
 
 
-
-
 @pytest.mark.asyncio
 async def test_reauth_step_session_conflict_returns_form_error(
     hass: HomeAssistant,
@@ -439,7 +436,7 @@ async def test_reauth_step_session_conflict_returns_form_error(
         domain=DOMAIN,
         entry_id="entry-1",
         unique_id="user@example.com",
-        data={CONF_USERNAME: "u", CONF_PASSWORD: "p", CONF_REGION: "eu"}
+        data={CONF_USERNAME: "u", CONF_PASSWORD: "p", CONF_REGION: "eu"},
     )
     entry.add_to_hass(hass)
 
@@ -452,7 +449,9 @@ async def test_reauth_step_session_conflict_returns_form_error(
             data=entry.data,
         ),
     )
-    result2 = cast(dict[str, Any], await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PASSWORD: "new"}))
+    result2 = cast(
+        dict[str, Any], await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PASSWORD: "new"})
+    )
     assert result2["type"] == "form"
     assert result2["errors"] == {"base": "session_conflict"}
 
@@ -472,6 +471,7 @@ async def test_validate_input_auth_error_raises(
         await validate_input(hass, data)
     assert FakeAiperApi.instances[0].disconnected is True
 
+
 @pytest.mark.asyncio
 async def test_validate_input_unknown_error_raises(
     hass: HomeAssistant,
@@ -486,6 +486,7 @@ async def test_validate_input_unknown_error_raises(
     with pytest.raises(Exception):  # noqa: B017
         await validate_input(hass, data)
 
+
 @pytest.mark.asyncio
 async def test_reauth_step_unknown_returns_form_error(
     hass: HomeAssistant,
@@ -496,7 +497,7 @@ async def test_reauth_step_unknown_returns_form_error(
         domain=DOMAIN,
         entry_id="entry-1",
         unique_id="user@example.com",
-        data={CONF_USERNAME: "u", CONF_PASSWORD: "p", CONF_REGION: "eu"}
+        data={CONF_USERNAME: "u", CONF_PASSWORD: "p", CONF_REGION: "eu"},
     )
     entry.add_to_hass(hass)
 
@@ -509,9 +510,12 @@ async def test_reauth_step_unknown_returns_form_error(
             data=entry.data,
         ),
     )
-    result2 = cast(dict[str, Any], await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PASSWORD: "new"}))
+    result2 = cast(
+        dict[str, Any], await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PASSWORD: "new"})
+    )
     assert result2["type"] == "form"
     assert result2["errors"] == {"base": "unknown"}
+
 
 @pytest.mark.asyncio
 async def test_reauth_step_invalid_auth_returns_form_error(
@@ -523,7 +527,7 @@ async def test_reauth_step_invalid_auth_returns_form_error(
         domain=DOMAIN,
         entry_id="entry-1",
         unique_id="user@example.com",
-        data={CONF_USERNAME: "u", CONF_PASSWORD: "p", CONF_REGION: "eu"}
+        data={CONF_USERNAME: "u", CONF_PASSWORD: "p", CONF_REGION: "eu"},
     )
     entry.add_to_hass(hass)
 
@@ -536,9 +540,12 @@ async def test_reauth_step_invalid_auth_returns_form_error(
             data=entry.data,
         ),
     )
-    result2 = cast(dict[str, Any], await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PASSWORD: "new"}))
+    result2 = cast(
+        dict[str, Any], await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PASSWORD: "new"})
+    )
     assert result2["type"] == "form"
     assert result2["errors"] == {"base": "invalid_auth"}
+
 
 @pytest.mark.asyncio
 async def test_reauth_step_cannot_connect_returns_form_error(
@@ -550,7 +557,7 @@ async def test_reauth_step_cannot_connect_returns_form_error(
         domain=DOMAIN,
         entry_id="entry-1",
         unique_id="user@example.com",
-        data={CONF_USERNAME: "u", CONF_PASSWORD: "p", CONF_REGION: "eu"}
+        data={CONF_USERNAME: "u", CONF_PASSWORD: "p", CONF_REGION: "eu"},
     )
     entry.add_to_hass(hass)
 
@@ -563,9 +570,12 @@ async def test_reauth_step_cannot_connect_returns_form_error(
             data=entry.data,
         ),
     )
-    result2 = cast(dict[str, Any], await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PASSWORD: "new"}))
+    result2 = cast(
+        dict[str, Any], await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PASSWORD: "new"})
+    )
     assert result2["type"] == "form"
     assert result2["errors"] == {"base": "cannot_connect"}
+
 
 @pytest.mark.asyncio
 async def test_reauth_step_invalid_response_returns_form_error(
@@ -577,7 +587,7 @@ async def test_reauth_step_invalid_response_returns_form_error(
         domain=DOMAIN,
         entry_id="entry-1",
         unique_id="user@example.com",
-        data={CONF_USERNAME: "u", CONF_PASSWORD: "p", CONF_REGION: "eu"}
+        data={CONF_USERNAME: "u", CONF_PASSWORD: "p", CONF_REGION: "eu"},
     )
     entry.add_to_hass(hass)
 
@@ -590,9 +600,13 @@ async def test_reauth_step_invalid_response_returns_form_error(
             data=entry.data,
         ),
     )
-    result2 = cast(dict[str, Any], await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PASSWORD: "new"}))
+    result2 = cast(
+        dict[str, Any], await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PASSWORD: "new"})
+    )
     assert result2["type"] == "form"
     assert result2["errors"] == {"base": "invalid_response"}
+
+
 @pytest.mark.asyncio
 async def test_user_step_unknown_exception_returns_form_error(
     hass: HomeAssistant,

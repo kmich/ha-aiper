@@ -39,6 +39,7 @@ PLATFORMS: list[Platform] = [
     Platform.SWITCH,
 ]
 
+
 @dataclass
 class AiperRuntimeData:
     """Data for the Aiper integration."""
@@ -47,6 +48,7 @@ class AiperRuntimeData:
     controller: AiperDeviceController
     coordinator: AiperDataUpdateCoordinator
     unsub_keepalive: Callable[[], None] | None = None
+
 
 type AiperConfigEntry = ConfigEntry[AiperRuntimeData]
 

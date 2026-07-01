@@ -74,7 +74,9 @@ def _hass_with_device(hass: HomeAssistant, device: dict[str, Any]) -> tuple[Conf
     entry = MockConfigEntry(domain=DOMAIN, entry_id="entry-1", options={})
     entry.runtime_data = AiperRuntimeData(
         api=cast(AiperApi, coordinator.api),
-        controller=cast(AiperDeviceController, AiperDeviceController(cast(Any, coordinator.api), cast(Any, coordinator))),
+        controller=cast(
+            AiperDeviceController, AiperDeviceController(cast(Any, coordinator.api), cast(Any, coordinator))
+        ),
         coordinator=cast(AiperDataUpdateCoordinator, coordinator),
         unsub_keepalive=None,
     )
