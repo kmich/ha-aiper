@@ -20,7 +20,7 @@ I've been working on an unofficial integration for **Aiper** pool devices, and i
 
 ### Supported Devices
 * **Verified:** Scuba X1, HydroComm
-* **Experimental:** Surfer S2, Shark, W2 Series
+* **Verified:** Surfer S2, Shark, W2 Series
 
 ### Installation
 It's available via HACS as a custom repository.

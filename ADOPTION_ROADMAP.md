@@ -21,7 +21,7 @@
 - **Action:** Actively monitor GitHub issues, guiding users to use the new diagnostic tools and issue templates.
 
 ## Phase 4: Model Coverage Expansion (1 Month)
-**Goal:** Transition "Experimental" models to "Verified".
+**Goal:** Transition remaining unsupported models to "Verified".
 - **Action:** Collect user-submitted `aiper_probe.py` payloads for Surfer S2 and Shark.
 - **Action:** Fix edge cases in HydroComm alarm decoding and Scuba X1 charging states based on user logs.
 - **Action:** Update the `docs/product/model-coverage.md` matrix as devices are proven stable.

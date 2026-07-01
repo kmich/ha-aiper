@@ -14,8 +14,8 @@ View live status, battery, charging state, cleaning modes, consumables, and wate
 | Cleaners | Monitors |
 |---|---|
 | ✅ **Scuba X1** | ✅ **HydroComm** |
-| ⚠️ **Surfer S2** (Experimental) | ⚠️ **HydroComm Pro / W2 Series** (Experimental) |
-| ⚠️ **Shark** (Experimental) | |
+| ✅ **Surfer S2** | ✅ **HydroComm Pro / W2 Series** |
+| ✅ **Shark** | |
 
 *(Don't see your model? We need your help! Check our [Diagnostics Guide](docs/support/diagnostics-and-troubleshooting.md) for how to submit a payload.)*
 

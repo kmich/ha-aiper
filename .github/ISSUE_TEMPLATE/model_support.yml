@@ -1,5 +1,5 @@
 name: Unsupported Model / Payload Request
-description: Use this if your Aiper model is not showing all entities, or is listed as Experimental.
+description: Use this if your Aiper model is not showing all entities, or is listed as Unsupported.
 labels: [enhancement, new-device]
 body:
   - type: markdown
