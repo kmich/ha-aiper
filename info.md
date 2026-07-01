@@ -20,3 +20,18 @@ Alternatively, follow these manual steps:
 
 ---
 > For advanced troubleshooting, security practices, and Lovelace dashboard examples, please view the full documentation on [GitHub](https://github.com/kmich/ha-aiper).
+
+
+## Recent Changes
+
+### v1.2.3
+- Fixed HACS release notes layout bug by combining custom release notes with GitHub format.
+
+### v1.2.2
+- Fixed HACS release notes display timing issue by ensuring the GitHub Release is fully built before clients poll the new tag.
+
+### v1.2.1
+- Fixed empty release notes in HACS UI by dynamically injecting CHANGELOG.md snippets into GitHub Release tags.
+
+### v1.2.0
+- Removed "Experimental" tags from documentation. All supported models (Surfer S2, Shark, etc.) are now marked as "Verified".
