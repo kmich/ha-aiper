@@ -81,6 +81,23 @@ jobs:
             --exclude '*$py.class'
           cd ../..
 
+      - name: Extract Release Notes
+        id: extract_notes
+        run: |
+          python - <<'PY'
+          import re, sys
+          tag = "${{ steps.version.outputs.VERSION }}"
+          with open("CHANGELOG.md", "r", encoding="utf-8") as f:
+              content = f.read()
+          pattern = re.compile(rf"## \[{re.escape(tag)}\].*?\n(.*?)(?=\n## \[|\Z)", re.DOTALL)
+          match = pattern.search(content)
+          with open("RELEASE_NOTES.md", "w", encoding="utf-8") as out:
+              if match:
+                  out.write(match.group(1).strip())
+              else:
+                  out.write(f"Release {tag}")
+          PY
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -88,4 +105,4 @@ jobs:
           draft: false
           prerelease: false
           files: aiper.zip
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
