@@ -11,10 +11,11 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.aiper import binary_sensor, button, select, sensor, switch
+from custom_components.aiper import AiperConfigEntry, AiperRuntimeData, binary_sensor, button, select, sensor, switch
+from custom_components.aiper.api import AiperApi
 from custom_components.aiper.const import DOMAIN
 from custom_components.aiper.controller import AiperDeviceController
-from custom_components.aiper import AiperRuntimeData, AiperConfigEntry
+from custom_components.aiper.coordinator import AiperDataUpdateCoordinator
 from custom_components.aiper.profiles import derive_device_profile
 from custom_components.aiper.state import normalize_device_state
 
@@ -72,10 +73,10 @@ def _hass_with_device(hass: HomeAssistant, device: dict[str, Any]) -> tuple[Conf
     coordinator = FakeCoordinator(data={"SN123": _profiled_device(device)}, api=FakeApi())
     entry = MockConfigEntry(domain=DOMAIN, entry_id="entry-1", options={})
     entry.runtime_data = AiperRuntimeData(
-        api=coordinator.api,
-        controller=AiperDeviceController(cast(Any, coordinator.api), cast(Any, coordinator)),
-        coordinator=coordinator,
-        unsub_keepalive=None
+        api=cast(AiperApi, coordinator.api),
+        controller=cast(AiperDeviceController, AiperDeviceController(cast(Any, coordinator.api), cast(Any, coordinator))),
+        coordinator=cast(AiperDataUpdateCoordinator, coordinator),
+        unsub_keepalive=None,
     )
     return entry, coordinator
 

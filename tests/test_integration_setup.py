@@ -15,8 +15,10 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components import aiper
-from custom_components.aiper.const import DOMAIN
 from custom_components.aiper import AiperRuntimeData
+from custom_components.aiper.api import AiperApi
+from custom_components.aiper.const import DOMAIN
+from custom_components.aiper.controller import AiperDeviceController
 from custom_components.aiper.coordinator import AiperDataUpdateCoordinator
 
 
@@ -124,9 +126,9 @@ async def test_remove_config_entry_device_rejects_active_device(hass: HomeAssist
     entry = MockConfigEntry(domain=DOMAIN, entry_id="entry-1")
     entry.add_to_hass(hass)
     entry.runtime_data = AiperRuntimeData(
-        api=FakeApi(username="test", password="test", region="asia"),
-        controller=None,
-        coordinator=SimpleNamespace(data={"SN123": {}}),
+        api=cast(AiperApi, FakeApi(username="test", password="test", region="asia")),
+        controller=cast(AiperDeviceController, None),
+        coordinator=cast(AiperDataUpdateCoordinator, SimpleNamespace(data={"SN123": {}})),
         unsub_keepalive=None,
     )
 
