@@ -138,6 +138,9 @@ async def test_setup_survives_mqtt_failure(
     async def fake_forward_entry_setups(entry: ConfigEntry, platforms: list[Platform]) -> None:
         forwarded.append((entry, platforms))
 
+    async def fake_unload_platforms(entry: ConfigEntry, platforms: list[Platform]) -> bool:
+        return True
+
     class NoMqttApi(FakeApi):
         async def connect_mqtt(self) -> bool:
             self.connect_called = True
@@ -146,6 +149,7 @@ async def test_setup_survives_mqtt_failure(
     monkeypatch.setattr(aiper, "AiperApi", NoMqttApi)
     monkeypatch.setattr(aiper, "async_get_clientsession", lambda hass: "session")
     monkeypatch.setattr(hass.config_entries, "async_forward_entry_setups", fake_forward_entry_setups)
+    monkeypatch.setattr(hass.config_entries, "async_unload_platforms", fake_unload_platforms)
 
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -164,6 +168,9 @@ async def test_setup_survives_mqtt_failure(
     assert forwarded == [(cast(ConfigEntry, entry), aiper.PLATFORMS)]
     assert entry.runtime_data.coordinator.data is not None
 
+    # Cancel the coordinator's refresh timer so it doesn't outlive the test.
+    assert await aiper.async_unload_entry(hass, cast(ConfigEntry, entry)) is True
+
 
 @pytest.mark.asyncio
 async def test_setup_forwards_platforms_exactly_once_when_mqtt_raises(
@@ -177,6 +184,9 @@ async def test_setup_forwards_platforms_exactly_once_when_mqtt_raises(
     async def fake_forward_entry_setups(entry: ConfigEntry, platforms: list[Platform]) -> None:
         forwarded.append((entry, platforms))
 
+    async def fake_unload_platforms(entry: ConfigEntry, platforms: list[Platform]) -> bool:
+        return True
+
     class ExplodingMqttApi(FakeApi):
         async def connect_mqtt(self) -> bool:
             self.connect_called = True
@@ -185,6 +195,7 @@ async def test_setup_forwards_platforms_exactly_once_when_mqtt_raises(
     monkeypatch.setattr(aiper, "AiperApi", ExplodingMqttApi)
     monkeypatch.setattr(aiper, "async_get_clientsession", lambda hass: "session")
     monkeypatch.setattr(hass.config_entries, "async_forward_entry_setups", fake_forward_entry_setups)
+    monkeypatch.setattr(hass.config_entries, "async_unload_platforms", fake_unload_platforms)
 
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -196,6 +207,9 @@ async def test_setup_forwards_platforms_exactly_once_when_mqtt_raises(
 
     assert await aiper.async_setup_entry(hass, cast(ConfigEntry, entry)) is True
     assert len(forwarded) == 1
+
+    # Cancel the coordinator's refresh timer so it doesn't outlive the test.
+    assert await aiper.async_unload_entry(hass, cast(ConfigEntry, entry)) is True
 
 
 @pytest.mark.asyncio
