@@ -71,6 +71,14 @@ LIVE_STATE_KEYS = frozenset(
 
 LIVE_REFRESH_INTERVAL = timedelta(minutes=5)
 
+# How long MQTT must stay down before we stop trusting the AWS CRT SDK's own
+# reconnect loop and rebuild the connection ourselves.
+MQTT_RECONNECT_GRACE_SECONDS = 180
+
+# Floor between forced rebuilds. Without this, an endpoint that refuses every
+# connection would have us rebuilding on each poll forever.
+MQTT_REBUILD_MIN_INTERVAL_SECONDS = 600
+
 
 def _ensure_utc_aware(value: datetime | None) -> datetime | None:
     """Ensure a datetime is timezone-aware in UTC."""
@@ -680,9 +688,50 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             device["supported_mode_ids"] = list(profile.mode_map.keys())
         device["mode_map"] = profile.mode_map
 
+    async def _async_maintain_mqtt(self) -> None:
+        """Keep the MQTT signing credentials warm and recover a dead connection.
+
+        Runs on every poll. Refreshing the credential snapshot from here is
+        what lets the AWS CRT's reconnect loop sign with valid credentials
+        instead of the ones it captured at first connect -- the signing
+        delegate itself must never block, so it can only read a snapshot
+        somebody else keeps current.
+        """
+        refresh = getattr(self.api, "async_refresh_mqtt_credentials", None)
+        if refresh is not None:
+            with suppress(Exception):
+                await refresh()
+
+        get_down_seconds = getattr(self.api, "mqtt_disconnected_seconds", None)
+        if get_down_seconds is None:
+            return
+        down_seconds = get_down_seconds()
+        if down_seconds is None or down_seconds < MQTT_RECONNECT_GRACE_SECONDS:
+            return
+
+        get_since_rebuild = getattr(self.api, "seconds_since_mqtt_rebuild", None)
+        reconnect = getattr(self.api, "reconnect_mqtt", None)
+        if get_since_rebuild is None or reconnect is None:
+            return
+
+        since_rebuild = get_since_rebuild()
+        if since_rebuild is not None and since_rebuild < MQTT_REBUILD_MIN_INTERVAL_SECONDS:
+            _LOGGER.debug(
+                "MQTT still down after %.0fs but last rebuild was only %.0fs ago; waiting",
+                down_seconds,
+                since_rebuild,
+            )
+            return
+
+        _LOGGER.warning("MQTT has been disconnected for %.0fs; rebuilding the connection", down_seconds)
+        with suppress(Exception):
+            if await reconnect():
+                _LOGGER.info("MQTT reconnected after %.0fs offline", down_seconds)
+
     async def _async_update_data(self) -> DevicesState:
         """Fetch data from API."""
         try:
+            await self._async_maintain_mqtt()
             now = dt_util.utcnow()
 
             # Normalize cached timestamps (defensive against earlier versions).

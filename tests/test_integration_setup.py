@@ -121,6 +121,84 @@ async def test_setup_entry_stores_runtime_data_and_unload_disconnects(
 
 
 @pytest.mark.asyncio
+async def test_setup_survives_mqtt_failure(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed MQTT connect must not abort setup.
+
+    Raising ConfigEntryNotReady here puts HA into a setup-retry loop, and
+    since every retry re-runs login(), those retries trip Aiper's
+    single-session conflict and empty the REST device list -- turning a
+    degraded push channel into every entity going unavailable.
+    """
+
+    forwarded: list[tuple[ConfigEntry, list[Platform]]] = []
+
+    async def fake_forward_entry_setups(entry: ConfigEntry, platforms: list[Platform]) -> None:
+        forwarded.append((entry, platforms))
+
+    class NoMqttApi(FakeApi):
+        async def connect_mqtt(self) -> bool:
+            self.connect_called = True
+            return False
+
+    monkeypatch.setattr(aiper, "AiperApi", NoMqttApi)
+    monkeypatch.setattr(aiper, "async_get_clientsession", lambda hass: "session")
+    monkeypatch.setattr(hass.config_entries, "async_forward_entry_setups", fake_forward_entry_setups)
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry-mqtt-down",
+        data={"username": "user@example.com", "password": "secret", "region": "asia"},
+        state=ConfigEntryState.SETUP_IN_PROGRESS,
+    )
+    entry.add_to_hass(hass)
+
+    assert await aiper.async_setup_entry(hass, cast(ConfigEntry, entry)) is True
+
+    api = cast(NoMqttApi, entry.runtime_data.api)
+    assert api.connect_called is True
+    assert api.subscribed == []
+    # Entities are still published, backed by REST polling.
+    assert forwarded == [(cast(ConfigEntry, entry), aiper.PLATFORMS)]
+    assert entry.runtime_data.coordinator.data is not None
+
+
+@pytest.mark.asyncio
+async def test_setup_forwards_platforms_exactly_once_when_mqtt_raises(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An exception from connect_mqtt must be contained, not propagated."""
+
+    forwarded: list[tuple[ConfigEntry, list[Platform]]] = []
+
+    async def fake_forward_entry_setups(entry: ConfigEntry, platforms: list[Platform]) -> None:
+        forwarded.append((entry, platforms))
+
+    class ExplodingMqttApi(FakeApi):
+        async def connect_mqtt(self) -> bool:
+            self.connect_called = True
+            raise RuntimeError("AWS_ERROR_MQTT_UNEXPECTED_HANGUP")
+
+    monkeypatch.setattr(aiper, "AiperApi", ExplodingMqttApi)
+    monkeypatch.setattr(aiper, "async_get_clientsession", lambda hass: "session")
+    monkeypatch.setattr(hass.config_entries, "async_forward_entry_setups", fake_forward_entry_setups)
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry-mqtt-raises",
+        data={"username": "user@example.com", "password": "secret", "region": "asia"},
+        state=ConfigEntryState.SETUP_IN_PROGRESS,
+    )
+    entry.add_to_hass(hass)
+
+    assert await aiper.async_setup_entry(hass, cast(ConfigEntry, entry)) is True
+    assert len(forwarded) == 1
+
+
+@pytest.mark.asyncio
 async def test_remove_config_entry_device_rejects_active_device(hass: HomeAssistant) -> None:
     """HA should not delete a device that is still returned by Aiper."""
     entry = MockConfigEntry(domain=DOMAIN, entry_id="entry-1")

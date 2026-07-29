@@ -17,7 +17,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import AiperApi
+from .api import AWS_CREDENTIALS_TTL_DEBUG_SECONDS, AiperApi
 from .const import (
     CONF_METADATA_REFRESH_HOURS,
     CONF_MQTT_DEBUG,
@@ -317,6 +317,19 @@ async def _migrate_select_unique_ids(
             ent_reg.async_remove(extra.entity_id)
 
 
+async def _subscribe_devices(api: AiperApi, coordinator: AiperDataUpdateCoordinator) -> None:
+    """Subscribe to MQTT topics for every known device and prime its shadow."""
+    if not coordinator.data:
+        return
+    for sn in coordinator.data:
+        # AWS IoT callbacks arrive on a background thread.
+        # Ensure coordinator updates happen on the HA event loop.
+        cb = coordinator.make_shadow_callback(sn)
+        await api.subscribe_device(sn, cb)
+        # Ask for a current shadow snapshot; many stacks publish only on change.
+        await api.request_shadow(sn)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> bool:
     """Set up Aiper from a config entry."""
 
@@ -367,33 +380,41 @@ async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> boo
 
     entry.async_on_unload(entry.add_update_listener(_options_update_listener))
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
     mqtt_debug = bool(entry.options.get(CONF_MQTT_DEBUG, False))
     api.mqtt_debug = mqtt_debug
+    if mqtt_debug:
+        # Cycle AWS credentials every few minutes rather than every ~55, so
+        # the expiry/refresh/re-sign path can be observed during a short
+        # diagnostic session instead of an hour-long wait.
+        api.aws_credentials_ttl = AWS_CREDENTIALS_TTL_DEBUG_SECONDS
 
     _LOGGER.info("Attempting AWS IoT MQTT connection")
     if mqtt_debug:
-        _LOGGER.warning("MQTT debug logging is enabled; raw topics/payloads will be logged at DEBUG")
+        _LOGGER.warning(
+            "MQTT debug logging is enabled; raw topics/payloads will be logged at DEBUG "
+            "and AWS credentials will be refreshed every %ss",
+            AWS_CREDENTIALS_TTL_DEBUG_SECONDS,
+        )
 
+    # A failed MQTT connection must not fail setup. Raising ConfigEntryNotReady
+    # here sends Home Assistant into a setup-retry loop, and because each retry
+    # re-runs login(), those retries trip Aiper's single-session conflict and
+    # leave the REST device list empty -- turning a degraded push channel into
+    # a total outage. Instead we set the integration up on REST data and let
+    # the coordinator's watchdog keep retrying MQTT in the background.
     try:
-        connected = await api.connect_mqtt()
-        if not connected:
-            raise ConfigEntryNotReady("MQTT connection could not be established")
-        if coordinator.data:
-            for sn in coordinator.data:
-                # AWS IoT callbacks arrive on a background thread.
-                # Ensure coordinator updates happen on the HA event loop.
-                cb = coordinator.make_shadow_callback(sn)
-                await api.subscribe_device(sn, cb)
-                # Ask for a current shadow snapshot; many stacks publish only on change.
-                await api.request_shadow(sn)
-        _LOGGER.info("MQTT connected and subscriptions registered")
-    except ConfigEntryNotReady:
-        raise
+        if await api.connect_mqtt():
+            await _subscribe_devices(api, coordinator)
+            _LOGGER.info("MQTT connected and subscriptions registered")
+        else:
+            _LOGGER.warning(
+                "AWS IoT MQTT unavailable; continuing with REST polling only. "
+                "Push updates and MQTT-only controls stay unavailable until it reconnects."
+            )
     except Exception as err:
-        _LOGGER.warning("MQTT setup failed: %s", err)
-        raise ConfigEntryNotReady from err
+        _LOGGER.warning("MQTT setup failed, continuing with REST polling only: %s", err)
+
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     _LOGGER.info("Aiper integration setup complete")
 

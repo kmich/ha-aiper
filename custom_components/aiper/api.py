@@ -12,7 +12,7 @@ import time
 from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import aiohttp
@@ -38,6 +38,21 @@ _LOGGER = logging.getLogger(__name__)
 SESSION_CONFLICT_CODE = "402"
 SESSION_CONFLICT_COOLDOWN_SECONDS = 180
 RETRYABLE_HTTP_STATUSES = (429, 500, 502, 503, 504)
+
+# Cognito hands out ~1 hour credentials; cache just under that. Overridable
+# per-instance (see `AiperApi.aws_credentials_ttl`) so the expiry/refresh path
+# can be exercised in minutes instead of an hour when validating on a device.
+AWS_CREDENTIALS_TTL_SECONDS = 3300
+
+# Used instead of the above when MQTT debug is enabled, so a full
+# expire-refresh-resign cycle happens every few minutes and can actually be
+# observed in a log rather than waiting out the real ~55 minute lifetime.
+AWS_CREDENTIALS_TTL_DEBUG_SECONDS = 300
+
+# Refresh the MQTT signing snapshot once the credentials are within this
+# window of expiring. Comfortably larger than the coordinator poll interval
+# so a refresh is never missed.
+MQTT_CREDENTIALS_REFRESH_MARGIN_SECONDS = 600
 
 
 class AiperApiError(Exception):
@@ -92,7 +107,12 @@ class AiperApi:
         self._aws_region: str | None = None
         self._mqtt_client: Any = None
         self._mqtt_connected = False
+        self._mqtt_first_disconnected_at: datetime | None = None
+        self._mqtt_credentials_snapshot: AwsIotCredentials | None = None
+        self._mqtt_credentials_refreshing = False
+        self._mqtt_last_rebuild_at: float | None = None
         self.mqtt_debug = False
+        self.aws_credentials_ttl = AWS_CREDENTIALS_TTL_SECONDS
         self._devices: dict[str, dict] = {}
         # Convenience lookup tables derived from device discovery / MQTT telemetry
         self._device_zone_id_by_sn: dict[str, str] = {}
@@ -576,7 +596,7 @@ class AiperApi:
             return None
 
         self._aws_credentials = creds
-        self._aws_credentials_exp = time.time() + 3300
+        self._aws_credentials_exp = time.time() + self.aws_credentials_ttl
         return creds
 
     async def get_devices(self) -> list[dict]:
@@ -960,6 +980,64 @@ class AiperApi:
 
         return bool(rest_ok or mqtt_published or shadow_ok)
 
+    async def async_refresh_mqtt_credentials(self) -> AwsIotCredentials | None:
+        """Refresh the credential snapshot that the MQTT signer reads.
+
+        `get_aws_credentials` caches until shortly before expiry, so calling
+        this from the coordinator on every poll is nearly free and keeps the
+        snapshot well ahead of Cognito's ~55 minute lifetime.
+        """
+        creds = await self.get_aws_credentials()
+        if not creds:
+            return None
+        snapshot = AwsIotCredentials(
+            access_key_id=creds["AccessKeyId"],
+            secret_access_key=creds["SecretKey"],
+            session_token=creds.get("SessionToken", ""),
+        )
+        self._mqtt_credentials_snapshot = snapshot
+        return snapshot
+
+    def _mqtt_credentials_due_for_refresh(self) -> bool:
+        """Whether the cached AWS credentials are close enough to expiry to renew."""
+        if self._aws_credentials_exp is None:
+            return True
+        return (self._aws_credentials_exp - time.time()) < MQTT_CREDENTIALS_REFRESH_MARGIN_SECONDS
+
+    def _schedule_mqtt_credentials_refresh(self) -> None:
+        """Kick off a credential refresh without waiting for it.
+
+        Safe to call from the AWS CRT's threads: it only hands work to the
+        event loop and returns immediately. Never await this from inside the
+        signing delegate -- see `_current_mqtt_credentials`.
+        """
+        loop = self._async_loop
+        if loop is None or not loop.is_running() or self._mqtt_credentials_refreshing:
+            return
+
+        async def _refresh() -> None:
+            try:
+                await self.async_refresh_mqtt_credentials()
+            except Exception as err:
+                _LOGGER.debug("Background MQTT credential refresh failed: %s", err)
+            finally:
+                self._mqtt_credentials_refreshing = False
+
+        self._mqtt_credentials_refreshing = True
+        loop.call_soon_threadsafe(lambda: loop.create_task(_refresh()))
+
+    def _current_mqtt_credentials(self) -> AwsIotCredentials | None:
+        """Return the credentials the MQTT transport should sign with.
+
+        Called synchronously by the AWS CRT, sometimes on the Home Assistant
+        event loop thread, so this must return immediately. It reads the
+        snapshot and, if that snapshot is getting old, schedules a refresh
+        for next time rather than waiting for one now.
+        """
+        if self._mqtt_credentials_due_for_refresh():
+            self._schedule_mqtt_credentials_refresh()
+        return self._mqtt_credentials_snapshot
+
     async def connect_mqtt(self) -> bool:
         """Connect to AWS IoT MQTT broker."""
         if not self._identity_id or not self._iot_endpoint:
@@ -968,8 +1046,8 @@ class AiperApi:
 
         try:
             self._async_loop = asyncio.get_running_loop()
-            creds = await self.get_aws_credentials()
-            if not creds:
+            initial_credentials = await self.async_refresh_mqtt_credentials()
+            if initial_credentials is None:
                 _LOGGER.error("Unable to obtain AWS credentials for MQTT")
                 return False
 
@@ -983,18 +1061,16 @@ class AiperApi:
                 endpoint=self._iot_endpoint,
                 region=region,
                 client_id=client_id,
-                credentials=AwsIotCredentials(
-                    access_key_id=creds["AccessKeyId"],
-                    secret_access_key=creds["SecretKey"],
-                    session_token=creds.get("SessionToken", ""),
-                ),
+                credentials=initial_credentials,
                 connect_timeout=10.0,
                 operation_timeout=5.0,
                 on_reconnected=self._on_mqtt_reconnected,
+                credentials_resolver=self._current_mqtt_credentials,
             )
 
             if await self._mqtt_client.async_connect():
                 self._mqtt_connected = True
+                self._mqtt_first_disconnected_at = None
                 _LOGGER.info("Connected to AWS IoT MQTT using AWS IoT Device SDK v2")
                 return True
 
@@ -1006,12 +1082,52 @@ class AiperApi:
             self._mqtt_connected = False
             return False
 
+    async def reconnect_mqtt(self) -> bool:
+        """Tear down and rebuild the MQTT connection with fresh credentials.
+
+        Backstop for when the SDK's own reconnect loop cannot recover -- a
+        wedged socket, or credentials that went stale before the delegate
+        was consulted. Rebuilding is heavier than letting the SDK retry, so
+        the coordinator only calls this after a long outage.
+        """
+        _LOGGER.warning("Rebuilding AWS IoT MQTT connection after prolonged disconnect")
+        self._mqtt_last_rebuild_at = time.time()
+
+        with suppress(Exception):
+            await self.disconnect_mqtt()
+
+        if not await self.connect_mqtt():
+            return False
+
+        await self._resubscribe_all_devices()
+        return True
+
+    def seconds_since_mqtt_rebuild(self) -> float | None:
+        """Seconds since the last forced MQTT rebuild, or None if never."""
+        if self._mqtt_last_rebuild_at is None:
+            return None
+        return time.time() - self._mqtt_last_rebuild_at
+
     def is_mqtt_connected(self) -> bool:
         """Return True if the AWS IoT MQTT client is connected.
 
-        Exposed for entity availability and diagnostics.
+        Exposed for entity availability and diagnostics. Also records when a
+        disconnect began, so `mqtt_disconnected_seconds` keeps measuring the
+        same outage across transport objects being rebuilt.
         """
-        return bool(self._mqtt_connected and self._mqtt_client and self._mqtt_client.is_connected())
+        connected = bool(self._mqtt_connected and self._mqtt_client and self._mqtt_client.is_connected())
+        if connected:
+            self._mqtt_first_disconnected_at = None
+        elif self._mqtt_first_disconnected_at is None:
+            self._mqtt_first_disconnected_at = datetime.now(UTC)
+        return connected
+
+    def mqtt_disconnected_seconds(self) -> float | None:
+        """Seconds since MQTT first dropped, or None while connected."""
+        self.is_mqtt_connected()  # refreshes _mqtt_first_disconnected_at
+        if self._mqtt_first_disconnected_at is None:
+            return None
+        return (datetime.now(UTC) - self._mqtt_first_disconnected_at).total_seconds()
 
     def _on_mqtt_reconnected(self, session_present: bool) -> None:
         """Called from the AWS CRT thread when MQTT auto-reconnects.
@@ -1444,12 +1560,23 @@ class AiperApi:
                     crc >>= 1
         return crc
 
+    async def disconnect_mqtt(self) -> None:
+        """Tear down just the MQTT transport, leaving the REST session alone.
+
+        Always drops the transport reference even if the polite disconnect
+        fails, so a wedged connection can't linger with its own reconnect
+        loop running alongside its replacement.
+        """
+        client = self._mqtt_client
+        self._mqtt_client = None
+        self._mqtt_connected = False
+        if client is None:
+            return
+        with suppress(Exception):
+            await client.async_disconnect()
+
     async def disconnect(self) -> None:
         """Disconnect from MQTT and cleanup."""
-        if self._mqtt_client:
-            with suppress(Exception):
-                await self._mqtt_client.async_disconnect()
-        self._mqtt_connected = False
-        self._mqtt_client = None
+        await self.disconnect_mqtt()
 
         _LOGGER.info("Disconnected from Aiper API")

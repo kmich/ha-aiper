@@ -53,6 +53,7 @@ class AwsIotMqttTransport:
         connect_timeout: float = 10.0,
         operation_timeout: float = 5.0,
         on_reconnected: Callable[[bool], None] | None = None,
+        credentials_resolver: Callable[[], AwsIotCredentials | None] | None = None,
     ) -> None:
         self.endpoint = endpoint
         self.region = region
@@ -61,6 +62,7 @@ class AwsIotMqttTransport:
         self.connect_timeout = connect_timeout
         self.operation_timeout = operation_timeout
         self.on_reconnected = on_reconnected
+        self._credentials_resolver = credentials_resolver
 
         self._connection: Any = None
         self._connected = False
@@ -68,6 +70,10 @@ class AwsIotMqttTransport:
         self.last_connected_at: datetime | None = None
         self.last_disconnected_at: datetime | None = None
         self.reconnect_count = 0
+        # Counts delegate invocations. The whole premise of the credential
+        # fix is that the CRT asks us again on each reconnect rather than
+        # caching what it got at build time; this counter is how we tell.
+        self.credential_signing_count = 0
 
     def connect(self) -> bool:
         """Connect to AWS IoT Core using SigV4-signed MQTT over WebSockets."""
@@ -101,16 +107,55 @@ class AwsIotMqttTransport:
             _LOGGER.error("AWS IoT MQTT connection failed: %s", err)
             return False
 
+    def _sign_with_current_credentials(self) -> Any:
+        """Hand the CRT the credentials to sign the next connection with.
+
+        MUST NOT BLOCK. The AWS CRT invokes this delegate synchronously on
+        whichever thread drives the connection, and for the initial connect
+        that is the Home Assistant event loop itself. Doing async work here
+        -- even `run_coroutine_threadsafe(...).result()` -- deadlocks the
+        loop against itself and surfaces as
+        AWS_ERROR_HTTP_CALLBACK_FAILURE. So we only ever read a snapshot
+        that someone else keeps warm from the event loop.
+        """
+        from awscrt import auth
+
+        self.credential_signing_count += 1
+        resolver = self._credentials_resolver
+        creds = resolver() if resolver is not None else None
+        if creds is None:
+            creds = self.credentials
+        else:
+            self.credentials = creds
+
+        _LOGGER.debug(
+            "Signing AWS IoT MQTT connection (invocation #%d, access_key_id=%s...)",
+            self.credential_signing_count,
+            creds.access_key_id[:6],
+        )
+        return auth.AwsCredentials(
+            creds.access_key_id,
+            creds.secret_access_key,
+            creds.session_token,
+        )
+
     def _build_connection(self) -> Any:
         """Build an AWS IoT MQTT connection object."""
         from awscrt import auth
         from awsiot import mqtt_connection_builder
 
-        credentials_provider = auth.AwsCredentialsProvider.new_static(
-            self.credentials.access_key_id,
-            self.credentials.secret_access_key,
-            self.credentials.session_token,
-        )
+        if self._credentials_resolver is not None:
+            # Delegate provider: re-asked for credentials on each signing,
+            # so the SDK's own reconnect loop stops re-signing with the
+            # credentials captured at initial connect (which go stale after
+            # Cognito's ~55 minute session and can never succeed again).
+            credentials_provider = auth.AwsCredentialsProvider.new_delegate(self._sign_with_current_credentials)
+        else:
+            credentials_provider = auth.AwsCredentialsProvider.new_static(
+                self.credentials.access_key_id,
+                self.credentials.secret_access_key,
+                self.credentials.session_token,
+            )
 
         return mqtt_connection_builder.websockets_with_default_aws_signing(
             endpoint=self.endpoint,
