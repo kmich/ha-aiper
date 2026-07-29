@@ -53,7 +53,6 @@ class AwsIotMqttTransport:
         connect_timeout: float = 10.0,
         operation_timeout: float = 5.0,
         on_reconnected: Callable[[bool], None] | None = None,
-        credentials_resolver: Callable[[], AwsIotCredentials] | None = None,
     ) -> None:
         self.endpoint = endpoint
         self.region = region
@@ -62,7 +61,6 @@ class AwsIotMqttTransport:
         self.connect_timeout = connect_timeout
         self.operation_timeout = operation_timeout
         self.on_reconnected = on_reconnected
-        self._credentials_resolver = credentials_resolver
 
         self._connection: Any = None
         self._connected = False
@@ -103,44 +101,16 @@ class AwsIotMqttTransport:
             _LOGGER.error("AWS IoT MQTT connection failed: %s", err)
             return False
 
-    def _resolve_crt_credentials(self) -> Any:
-        """Fetch fresh AWS credentials for the CRT's own reconnect signing.
-
-        Called synchronously from the AWS CRT's native thread, including
-        during its built-in reconnect loop after a dropped connection.
-        Without this, the SDK re-signs every reconnect attempt with the
-        credentials captured at initial connect time, which silently fail
-        auth once Cognito's ~55 minute session expires and are never
-        retried with anything fresher.
-        """
-        from awscrt import auth
-
-        assert self._credentials_resolver is not None
-        try:
-            creds = self._credentials_resolver()
-        except Exception as err:
-            _LOGGER.error("Failed to refresh AWS credentials for MQTT signing: %s", err)
-            raise
-        self.credentials = creds
-        return auth.AwsCredentials(
-            creds.access_key_id,
-            creds.secret_access_key,
-            creds.session_token,
-        )
-
     def _build_connection(self) -> Any:
         """Build an AWS IoT MQTT connection object."""
         from awscrt import auth
         from awsiot import mqtt_connection_builder
 
-        if self._credentials_resolver is not None:
-            credentials_provider = auth.AwsCredentialsProvider.new_delegate(self._resolve_crt_credentials)
-        else:
-            credentials_provider = auth.AwsCredentialsProvider.new_static(
-                self.credentials.access_key_id,
-                self.credentials.secret_access_key,
-                self.credentials.session_token,
-            )
+        credentials_provider = auth.AwsCredentialsProvider.new_static(
+            self.credentials.access_key_id,
+            self.credentials.secret_access_key,
+            self.credentials.session_token,
+        )
 
         return mqtt_connection_builder.websockets_with_default_aws_signing(
             endpoint=self.endpoint,

@@ -12,7 +12,7 @@ import time
 from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 import aiohttp
@@ -92,12 +92,6 @@ class AiperApi:
         self._aws_region: str | None = None
         self._mqtt_client: Any = None
         self._mqtt_connected = False
-        # None = untried, True = a client_id distinct from the account identity works,
-        # False = AWS IoT rejected it (policy likely pins client_id to the identity),
-        # so we stick with the bare identity id.
-        self._mqtt_client_id_suffix_ok: bool | None = None
-        self._mqtt_first_disconnected_at: datetime | None = None
-        self._mqtt_credentials_snapshot: AwsIotCredentials | None = None
         self.mqtt_debug = False
         self._devices: dict[str, dict] = {}
         # Convenience lookup tables derived from device discovery / MQTT telemetry
@@ -966,40 +960,6 @@ class AiperApi:
 
         return bool(rest_ok or mqtt_published or shadow_ok)
 
-    async def async_refresh_mqtt_credentials(self) -> AwsIotCredentials | None:
-        """Refresh the credential snapshot the MQTT signer reads.
-
-        `get_aws_credentials` caches until shortly before expiry, so calling
-        this on every coordinator poll is cheap and keeps the snapshot well
-        ahead of the ~55 minute Cognito lifetime.
-        """
-        creds = await self.get_aws_credentials()
-        if not creds:
-            return None
-        snapshot = AwsIotCredentials(
-            access_key_id=creds["AccessKeyId"],
-            secret_access_key=creds["SecretKey"],
-            session_token=creds.get("SessionToken", ""),
-        )
-        self._mqtt_credentials_snapshot = snapshot
-        return snapshot
-
-    def _resolve_mqtt_credentials(self) -> AwsIotCredentials:
-        """Return current credentials for the CRT's signer. Must never block.
-
-        The AWS CRT calls this delegate on whatever thread drives the
-        connection — during the initial connect that is the Home Assistant
-        event loop itself, so doing async work here (even via
-        run_coroutine_threadsafe) deadlocks the loop. Instead we serve a
-        snapshot that `async_refresh_mqtt_credentials` keeps warm from the
-        event loop, which is what lets the SDK's reconnect loop re-sign with
-        valid credentials instead of the ones captured at first connect.
-        """
-        snapshot = self._mqtt_credentials_snapshot
-        if snapshot is None:
-            raise RuntimeError("No AWS credentials available for MQTT signing")
-        return snapshot
-
     async def connect_mqtt(self) -> bool:
         """Connect to AWS IoT MQTT broker."""
         if not self._identity_id or not self._iot_endpoint:
@@ -1008,53 +968,35 @@ class AiperApi:
 
         try:
             self._async_loop = asyncio.get_running_loop()
-            initial_credentials = await self.async_refresh_mqtt_credentials()
-            if initial_credentials is None:
+            creds = await self.get_aws_credentials()
+            if not creds:
                 _LOGGER.error("Unable to obtain AWS credentials for MQTT")
                 return False
 
+            client_id = self._identity_id
             region = self._aws_region
             if not region and self._iot_endpoint and ".iot." in self._iot_endpoint:
                 region = self._iot_endpoint.split(".iot.", 1)[1].split(".", 1)[0]
             region = region or "eu-central-1"
 
-            # The Aiper mobile app authenticates against the same Cognito
-            # identity, so a bare identity id as client_id can collide with
-            # the app's own MQTT connection and cause AWS IoT to hang up
-            # whichever side connected first. Try a distinct client_id first;
-            # if the account's AWS IoT policy pins client_id to the identity
-            # (connect gets rejected), fall back to the bare id and remember
-            # that choice so later reconnects don't retry a doomed attempt.
-            client_ids = [f"{self._identity_id}-hass", self._identity_id]
-            if self._mqtt_client_id_suffix_ok is False:
-                client_ids = [self._identity_id]
+            self._mqtt_client = AwsIotMqttTransport(
+                endpoint=self._iot_endpoint,
+                region=region,
+                client_id=client_id,
+                credentials=AwsIotCredentials(
+                    access_key_id=creds["AccessKeyId"],
+                    secret_access_key=creds["SecretKey"],
+                    session_token=creds.get("SessionToken", ""),
+                ),
+                connect_timeout=10.0,
+                operation_timeout=5.0,
+                on_reconnected=self._on_mqtt_reconnected,
+            )
 
-            for attempt, client_id in enumerate(client_ids):
-                self._mqtt_client = AwsIotMqttTransport(
-                    endpoint=self._iot_endpoint,
-                    region=region,
-                    client_id=client_id,
-                    credentials=initial_credentials,
-                    connect_timeout=10.0,
-                    operation_timeout=5.0,
-                    on_reconnected=self._on_mqtt_reconnected,
-                    credentials_resolver=self._resolve_mqtt_credentials,
-                )
-
-                if await self._mqtt_client.async_connect():
-                    self._mqtt_connected = True
-                    self._mqtt_client_id_suffix_ok = client_id != self._identity_id
-                    _LOGGER.info(
-                        "Connected to AWS IoT MQTT using AWS IoT Device SDK v2 (distinct client_id=%s)",
-                        self._mqtt_client_id_suffix_ok,
-                    )
-                    return True
-
-                if attempt < len(client_ids) - 1:
-                    _LOGGER.debug(
-                        "MQTT connect with distinct client_id failed (%s); retrying with account identity id",
-                        self._mqtt_client.last_error,
-                    )
+            if await self._mqtt_client.async_connect():
+                self._mqtt_connected = True
+                _LOGGER.info("Connected to AWS IoT MQTT using AWS IoT Device SDK v2")
+                return True
 
             self._mqtt_connected = False
             return False
@@ -1064,45 +1006,12 @@ class AiperApi:
             self._mqtt_connected = False
             return False
 
-    async def reconnect_mqtt(self) -> bool:
-        """Tear down and rebuild the MQTT connection with fresh credentials.
-
-        Safety net for when the AWS CRT SDK's own reconnect loop can't
-        recover on its own even with credential refresh wired up (e.g. the
-        underlying socket is wedged). Called periodically by the coordinator
-        once the connection has been down for a while.
-        """
-        _LOGGER.warning("Rebuilding AWS IoT MQTT connection after prolonged disconnect")
-        await self.disconnect()
-        if not await self.connect_mqtt():
-            return False
-        await self._resubscribe_all_devices()
-        return True
-
     def is_mqtt_connected(self) -> bool:
         """Return True if the AWS IoT MQTT client is connected.
 
-        Exposed for entity availability and diagnostics. Also tracks when a
-        disconnect first began so `mqtt_disconnected_seconds` survives the
-        transport object being rebuilt by `reconnect_mqtt`.
+        Exposed for entity availability and diagnostics.
         """
-        connected = bool(self._mqtt_connected and self._mqtt_client and self._mqtt_client.is_connected())
-        if connected:
-            self._mqtt_first_disconnected_at = None
-        elif self._mqtt_first_disconnected_at is None:
-            self._mqtt_first_disconnected_at = datetime.now(UTC)
-        return connected
-
-    def mqtt_disconnected_seconds(self) -> float | None:
-        """Seconds since MQTT first dropped, or None if currently connected.
-
-        Used by the coordinator as a watchdog signal to decide when to give
-        up on the AWS CRT SDK's own reconnect loop and rebuild the connection.
-        """
-        self.is_mqtt_connected()  # refresh _mqtt_first_disconnected_at
-        if self._mqtt_first_disconnected_at is None:
-            return None
-        return (datetime.now(UTC) - self._mqtt_first_disconnected_at).total_seconds()
+        return bool(self._mqtt_connected and self._mqtt_client and self._mqtt_client.is_connected())
 
     def _on_mqtt_reconnected(self, session_present: bool) -> None:
         """Called from the AWS CRT thread when MQTT auto-reconnects.
