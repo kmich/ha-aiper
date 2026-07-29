@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.2.4] - 2026-07-29
+## [1.2.5] - 2026-07-29
 
 ### Fixed
 - Fixed AWS IoT MQTT connections that never recovered after an `AWS_ERROR_MQTT_UNEXPECTED_HANGUP`: the SDK's built-in reconnect loop was re-signing with the static Cognito credentials captured at initial connect, which silently fail once the ~55 minute session expires. The MQTT transport now resolves fresh credentials on every reconnect attempt.

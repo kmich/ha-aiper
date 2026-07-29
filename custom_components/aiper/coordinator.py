@@ -691,7 +691,10 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         doesn't happen within a few minutes (e.g. credentials it holds are
         stale, or the socket is wedged) we tear down and reconnect ourselves.
         """
-        down_seconds = self.api.mqtt_disconnected_seconds()
+        get_down_seconds = getattr(self.api, "mqtt_disconnected_seconds", None)
+        if get_down_seconds is None:
+            return
+        down_seconds = get_down_seconds()
         if down_seconds is None or down_seconds < MQTT_RECONNECT_GRACE_SECONDS:
             return
         _LOGGER.warning(
