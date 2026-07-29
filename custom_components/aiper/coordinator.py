@@ -685,12 +685,18 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         device["mode_map"] = profile.mode_map
 
     async def _async_check_mqtt_health(self) -> None:
-        """Rebuild the MQTT connection if it's been down longer than the grace period.
+        """Keep MQTT credentials warm and rebuild the connection if it stays down.
 
-        The CRT SDK reconnects on its own after transient drops, but if that
-        doesn't happen within a few minutes (e.g. credentials it holds are
-        stale, or the socket is wedged) we tear down and reconnect ourselves.
+        The credential refresh has to happen here on the event loop because
+        the AWS CRT's signer callback is synchronous and cannot do async work
+        itself. The CRT reconnects on its own after transient drops; if that
+        doesn't happen within a few minutes we tear down and reconnect.
         """
+        refresh_credentials = getattr(self.api, "async_refresh_mqtt_credentials", None)
+        if refresh_credentials is not None:
+            with suppress(Exception):
+                await refresh_credentials()
+
         get_down_seconds = getattr(self.api, "mqtt_disconnected_seconds", None)
         if get_down_seconds is None:
             return

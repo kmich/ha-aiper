@@ -97,6 +97,7 @@ class AiperApi:
         # so we stick with the bare identity id.
         self._mqtt_client_id_suffix_ok: bool | None = None
         self._mqtt_first_disconnected_at: datetime | None = None
+        self._mqtt_credentials_snapshot: AwsIotCredentials | None = None
         self.mqtt_debug = False
         self._devices: dict[str, dict] = {}
         # Convenience lookup tables derived from device discovery / MQTT telemetry
@@ -965,29 +966,39 @@ class AiperApi:
 
         return bool(rest_ok or mqtt_published or shadow_ok)
 
-    def _resolve_mqtt_credentials(self) -> AwsIotCredentials:
-        """Fetch fresh AWS credentials for the CRT's own reconnect signer.
+    async def async_refresh_mqtt_credentials(self) -> AwsIotCredentials | None:
+        """Refresh the credential snapshot the MQTT signer reads.
 
-        Called synchronously on the AWS CRT's background thread (including
-        during its internal reconnect-after-hangup loop), so we bridge into
-        the async Cognito credential fetch via the stored HA event loop.
-        `get_aws_credentials` already caches until ~5 minutes before expiry,
-        so this is cheap on every call except when a real refresh is due.
+        `get_aws_credentials` caches until shortly before expiry, so calling
+        this on every coordinator poll is cheap and keeps the snapshot well
+        ahead of the ~55 minute Cognito lifetime.
         """
-        loop = self._async_loop
-        if loop is None or not loop.is_running():
-            raise RuntimeError("Home Assistant event loop unavailable for MQTT credential refresh")
-
-        future = asyncio.run_coroutine_threadsafe(self.get_aws_credentials(), loop)
-        creds = future.result(timeout=15)
+        creds = await self.get_aws_credentials()
         if not creds:
-            raise RuntimeError("Failed to refresh AWS credentials for MQTT")
-
-        return AwsIotCredentials(
+            return None
+        snapshot = AwsIotCredentials(
             access_key_id=creds["AccessKeyId"],
             secret_access_key=creds["SecretKey"],
             session_token=creds.get("SessionToken", ""),
         )
+        self._mqtt_credentials_snapshot = snapshot
+        return snapshot
+
+    def _resolve_mqtt_credentials(self) -> AwsIotCredentials:
+        """Return current credentials for the CRT's signer. Must never block.
+
+        The AWS CRT calls this delegate on whatever thread drives the
+        connection — during the initial connect that is the Home Assistant
+        event loop itself, so doing async work here (even via
+        run_coroutine_threadsafe) deadlocks the loop. Instead we serve a
+        snapshot that `async_refresh_mqtt_credentials` keeps warm from the
+        event loop, which is what lets the SDK's reconnect loop re-sign with
+        valid credentials instead of the ones captured at first connect.
+        """
+        snapshot = self._mqtt_credentials_snapshot
+        if snapshot is None:
+            raise RuntimeError("No AWS credentials available for MQTT signing")
+        return snapshot
 
     async def connect_mqtt(self) -> bool:
         """Connect to AWS IoT MQTT broker."""
@@ -997,8 +1008,8 @@ class AiperApi:
 
         try:
             self._async_loop = asyncio.get_running_loop()
-            creds = await self.get_aws_credentials()
-            if not creds:
+            initial_credentials = await self.async_refresh_mqtt_credentials()
+            if initial_credentials is None:
                 _LOGGER.error("Unable to obtain AWS credentials for MQTT")
                 return False
 
@@ -1006,12 +1017,6 @@ class AiperApi:
             if not region and self._iot_endpoint and ".iot." in self._iot_endpoint:
                 region = self._iot_endpoint.split(".iot.", 1)[1].split(".", 1)[0]
             region = region or "eu-central-1"
-
-            initial_credentials = AwsIotCredentials(
-                access_key_id=creds["AccessKeyId"],
-                secret_access_key=creds["SecretKey"],
-                session_token=creds.get("SessionToken", ""),
-            )
 
             # The Aiper mobile app authenticates against the same Cognito
             # identity, so a bare identity id as client_id can collide with

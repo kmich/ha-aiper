@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.6] - 2026-07-29
+
+### Fixed
+- Fixed MQTT setup deadlocking the Home Assistant event loop, which made v1.2.5 fail to connect at all (`AWS_ERROR_HTTP_CALLBACK_FAILURE` after a 15 second stall). The AWS CRT calls its credentials signer synchronously on the calling thread, so the credential lookup now serves a snapshot the coordinator keeps refreshed instead of doing async work inside the callback.
+- Fixed repeated `config entry has already been setup` errors when MQTT was unavailable: entity platforms are now forwarded only after the MQTT step, so a setup retry no longer re-registers them.
+
 ## [1.2.5] - 2026-07-29
 
 ### Fixed

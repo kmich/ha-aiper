@@ -367,8 +367,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> boo
 
     entry.async_on_unload(entry.add_update_listener(_options_update_listener))
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
     mqtt_debug = bool(entry.options.get(CONF_MQTT_DEBUG, False))
     api.mqtt_debug = mqtt_debug
 
@@ -376,6 +374,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> boo
     if mqtt_debug:
         _LOGGER.warning("MQTT debug logging is enabled; raw topics/payloads will be logged at DEBUG")
 
+    # Everything that can raise ConfigEntryNotReady must run before platforms
+    # are forwarded; HA re-runs setup on retry and forwarding twice raises
+    # "config entry has already been setup".
     try:
         connected = await api.connect_mqtt()
         if not connected:
@@ -394,6 +395,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> boo
     except Exception as err:
         _LOGGER.warning("MQTT setup failed: %s", err)
         raise ConfigEntryNotReady from err
+
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     _LOGGER.info("Aiper integration setup complete")
 
