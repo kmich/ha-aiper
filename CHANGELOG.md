@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.4] - 2026-07-29
+
+### Fixed
+- Fixed AWS IoT MQTT connections that never recovered after an `AWS_ERROR_MQTT_UNEXPECTED_HANGUP`: the SDK's built-in reconnect loop was re-signing with the static Cognito credentials captured at initial connect, which silently fail once the ~55 minute session expires. The MQTT transport now resolves fresh credentials on every reconnect attempt.
+- Added a coordinator-driven watchdog that rebuilds the MQTT connection if it stays disconnected for more than 3 minutes, as a fallback for cases the SDK's own reconnect can't recover from.
+- Changed the MQTT `client_id` to a value distinct from the shared Cognito identity id (with automatic fallback) to avoid AWS IoT disconnecting the integration when the official Aiper app connects with the same identity.
+
 ## [1.2.3] - 2026-07-01
 
 ### Fixed

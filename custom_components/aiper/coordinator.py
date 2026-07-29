@@ -71,6 +71,10 @@ LIVE_STATE_KEYS = frozenset(
 
 LIVE_REFRESH_INTERVAL = timedelta(minutes=5)
 
+# If MQTT has been down this long, stop waiting on the AWS CRT SDK's own
+# reconnect loop and rebuild the connection with fresh credentials.
+MQTT_RECONNECT_GRACE_SECONDS = 180
+
 
 def _ensure_utc_aware(value: datetime | None) -> datetime | None:
     """Ensure a datetime is timezone-aware in UTC."""
@@ -680,9 +684,27 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             device["supported_mode_ids"] = list(profile.mode_map.keys())
         device["mode_map"] = profile.mode_map
 
+    async def _async_check_mqtt_health(self) -> None:
+        """Rebuild the MQTT connection if it's been down longer than the grace period.
+
+        The CRT SDK reconnects on its own after transient drops, but if that
+        doesn't happen within a few minutes (e.g. credentials it holds are
+        stale, or the socket is wedged) we tear down and reconnect ourselves.
+        """
+        down_seconds = self.api.mqtt_disconnected_seconds()
+        if down_seconds is None or down_seconds < MQTT_RECONNECT_GRACE_SECONDS:
+            return
+        _LOGGER.warning(
+            "MQTT has been disconnected for %.0fs; forcing a reconnect",
+            down_seconds,
+        )
+        with suppress(Exception):
+            await self.api.reconnect_mqtt()
+
     async def _async_update_data(self) -> DevicesState:
         """Fetch data from API."""
         try:
+            await self._async_check_mqtt_health()
             now = dt_util.utcnow()
 
             # Normalize cached timestamps (defensive against earlier versions).
