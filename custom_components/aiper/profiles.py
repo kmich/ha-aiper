@@ -1,9 +1,10 @@
 """Device-family profiles and capability discovery for Aiper devices.
 
-Profiles answer two separate questions:
+Profiles answer three separate questions:
 
 - Which Home Assistant surfaces should this device expose?
 - How should raw device-reported numeric mode IDs be labelled?
+- What do this firmware's `Machine.status` codes actually mean?
 
 Do not treat every reported `Machine.mode` ID as a commandable cleaning mode.
 Surfer devices report mode as read-only cleaning context, while Scuba exposes
@@ -13,11 +14,12 @@ mode select when the cloud explicitly reports supported mode IDs.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from .const import CleaningMode, DeviceFamily, mode_label
+from .const import CleaningMode, DeviceFamily, Status, mode_label
 
 
 class Capability(StrEnum):
@@ -119,9 +121,56 @@ class DeviceProfile:
     mode_map: dict[int, str]
 
 
+@dataclass(frozen=True, kw_only=True)
+class StatusSemantics:
+    """Model-specific meaning of `Machine.status` codes.
+
+    The shared `Status` enum holds the encoding used by most firmwares. Where a
+    model is known to deviate, an entry here overrides the label and the
+    charging/running interpretation for that model only.
+    """
+
+    labels: Mapping[int, str]
+    charging: frozenset[int]
+    running: frozenset[int]
+
+
+# Scuba S3 (main firmware V3.0.0) reports `2` for the whole charge and switches
+# to `3` at the moment the battery reaches 100%, where the shared enum reads
+# those as "Returning" and "Charging". Confirmed against MQTT shadow and REST
+# payloads over four full charge cycles, cross-checked against the Aiper app
+# showing "Charging" for the same `status: 2` payload.
+#
+# This is deliberately scoped to the S3: the Scuba X1 is covered by
+# test_scuba_charging_status_is_reported_from_base_status, which asserts the
+# default encoding (3 = charging).
+SCUBA_S3_STATUS_SEMANTICS = StatusSemantics(
+    labels={
+        int(Status.RETURNING): "Charging",
+        int(Status.CHARGING): "Charged",
+    },
+    charging=frozenset({int(Status.RETURNING), int(Status.CHARGING)}),
+    running=frozenset({int(Status.CLEANING)}),
+)
+
+MODEL_STATUS_SEMANTICS: dict[str, StatusSemantics] = {
+    "scuba_s3": SCUBA_S3_STATUS_SEMANTICS,
+}
+
+
 def device_model_string(device: dict[str, Any]) -> str:
     """Return the canonical model string from a device payload."""
     return str(device.get("model") or "")
+
+
+def status_semantics(device: dict[str, Any]) -> StatusSemantics | None:
+    """Return model-specific status-code semantics, or None for the default."""
+    # `model` is only populated once the device-info call succeeds; fall back to
+    # the model carried by the device list so a failed info call cannot silently
+    # revert the device to the default encoding.
+    raw_model = device_model_string(device) or str(device.get("deviceModel") or "")
+    key = raw_model.strip().lower().replace("-", "_").replace(" ", "_")
+    return MODEL_STATUS_SEMANTICS.get(key)
 
 
 def device_family(device: dict[str, Any]) -> DeviceFamily:
