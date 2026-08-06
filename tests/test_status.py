@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from custom_components.aiper.const import status_label, status_running, status_value
-from custom_components.aiper.state import normalize_device_state
+from custom_components.aiper.state import normalize_device_state, normalize_machine_update
 
 
 def test_status_label_uses_lower_status_bits() -> None:
@@ -61,6 +61,63 @@ def test_scuba_charging_status_is_reported_from_base_status() -> None:
     assert state["status"].value == "Charging"
     assert state["status"].attributes == {"code": 3}
     assert state["charging"].value is True
+
+
+def test_scuba_s3_reports_charging_on_status_2() -> None:
+    """Scuba S3 firmware reports status 2 for the whole charge, not "returning"."""
+    state = normalize_device_state({"model": "Scuba_S3", "machineStatus": 2})
+
+    assert state["status"].value == "Charging"
+    assert state["status"].attributes == {"code": 2}
+    assert state["charging"].value is True
+    assert state["running"].value is False
+
+
+def test_scuba_s3_reports_charged_on_status_3() -> None:
+    """Scuba S3 switches to status 3 once the battery reaches 100%."""
+    state = normalize_device_state({"model": "Scuba_S3", "machineStatus": 3})
+
+    assert state["status"].value == "Charged"
+    assert state["status"].attributes == {"code": 3}
+    assert state["charging"].value is True
+    assert state["running"].value is False
+
+
+def test_scuba_s3_cleaning_status_is_unchanged() -> None:
+    """Only codes 2 and 3 differ on the S3; cleaning stays code 1."""
+    state = normalize_device_state({"model": "Scuba_S3", "machineStatus": 1})
+
+    assert state["status"].value == "Cleaning"
+    assert state["charging"].value is False
+    assert state["running"].value is True
+
+
+def test_scuba_s3_status_semantics_apply_to_mqtt_updates() -> None:
+    """The MQTT shadow path uses the same model-specific mapping as REST."""
+    rest = {"model": "Scuba_S3"}
+
+    updates = normalize_machine_update(rest, {"status": 2, "cap": 52, "in_water": 0})
+
+    assert updates["status"].value == "Charging"
+    assert updates["charging"].value is True
+    assert updates["running"].value is False
+
+
+def test_scuba_s3_semantics_resolve_from_device_list_model() -> None:
+    """A failed device-info call must not revert the S3 to the default encoding."""
+    state = normalize_device_state({"deviceModel": "Scuba_S3", "machineStatus": 2})
+
+    assert state["status"].value == "Charging"
+    assert state["charging"].value is True
+
+
+def test_other_scuba_models_keep_default_status_encoding() -> None:
+    """The S3 override must not leak into other Scuba models."""
+    state = normalize_device_state({"model": "Scuba_X1", "machineStatus": 2})
+
+    assert state["status"].value == "Returning"
+    assert state["charging"].value is False
+    assert state["running"].value is True
 
 
 def test_identity_metadata_is_normalized_at_boundary() -> None:

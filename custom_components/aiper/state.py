@@ -9,7 +9,7 @@ from typing import Any
 
 from .const import CLEAN_PATH_MAP, Status, mode_label, status_label, status_running, status_value
 from .device_images import device_model_image_url
-from .profiles import Capability, DeviceFamily, derive_device_profile
+from .profiles import Capability, DeviceFamily, derive_device_profile, status_semantics
 
 
 @dataclass(frozen=True)
@@ -266,6 +266,35 @@ def _hydrocomm_status_text(status: int | None) -> str | None:
     return f"Status {status}"
 
 
+def _cleaner_status_text(device: dict[str, Any], status_code: int | None) -> str:
+    """Return the status label for a cleaner, honouring model-specific codes."""
+    semantics = status_semantics(device)
+    if semantics is not None and status_code is not None:
+        override = semantics.labels.get(status_code)
+        if override is not None:
+            return override
+    return status_label(status_code)
+
+
+def _cleaner_running(device: dict[str, Any], raw_status: int | None) -> bool:
+    """Return whether a cleaner is operating, honouring model-specific codes."""
+    semantics = status_semantics(device)
+    if semantics is None:
+        return status_running(raw_status)
+    value = status_value(raw_status)
+    return value is not None and value in semantics.running
+
+
+def _cleaner_charging(device: dict[str, Any], status_code: int | None) -> bool | None:
+    """Return whether a cleaner is charging, honouring model-specific codes."""
+    if status_code is None:
+        return None
+    semantics = status_semantics(device)
+    if semantics is not None:
+        return status_code in semantics.charging
+    return status_code == int(Status.CHARGING)
+
+
 def _charge_type_text(value: Any) -> str | None:
     charge_type = _coerce_int(value)
     if charge_type is None:
@@ -378,19 +407,20 @@ def normalize_machine_update(
             updates["status"] = EntityState(_hydrocomm_status_text(raw_status), {"code": raw_status})
             updates["charging"] = EntityState(_charging_value(raw_status))
         else:
-            running = status_running(raw_status)
+            running = _cleaner_running(rest, raw_status)
             status_code = status_value(raw_status)
             if running_control and not running:
                 status_code = int(Status.IDLE)
             updates["running"] = EntityState(running)
-            updates["status"] = EntityState(status_label(status_code), {"code": status_code})
-            updates["charging"] = EntityState(status_code == int(Status.CHARGING))
+            updates["status"] = EntityState(_cleaner_status_text(rest, status_code), {"code": status_code})
+            updates["charging"] = EntityState(_cleaner_charging(rest, status_code))
 
     if not hydrocomm and (
-        mqtt.get("mode") is not None or (running_control and raw_status is not None and not status_running(raw_status))
+        mqtt.get("mode") is not None
+        or (running_control and raw_status is not None and not _cleaner_running(rest, raw_status))
     ):
         mode_code = _coerce_int(mqtt.get("mode"))
-        if running_control and raw_status is not None and not status_running(raw_status):
+        if running_control and raw_status is not None and not _cleaner_running(rest, raw_status):
             mode_code = 0
         updates["mode"] = EntityState(
             _mode_text(rest, mode_code),
@@ -725,7 +755,7 @@ def normalize_device_state(raw: RawDeviceData) -> DeviceState:
     raw_status = _coerce_int(raw.get("machineStatus"))
 
     if raw_status is not None and not hydrocomm:
-        running = status_running(raw_status)
+        running = _cleaner_running(raw, raw_status)
         status_code = status_value(raw_status)
         if running_control and not running:
             status_code = int(Status.IDLE)
@@ -740,7 +770,7 @@ def normalize_device_state(raw: RawDeviceData) -> DeviceState:
     elif hydrocomm:
         status_text = _hydrocomm_status_text(status_code)
     elif status_code is not None:
-        status_text = status_label(status_code)
+        status_text = _cleaner_status_text(raw, status_code)
     else:
         status_text = "Idle"
     state["status"] = EntityState(
@@ -750,7 +780,7 @@ def normalize_device_state(raw: RawDeviceData) -> DeviceState:
     if hydrocomm:
         state["charging"] = EntityState(_charging_value(raw_status))
     else:
-        state["charging"] = EntityState(status_code == int(Status.CHARGING) if status_code is not None else None)
+        state["charging"] = EntityState(_cleaner_charging(raw, status_code))
 
     mode_code = _coerce_int(raw.get("mode"))
 
