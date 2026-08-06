@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.4] - 2026-08-06
+
+### Fixed
+- Fixed Scuba S3 reporting charging as "Returning" and full charge as "Charging". On Scuba S3 firmware V3.0.0 the device reports status code `2` for the entire charge and switches to `3` only once the battery reaches 100%, which left `binary_sensor.charging` inverted — off while charging, on when full. Status codes are now interpreted per model, so `binary_sensor.charging` is on throughout the charge, the status sensor reads "Charging" then "Charged", and `binary_sensor.running` no longer reports on while the robot sits on the charger. Other models keep the existing status encoding unchanged. Thanks to @chriguschneider for the detailed payload captures and the fix.
+
 ## [1.2.3] - 2026-07-01
 
 ### Fixed

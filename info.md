@@ -24,6 +24,9 @@ Alternatively, follow these manual steps:
 
 ## Recent Changes
 
+### v1.2.4
+- Fixed Scuba S3 reporting charging as "Returning" and full charge as "Charging", which left the charging sensor inverted. Status codes are now interpreted per model; other models are unchanged.
+
 ### v1.2.3
 - Fixed HACS release notes layout bug by combining custom release notes with GitHub format.
 
