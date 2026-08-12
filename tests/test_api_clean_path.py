@@ -14,6 +14,48 @@ def _api() -> AiperApi:
 
 
 @pytest.mark.asyncio
+async def test_scuba_s1_clean_path_query_uses_verified_at_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The S1 should bypass speculative REST and query AT+AUTO directly."""
+    api = _api()
+    api._devices["SN123"] = {"model": "Scuba_S1_2025"}
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(api, "is_mqtt_connected", lambda: True)
+
+    async def fake_query(sn: str, name: str) -> int:
+        calls.append((sn, name))
+        return 1
+
+    monkeypatch.setattr(api, "query_machine_at_int", fake_query)
+
+    assert await api.query_clean_path_setting("SN123") == 1
+    assert calls == [("SN123", "AUTO")]
+
+
+@pytest.mark.asyncio
+async def test_scuba_s1_clean_path_update_uses_only_verified_at_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The S1 should send only AT+AUTO with its 0/1 value."""
+    api = _api()
+    api._devices["SN123"] = {"model": "Scuba_S1_2025"}
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(api, "is_mqtt_connected", lambda: True)
+
+    async def fake_send(sn: str, command: str) -> bool:
+        calls.append((sn, command))
+        return True
+
+    monkeypatch.setattr(api, "send_machine_at", fake_send)
+
+    assert await api.update_clean_path_setting("SN123", 0) is True
+    assert await api.update_clean_path_setting("SN123", 1) is True
+    assert await api.update_clean_path_setting("SN123", 2) is False
+    assert calls == [("SN123", "AT+AUTO=0"), ("SN123", "AT+AUTO=1")]
+
+
+@pytest.mark.asyncio
 async def test_surfer_clean_path_query_uses_verified_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     """Surfer query should use the verified encrypted endpoint and sn-only body."""
     api = _api()

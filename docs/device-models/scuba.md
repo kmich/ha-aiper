@@ -54,11 +54,34 @@ Clean-path values are normalized across observed payload variants:
 - label variants such as `S-shaped` or `Adaptive`
 - sentinel `-1`: default `0`
 
+### Scuba S1 2025 / 2026 retail hardware
+
+The 2026 retail Scuba S1 identifies itself as `Scuba_S1_2025` with serial
+prefix `52`. Aiper Android 3.5.0 maps it to the app's X5ProMax device family and
+opens the model-specific X6 clean-path screen.
+
+The clean-path contract was verified against a physical device running main
+firmware V2.0.1:
+
+- query: `AT+AUTO?`
+- S-shaped: `AT+AUTO=0`
+- Adaptive: `AT+AUTO=1`
+- successful writes return `+OK`
+
+The query and both writes were captured from the official app. A subsequent
+read-only AWS IoT query from the integration returned code `1` after Adaptive
+was selected. The REST clean-path endpoint returns `-1`, and the setting is not
+present in the device shadow, so neither is used for this model.
+
+This model-specific path deliberately bypasses the legacy Scuba endpoint and
+command matrix below. Other Scuba models retain their existing behavior.
+
 ## Legacy Clean-Path Runtime Path
 
-Scuba still uses the legacy clean-path matrix in `custom_components/aiper/api.py`
-because current Scuba hardware has not been re-probed. The matrix tries multiple
-endpoint families, encrypted and plain envelopes, and several body shapes.
+Scuba models other than `Scuba_S1_2025` still use the legacy clean-path matrix
+in `custom_components/aiper/api.py` because current hardware has not been
+re-probed. The matrix tries multiple endpoint families, encrypted and plain
+envelopes, and several body shapes.
 
 Query endpoint families still present for non-Surfer devices:
 

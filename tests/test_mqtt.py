@@ -127,6 +127,31 @@ async def test_mqtt_paths_use_transport() -> None:
 
 
 @pytest.mark.asyncio
+async def test_numeric_at_query_publishes_question_form_and_parses_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Numeric AT queries should use the app-observed question form."""
+    api, _transport = _api_with_fake_mqtt()
+    published: list[tuple[str, str, dict[str, Any]]] = []
+
+    async def fake_send(sn: str, command_type: str, data: dict[str, Any]) -> bool:
+        published.append((sn, command_type, data))
+        api._record_ack(sn, "+AUTO:1\r\n+OK\r\n")
+        return True
+
+    monkeypatch.setattr(api, "send_command", fake_send)
+
+    assert await api.query_machine_at_int("SN123", "AUTO") == 1
+    assert published == [
+        (
+            "SN123",
+            "Machine",
+            {"sn": "SN123", "timeZone": "UTC+0", "cmd": "AT+AUTO?"},
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_set_cleaning_mode_uses_mode_at_command(monkeypatch: pytest.MonkeyPatch) -> None:
     """X1 mode selection should use AT+MODE, not AT+PLAN."""
     api, _transport = _api_with_fake_mqtt()

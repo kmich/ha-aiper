@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Added hardware-verified `Scuba_S1_2025` clean-path support using the official
+  app's `AT+AUTO?` query and `AT+AUTO=0/1` set contract. This model no longer
+  uses speculative REST, shadow, or fallback command variants for clean path.
+
 ## [1.2.4] - 2026-08-06
 
 ### Fixed

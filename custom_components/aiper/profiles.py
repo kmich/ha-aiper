@@ -75,11 +75,11 @@ SCUBA_CAPABILITIES = COMMON_CAPABILITIES | frozenset(
 
 # The 2026 retail Scuba S1 identifies itself to Aiper's backend as
 # ``Scuba_S1_2025``. Captured REST, MQTT, and device-shadow payloads do not
-# expose water temperature or clean-path state for this firmware. Do not
-# advertise those entities until a verified read contract exists.
+# expose water temperature. Clean-path support is verified separately through
+# the model's AT+AUTO query/set contract, so only water temperature remains
+# suppressed here.
 SCUBA_S1_2025_CAPABILITIES = SCUBA_CAPABILITIES - frozenset(
     {
-        Capability.CLEAN_PATH,
         Capability.WATER_TEMPERATURE,
     }
 )
@@ -261,9 +261,7 @@ def derive_device_profile(device: dict[str, Any]) -> DeviceProfile:
         model_key = str(device.get("deviceModel") or "").strip().lower().replace("-", "_").replace(" ", "_")
 
     if family == DeviceFamily.SCUBA:
-        capabilities = set(
-            SCUBA_S1_2025_CAPABILITIES if model_key == SCUBA_S1_2025_MODEL else SCUBA_CAPABILITIES
-        )
+        capabilities = set(SCUBA_S1_2025_CAPABILITIES if model_key == SCUBA_S1_2025_MODEL else SCUBA_CAPABILITIES)
     elif family == DeviceFamily.SURFER:
         capabilities = set(SURFER_CAPABILITIES)
     elif family == DeviceFamily.SHARK:

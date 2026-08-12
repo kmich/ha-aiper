@@ -388,6 +388,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> boo
                 await api.subscribe_device(sn, cb)
                 # Ask for a current shadow snapshot; many stacks publish only on change.
                 await api.request_shadow(sn)
+        # The Scuba_S1_2025 clean-path value is available only through an AT
+        # query. Refresh once after upChan subscriptions exist so the query
+        # acknowledgement can populate the entity during setup.
+        await coordinator.async_request_refresh()
         _LOGGER.info("MQTT connected and subscriptions registered")
     except ConfigEntryNotReady:
         raise

@@ -20,7 +20,7 @@ from .const import (
     mode_label,
     status_running,
 )
-from .profiles import Capability, derive_device_profile, has_capability
+from .profiles import SCUBA_S1_2025_MODEL, Capability, derive_device_profile, has_capability
 from .state import (
     DevicesState,
     DeviceState,
@@ -831,6 +831,18 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 self._apply_device_profile(sn)
 
                 if has_capability(self._devices[sn], Capability.CLEAN_PATH):
+                    # Clean-path is not present in the Scuba_S1_2025 REST or
+                    # shadow payloads. Its verified source is AT+AUTO?, queried
+                    # through the existing serialized MQTT command channel.
+                    raw_model = self._devices[sn].get("model") or self._devices[sn].get("deviceModel") or ""
+                    model_key = str(raw_model).strip().lower().replace("-", "_").replace(" ", "_")
+                    if model_key == SCUBA_S1_2025_MODEL and self.api.is_mqtt_connected():
+                        try:
+                            clean_path = await self.api.query_clean_path_setting(sn)
+                            if clean_path in (0, 1):
+                                self._clean_path_cache[sn] = clean_path
+                        except Exception as err:
+                            _LOGGER.debug("Clean-path query failed for %s: %s", sn, err)
                     self._devices[sn]["clean_path"] = self._clean_path_cache.get(sn)
                 else:
                     self._devices[sn]["clean_path"] = None

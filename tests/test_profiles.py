@@ -61,6 +61,14 @@ def test_scuba_profile_defaults_modes_by_family() -> None:
     }
 
 
+def test_scuba_s1_exposes_verified_clean_path_without_temperature() -> None:
+    """The S1 exposes only the clean-path capability verified on hardware."""
+    profile = derive_device_profile({"model": "Scuba_S1_2025"})
+
+    assert Capability.CLEAN_PATH in profile.capabilities
+    assert Capability.WATER_TEMPERATURE not in profile.capabilities
+
+
 def test_surfer_mode_evidence_stays_read_only() -> None:
     """Surfer mode IDs describe cleaning context, not selectable cleaning modes."""
     profile = derive_device_profile(

@@ -314,12 +314,12 @@ async def test_scuba_s1_only_publishes_observed_entities(hass: HomeAssistant) ->
     assert {
         "temperature",
         "charge_type",
-        "clean_path",
         "roller_brush",
         "caterpillar_tread",
         "propeller",
     }.isdisjoint(sensor_keys)
-    assert _select_keys(select_entities) == {"mode_selection"}
+    assert "clean_path" in sensor_keys
+    assert _select_keys(select_entities) == {"mode_selection", "clean_path"}
     assert _entity_by_key(sensor_entities, "runtime").native_value == 4.03
 
 
