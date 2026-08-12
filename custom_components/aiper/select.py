@@ -169,6 +169,10 @@ class AiperCleaningModeSelect(AiperSelectBase):
         if reported in self._mode_ids:
             return reported
 
+        selected = coerce_int(dev["mode_options"].attributes.get("selected_mode"))
+        if selected in self._mode_ids:
+            return selected
+
         pending = coerce_int(self.coordinator.get_pending_command_target(self._sn, "mode"))
         if pending in self._mode_ids:
             return pending

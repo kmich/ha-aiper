@@ -294,6 +294,8 @@ async def test_scuba_s1_only_publishes_observed_entities(hass: HomeAssistant) ->
             "machineStatus": 1,
             "runTime": 242,
             "supported_mode_ids": [1, 2, 3, 4, 5],
+            "selected_mode": 1,
+            "last_cleaning_mode": "Smart",
             "consumables": [
                 {
                     "name": "Replaceable MicroMesh Ultra-fine Filter",
@@ -320,6 +322,10 @@ async def test_scuba_s1_only_publishes_observed_entities(hass: HomeAssistant) ->
     }.isdisjoint(sensor_keys)
     assert "clean_path" in sensor_keys
     assert _select_keys(select_entities) == {"mode_selection", "clean_path"}
+    mode_select = next(entity for entity in select_entities if entity._key == "mode_selection")
+    assert mode_select.options == ["Auto", "Floor", "Wall", "Scheduled"]
+    assert mode_select.current_option == "Auto"
+    assert _entity_by_key(sensor_entities, "last_cleaning_mode").native_value == "Auto"
     assert _entity_by_key(sensor_entities, "runtime").native_value == 4.03
 
 

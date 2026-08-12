@@ -67,6 +67,14 @@ def test_scuba_s1_exposes_verified_clean_path_without_temperature() -> None:
 
     assert Capability.CLEAN_PATH in profile.capabilities
     assert Capability.WATER_TEMPERATURE not in profile.capabilities
+    assert profile.mode_map == {1: "Auto", 2: "Floor", 3: "Wall", 5: "Scheduled"}
+
+
+def test_scuba_s1_mode_profile_rejects_generic_waterline_evidence() -> None:
+    """Generic Scuba mode evidence must not add Waterline to the S1."""
+    profile = derive_device_profile({"model": "Scuba_S1_2025", "supported_mode_ids": [1, 2, 3, 4, 5]})
+
+    assert profile.mode_map == {1: "Auto", 2: "Floor", 3: "Wall", 5: "Scheduled"}
 
 
 def test_surfer_mode_evidence_stays_read_only() -> None:

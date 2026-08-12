@@ -121,6 +121,12 @@ SCUBA_DEFAULT_MODE_IDS = [
     int(CleaningMode.WATERLINE),
     int(CleaningMode.SCHEDULED),
 ]
+SCUBA_S1_2025_MODE_MAP = {
+    int(CleaningMode.SMART): "Auto",
+    int(CleaningMode.FLOOR): "Floor",
+    int(CleaningMode.WALL): "Wall",
+    int(CleaningMode.SCHEDULED): "Scheduled",
+}
 SURFER_DEFAULT_MODE_IDS = [0, int(CleaningMode.SMART), int(CleaningMode.SCHEDULED)]
 
 
@@ -260,6 +266,12 @@ def derive_device_profile(device: dict[str, Any]) -> DeviceProfile:
     if not model_key:
         model_key = str(device.get("deviceModel") or "").strip().lower().replace("-", "_").replace(" ", "_")
 
+    if model_key == SCUBA_S1_2025_MODEL:
+        # Aiper Android 3.5.0's X5ProMax profile exposes Auto, Floor, Wall,
+        # and Eco/Scheduled with command IDs 1, 2, 3, and 5. Waterline is not
+        # supported by this hardware even though it is a generic Scuba default.
+        mode_ids = list(SCUBA_S1_2025_MODE_MAP)
+
     if family == DeviceFamily.SCUBA:
         capabilities = set(SCUBA_S1_2025_CAPABILITIES if model_key == SCUBA_S1_2025_MODEL else SCUBA_CAPABILITIES)
     elif family == DeviceFamily.SURFER:
@@ -283,7 +295,7 @@ def derive_device_profile(device: dict[str, Any]) -> DeviceProfile:
         capabilities.add(Capability.WATER_TEMPERATURE)
     if device.get("in_water") is not None:
         capabilities.add(Capability.IN_WATER)
-    mode_map = _mode_map_for_ids(family, mode_ids)
+    mode_map = dict(SCUBA_S1_2025_MODE_MAP) if model_key == SCUBA_S1_2025_MODEL else _mode_map_for_ids(family, mode_ids)
 
     return DeviceProfile(
         family=family,

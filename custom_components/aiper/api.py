@@ -984,6 +984,12 @@ class AiperApi:
 
         return bool(rest_ok or mqtt_published or shadow_ok)
 
+    async def query_cleaning_mode_setting(self, sn: str) -> int | None:
+        """Query the configured cleaning mode for models with a verified contract."""
+        if not self._is_scuba_s1_2025(sn) or not self.is_mqtt_connected():
+            return None
+        return await self.query_machine_at_int(sn, "MODE")
+
     async def connect_mqtt(self) -> bool:
         """Connect to AWS IoT MQTT broker."""
         if not self._identity_id or not self._iot_endpoint:
@@ -1388,6 +1394,14 @@ class AiperApi:
         """Set a selectable cleaning mode."""
         mode_id = int(mode)
         _LOGGER.info("Setting cleaning mode for %s: %s", sn, mode_id)
+
+        if self._is_scuba_s1_2025(sn):
+            # Verified from Aiper Android 3.5.0's X5ProMax implementation.
+            # This model supports Auto/Floor/Wall/Scheduled as 1/2/3/5 and
+            # uses only AT+MODE. Do not fall through to speculative variants.
+            if mode_id not in (1, 2, 3, 5) or not self.is_mqtt_connected():
+                return False
+            return await self.send_machine_at(sn, f"AT+MODE={mode_id}") is True
 
         # Try MQTT AT commands first (preferred — low latency, confirmed by ack).
         # X1 firmware rejects AT+PLAN for normal mode selection. Earlier

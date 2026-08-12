@@ -472,9 +472,7 @@ def normalize_machine_update(
         current_running = getattr((current or {}).get("running"), "value", None)
         if raw_status is not None and not hydrocomm:
             current_running = _cleaner_running(rest, raw_status)
-        updates["runtime"] = EntityState(
-            _current_runtime_to_hours(rest, mqtt.get("run_time"), current_running)
-        )
+        updates["runtime"] = EntityState(_current_runtime_to_hours(rest, mqtt.get("run_time"), current_running))
     if mqtt.get("in_water") is not None:
         updates["in_water"] = EntityState(bool(mqtt.get("in_water")))
     solar_status_raw = mqtt.get("solar_status") if "solar_status" in mqtt else mqtt.get("solarStatus")
@@ -749,6 +747,10 @@ def _normalize_identity(states: DeviceState, device: RawDeviceData) -> None:
     supported_mode_ids = device.get("supported_mode_ids")
     if not isinstance(supported_mode_ids, list):
         supported_mode_ids = []
+    if mode_map:
+        supported_mode_ids = [mode_id for mode_id in supported_mode_ids if _coerce_int(mode_id) in mode_map] or list(
+            mode_map
+        )
 
     states["device_info"] = EntityState(
         name,
@@ -761,7 +763,11 @@ def _normalize_identity(states: DeviceState, device: RawDeviceData) -> None:
     )
     states["device_family"] = EntityState(profile_family, {"capabilities": capabilities})
     states["capabilities"] = EntityState(capabilities)
-    states["mode_options"] = EntityState(supported_mode_ids, {"mode_map": mode_map})
+    mode_options_attributes: dict[str, Any] = {"mode_map": mode_map}
+    selected_mode = _coerce_int(device.get("selected_mode"))
+    if selected_mode is not None:
+        mode_options_attributes["selected_mode"] = selected_mode
+    states["mode_options"] = EntityState(supported_mode_ids, mode_options_attributes)
     states["entity_picture"] = EntityState(device_model_image_url(device))
 
 
@@ -849,6 +855,11 @@ def normalize_device_state(raw: RawDeviceData) -> DeviceState:
     last_cleaning_mode = (
         raw.get("last_cleaning_mode") if "last_cleaning_mode" in raw else raw.get("_ha_last_cleaning_mode")
     )
+    model_key = device_model_string(raw).strip().lower().replace("-", "_").replace(" ", "_")
+    if not model_key:
+        model_key = str(raw.get("deviceModel") or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if model_key == SCUBA_S1_2025_MODEL and str(last_cleaning_mode).strip().lower() == "smart":
+        last_cleaning_mode = "Auto"
     last_cleaning_start = (
         raw.get("last_cleaning_start") if "last_cleaning_start" in raw else raw.get("_ha_last_cleaning_start")
     )

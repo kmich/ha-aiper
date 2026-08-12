@@ -659,6 +659,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         self._history_cache: dict[str, dict[str, Any]] = {}
         self._consumables_cache: dict[str, list[dict[str, Any]]] = {}
         self._clean_path_cache: dict[str, int] = {}
+        self._selected_mode_cache: dict[str, int] = {}
 
         # Command tracking (for community-friendly UX)
         # We do not apply optimistic state changes; instead we track pending commands
@@ -676,8 +677,10 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         profile = derive_device_profile(profile_input)
         device["profile_family"] = profile.family.value
         device["capabilities"] = sorted(capability.value for capability in profile.capabilities)
-        if not device.get("supported_mode_ids"):
-            device["supported_mode_ids"] = list(profile.mode_map.keys())
+        # The derived profile is authoritative. This matters for model-specific
+        # profiles such as Scuba_S1_2025, where a generic Scuba fallback may
+        # otherwise leave an unsupported Waterline option behind.
+        device["supported_mode_ids"] = list(profile.mode_map.keys())
         device["mode_map"] = profile.mode_map
 
     async def _async_update_data(self) -> DevicesState:
@@ -829,13 +832,13 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 self._devices[sn]["bluetooth_name"] = info_data.get("bleName")
                 self._devices[sn]["consumables"] = self._consumables_cache.get(sn) or []
                 self._apply_device_profile(sn)
+                raw_model = self._devices[sn].get("model") or self._devices[sn].get("deviceModel") or ""
+                model_key = str(raw_model).strip().lower().replace("-", "_").replace(" ", "_")
 
                 if has_capability(self._devices[sn], Capability.CLEAN_PATH):
                     # Clean-path is not present in the Scuba_S1_2025 REST or
                     # shadow payloads. Its verified source is AT+AUTO?, queried
                     # through the existing serialized MQTT command channel.
-                    raw_model = self._devices[sn].get("model") or self._devices[sn].get("deviceModel") or ""
-                    model_key = str(raw_model).strip().lower().replace("-", "_").replace(" ", "_")
                     if model_key == SCUBA_S1_2025_MODEL and self.api.is_mqtt_connected():
                         try:
                             clean_path = await self.api.query_clean_path_setting(sn)
@@ -846,6 +849,18 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     self._devices[sn]["clean_path"] = self._clean_path_cache.get(sn)
                 else:
                     self._devices[sn]["clean_path"] = None
+
+                if model_key == SCUBA_S1_2025_MODEL and self.api.is_mqtt_connected():
+                    try:
+                        selected_mode = await self.api.query_cleaning_mode_setting(sn)
+                        if selected_mode in (1, 2, 3, 5):
+                            selected_mode_cache = getattr(self, "_selected_mode_cache", None)
+                            if selected_mode_cache is None:
+                                selected_mode_cache = self._selected_mode_cache = {}
+                            selected_mode_cache[sn] = selected_mode
+                    except Exception as err:
+                        _LOGGER.debug("Cleaning-mode query failed for %s: %s", sn, err)
+                self._devices[sn]["selected_mode"] = getattr(self, "_selected_mode_cache", {}).get(sn)
 
             # Expire pending commands (UI hints)
             for _sn in list(self._command_state.keys()):

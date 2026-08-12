@@ -6,6 +6,9 @@
 - Added hardware-verified `Scuba_S1_2025` clean-path support using the official
   app's `AT+AUTO?` query and `AT+AUTO=0/1` set contract. This model no longer
   uses speculative REST, shadow, or fallback command variants for clean path.
+- Added the app-derived `Scuba_S1_2025` cleaning-mode profile: Auto, Floor,
+  Wall, and Scheduled. The S1 now queries with `AT+MODE?`, writes only the
+  corresponding `AT+MODE=1/2/3/5` commands, and no longer exposes Waterline.
 
 ## [1.2.4] - 2026-08-06
 

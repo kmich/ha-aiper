@@ -76,6 +76,28 @@ present in the device shadow, so neither is used for this model.
 This model-specific path deliberately bypasses the legacy Scuba endpoint and
 command matrix below. Other Scuba models retain their existing behavior.
 
+The same app build exposes an S1-specific cleaning-mode list and AT contract:
+
+- query: `AT+MODE?`
+- `1`: Auto
+- `2`: Floor
+- `3`: Wall
+- `5`: Scheduled
+- set: `AT+MODE=<mode_id>`; successful writes return `+OK`
+
+Waterline (`4`) is not supported by this model and is not offered by its app
+screen. The integration therefore treats this exact list as authoritative for
+`Scuba_S1_2025`, rather than inheriting the generic Scuba mode list. The
+cleaning-mode select represents the configured program for the next run; the
+separate Mode sensor continues to represent the machine's currently reported
+operating mode. Aiper cleaning history calls mode `1` "Smart" generically; the
+S1's Last Cleaning Mode sensor normalizes that label to the model's "Auto".
+
+Over AWS IoT, this S1 currently acknowledges `AT+MODE?` with `+OK` but does not
+return a numeric value. The select therefore uses the active mode when present,
+the last confirmed local selection, or cleaning history after a restart. A set
+command is accepted only after the cleaner returns `+OK`.
+
 ## Legacy Clean-Path Runtime Path
 
 Scuba models other than `Scuba_S1_2025` still use the legacy clean-path matrix

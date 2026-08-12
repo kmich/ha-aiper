@@ -56,6 +56,40 @@ async def test_scuba_s1_clean_path_update_uses_only_verified_at_contract(
 
 
 @pytest.mark.asyncio
+async def test_scuba_s1_mode_query_and_update_use_verified_at_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The S1 mode surface should use only MODE query/set commands."""
+    api = _api()
+    api._devices["SN123"] = {"model": "Scuba_S1_2025"}
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(api, "is_mqtt_connected", lambda: True)
+
+    async def fake_query(sn: str, name: str) -> int:
+        calls.append((sn, f"query:{name}"))
+        return 1
+
+    async def fake_send(sn: str, command: str) -> bool:
+        calls.append((sn, command))
+        return True
+
+    monkeypatch.setattr(api, "query_machine_at_int", fake_query)
+    monkeypatch.setattr(api, "send_machine_at", fake_send)
+
+    assert await api.query_cleaning_mode_setting("SN123") == 1
+    for mode_id in (1, 2, 3, 5):
+        assert await api.set_cleaning_mode("SN123", mode_id) is True
+    assert await api.set_cleaning_mode("SN123", 4) is False
+    assert calls == [
+        ("SN123", "query:MODE"),
+        ("SN123", "AT+MODE=1"),
+        ("SN123", "AT+MODE=2"),
+        ("SN123", "AT+MODE=3"),
+        ("SN123", "AT+MODE=5"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_surfer_clean_path_query_uses_verified_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     """Surfer query should use the verified encrypted endpoint and sn-only body."""
     api = _api()
