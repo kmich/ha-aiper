@@ -282,6 +282,48 @@ async def test_scuba_entity_publication_uses_scuba_capabilities(hass: HomeAssist
 
 
 @pytest.mark.asyncio
+async def test_scuba_s1_only_publishes_observed_entities(hass: HomeAssistant) -> None:
+    """The S1 hides unsupported generic Scuba diagnostics and keeps MicroMesh."""
+    entry, _coordinator = _hass_with_device(
+        hass,
+        {
+            "sn": "SN123",
+            "name": "Scuba S1",
+            "model": "Scuba_S1_2025",
+            "battLevel": 15,
+            "machineStatus": 1,
+            "runTime": 242,
+            "supported_mode_ids": [1, 2, 3, 4, 5],
+            "consumables": [
+                {
+                    "name": "Replaceable MicroMesh Ultra-fine Filter",
+                    "remaining_hours": 8758,
+                    "percent_left": 100,
+                }
+            ],
+            "in_water": 0,
+        },
+    )
+
+    sensor_entities = await _setup_platform(sensor, hass, entry)
+    select_entities = await _setup_platform(select, hass, entry)
+    sensor_keys = _keys(sensor_entities)
+
+    assert "micromesh_filter" in sensor_keys
+    assert _entity_by_key(sensor_entities, "micromesh_filter").native_value == 100
+    assert {
+        "temperature",
+        "charge_type",
+        "clean_path",
+        "roller_brush",
+        "caterpillar_tread",
+        "propeller",
+    }.isdisjoint(sensor_keys)
+    assert _select_keys(select_entities) == {"mode_selection"}
+    assert _entity_by_key(sensor_entities, "runtime").native_value == 4.03
+
+
+@pytest.mark.asyncio
 async def test_shark_entity_publication_keeps_consumables_unavailable_without_values(hass: HomeAssistant) -> None:
     """Shark publishes applicable consumable entities without inventing values."""
     entry, _coordinator = _hass_with_device(

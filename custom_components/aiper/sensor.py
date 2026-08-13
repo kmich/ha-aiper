@@ -17,7 +17,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from . import AiperConfigEntry
 from .const import DOMAIN
 from .coordinator import AiperDataUpdateCoordinator
-from .helpers import is_not_hydrocomm, is_not_surfer_or_hydrocomm
+from .helpers import is_non_s1_cleaner, is_not_hydrocomm, is_not_scuba_s1_2025
 from .profiles import Capability
 from .state import DeviceState, state_has_capability
 
@@ -203,6 +203,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         icon="mdi:battery-charging",
         entity_category=EntityCategory.DIAGNOSTIC,
         capability=Capability.CHARGING,
+        include_fn=is_not_scuba_s1_2025,
     ),
     AiperSensorEntityDescription(
         key="supply_voltage",
@@ -334,7 +335,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         state_class=SensorStateClass.MEASUREMENT,
-        include_fn=is_not_surfer_or_hydrocomm,
+        include_fn=is_non_s1_cleaner,
     ),
     AiperSensorEntityDescription(
         key="micromesh_filter",
@@ -352,7 +353,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         state_class=SensorStateClass.MEASUREMENT,
-        include_fn=is_not_surfer_or_hydrocomm,
+        include_fn=is_non_s1_cleaner,
     ),
     AiperSensorEntityDescription(
         key="propeller",
@@ -361,7 +362,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         state_class=SensorStateClass.MEASUREMENT,
-        include_fn=is_not_hydrocomm,
+        include_fn=lambda device: is_not_hydrocomm(device) and is_not_scuba_s1_2025(device),
     ),
 )
 

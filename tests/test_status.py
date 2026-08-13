@@ -103,6 +103,39 @@ def test_scuba_s3_status_semantics_apply_to_mqtt_updates() -> None:
     assert updates["running"].value is False
 
 
+def test_scuba_s1_reports_charging_on_status_2() -> None:
+    """Scuba S1 V2.0.1 reports status 2 while physically charging."""
+    state = normalize_device_state({"model": "Scuba_S1_2025", "machineStatus": 2})
+
+    assert state["status"].value == "Charging"
+    assert state["status"].attributes == {"code": 2}
+    assert state["charging"].value is True
+    assert state["running"].value is False
+
+
+def test_scuba_s1_reports_low_battery_terminal_state_as_parked() -> None:
+    """Observed status 10 is parked and non-running after the S1 cycle ends."""
+    state = normalize_device_state({"model": "Scuba_S1_2025", "machineStatus": 10})
+
+    assert state["status"].value == "Parked"
+    assert state["status"].attributes == {"code": 10}
+    assert state["charging"].value is False
+    assert state["running"].value is False
+
+
+def test_scuba_s1_status_semantics_apply_to_mqtt_updates() -> None:
+    """The S1 MQTT shadow path uses the same model-specific charging map."""
+    updates = normalize_machine_update(
+        {"model": "Scuba_S1_2025"},
+        {"status": 2, "cap": 15, "run_time": 0, "in_water": 0},
+    )
+
+    assert updates["status"].value == "Charging"
+    assert updates["charging"].value is True
+    assert updates["running"].value is False
+    assert updates["in_water"].value is False
+
+
 def test_scuba_s3_semantics_resolve_from_device_list_model() -> None:
     """A failed device-info call must not revert the S3 to the default encoding."""
     state = normalize_device_state({"deviceModel": "Scuba_S3", "machineStatus": 2})

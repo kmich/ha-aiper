@@ -55,6 +55,18 @@ def is_not_surfer_or_hydrocomm(device: DeviceState) -> bool:
     return is_not_surfer(device) and is_not_hydrocomm(device)
 
 
+def is_not_scuba_s1_2025(device: DeviceState) -> bool:
+    """Exclude entities not reported by the Scuba S1 2025 backend profile."""
+    device_info = device.get("device_info")
+    model = str(getattr(device_info, "attributes", {}).get("model") or "")
+    return model.strip().lower().replace("-", "_").replace(" ", "_") != "scuba_s1_2025"
+
+
+def is_non_s1_cleaner(device: DeviceState) -> bool:
+    """Include legacy cleaner diagnostics except on the observed S1 profile."""
+    return is_not_surfer_or_hydrocomm(device) and is_not_scuba_s1_2025(device)
+
+
 def coerce_int(val: Any) -> int | None:
     if isinstance(val, bool) or val is None:
         return None

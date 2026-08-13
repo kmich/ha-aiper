@@ -47,6 +47,7 @@ class Capability(StrEnum):
 
 SURFER_MODEL_MARKERS = (DeviceFamily.SURFER.value,)
 SHARK_MODEL_MARKERS = (DeviceFamily.SHARK.value,)
+SCUBA_S1_2025_MODEL = "scuba_s1_2025"
 
 COMMON_CAPABILITIES = frozenset(
     {
@@ -69,6 +70,17 @@ SCUBA_CAPABILITIES = COMMON_CAPABILITIES | frozenset(
         Capability.CLEAN_PATH,
         Capability.WATER_TEMPERATURE,
         Capability.IN_WATER,
+    }
+)
+
+# The 2026 retail Scuba S1 identifies itself to Aiper's backend as
+# ``Scuba_S1_2025``. Captured REST, MQTT, and device-shadow payloads do not
+# expose water temperature or clean-path state for this firmware. Do not
+# advertise those entities until a verified read contract exists.
+SCUBA_S1_2025_CAPABILITIES = SCUBA_CAPABILITIES - frozenset(
+    {
+        Capability.CLEAN_PATH,
+        Capability.WATER_TEMPERATURE,
     }
 )
 
@@ -153,7 +165,21 @@ SCUBA_S3_STATUS_SEMANTICS = StatusSemantics(
     running=frozenset({int(Status.CLEANING)}),
 )
 
+# Captured on Scuba_S1_2025 main firmware V2.0.1:
+# - status 1 while physically cleaning
+# - status 10 after low-battery parking (not running)
+# - status 2 while physically connected to the charger
+SCUBA_S1_2025_STATUS_SEMANTICS = StatusSemantics(
+    labels={
+        int(Status.RETURNING): "Charging",
+        10: "Parked",
+    },
+    charging=frozenset({int(Status.RETURNING), int(Status.CHARGING)}),
+    running=frozenset({int(Status.CLEANING)}),
+)
+
 MODEL_STATUS_SEMANTICS: dict[str, StatusSemantics] = {
+    SCUBA_S1_2025_MODEL: SCUBA_S1_2025_STATUS_SEMANTICS,
     "scuba_s3": SCUBA_S3_STATUS_SEMANTICS,
 }
 
@@ -230,8 +256,14 @@ def derive_device_profile(device: dict[str, Any]) -> DeviceProfile:
         elif family == DeviceFamily.SURFER:
             mode_ids = list(SURFER_DEFAULT_MODE_IDS)
 
+    model_key = device_model_string(device).strip().lower().replace("-", "_").replace(" ", "_")
+    if not model_key:
+        model_key = str(device.get("deviceModel") or "").strip().lower().replace("-", "_").replace(" ", "_")
+
     if family == DeviceFamily.SCUBA:
-        capabilities = set(SCUBA_CAPABILITIES)
+        capabilities = set(
+            SCUBA_S1_2025_CAPABILITIES if model_key == SCUBA_S1_2025_MODEL else SCUBA_CAPABILITIES
+        )
     elif family == DeviceFamily.SURFER:
         capabilities = set(SURFER_CAPABILITIES)
     elif family == DeviceFamily.SHARK:
@@ -249,7 +281,7 @@ def derive_device_profile(device: dict[str, Any]) -> DeviceProfile:
     else:
         capabilities = set(COMMON_CAPABILITIES)
 
-    if device.get("temp") is not None:
+    if device.get("temp") is not None and model_key != SCUBA_S1_2025_MODEL:
         capabilities.add(Capability.WATER_TEMPERATURE)
     if device.get("in_water") is not None:
         capabilities.add(Capability.IN_WATER)
