@@ -43,6 +43,11 @@ class Capability(StrEnum):
     SOLAR_CHARGING = "solar_charging"
     BLUETOOTH = "bluetooth"
     DEVICE_LINK = "device_link"
+    CHARGE_TYPE = "charge_type"
+    ROLLER_BRUSH = "roller_brush"
+    MICROMESH_FILTER = "micromesh_filter"
+    CATERPILLAR_TREAD = "caterpillar_tread"
+    PROPELLER = "propeller"
 
 
 SURFER_MODEL_MARKERS = (DeviceFamily.SURFER.value,)
@@ -61,6 +66,11 @@ COMMON_CAPABILITIES = frozenset(
         Capability.CHARGING,
         Capability.BLUETOOTH,
         Capability.DEVICE_LINK,
+        Capability.CHARGE_TYPE,
+        Capability.ROLLER_BRUSH,
+        Capability.MICROMESH_FILTER,
+        Capability.CATERPILLAR_TREAD,
+        Capability.PROPELLER,
     }
 )
 
@@ -75,16 +85,22 @@ SCUBA_CAPABILITIES = COMMON_CAPABILITIES | frozenset(
 
 # The 2026 retail Scuba S1 identifies itself to Aiper's backend as
 # ``Scuba_S1_2025``. Captured REST, MQTT, and device-shadow payloads do not
-# expose water temperature. Clean-path support is verified separately through
-# the model's AT+AUTO query/set contract, so only water temperature remains
-# suppressed here.
+# expose water temperature, charge type, roller brush, caterpillar tread, or
+# propeller data. Clean-path and MicroMesh support are verified separately, so
+# those capabilities remain enabled for this model.
 SCUBA_S1_2025_CAPABILITIES = SCUBA_CAPABILITIES - frozenset(
     {
         Capability.WATER_TEMPERATURE,
+        Capability.CHARGE_TYPE,
+        Capability.ROLLER_BRUSH,
+        Capability.CATERPILLAR_TREAD,
+        Capability.PROPELLER,
     }
 )
 
-SURFER_CAPABILITIES = COMMON_CAPABILITIES | frozenset(
+SURFER_CAPABILITIES = (
+    COMMON_CAPABILITIES - frozenset({Capability.ROLLER_BRUSH, Capability.CATERPILLAR_TREAD})
+) | frozenset(
     {
         Capability.RUNNING_CONTROL,
         Capability.SOLAR_CHARGING,
@@ -107,6 +123,7 @@ HYDROCOMM_CAPABILITIES = frozenset(
         Capability.BLUETOOTH,
         Capability.MQTT_SHADOW,
         Capability.CHARGING,
+        Capability.CHARGE_TYPE,
         Capability.SOLAR_CHARGING,
         Capability.WATER_TEMPERATURE,
         Capability.WATER_QUALITY,

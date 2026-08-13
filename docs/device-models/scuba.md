@@ -68,6 +68,11 @@ firmware V2.0.1:
 - Adaptive: `AT+AUTO=1`
 - successful writes return `+OK`
 
+The model capability profile exposes only hardware-backed S1 entities. It
+retains the observed MicroMesh consumable and suppresses water temperature,
+charge type, roller brush, caterpillar tread, and propeller entities for which
+this device provides no usable data.
+
 The query and both writes were captured from the official app. A subsequent
 read-only AWS IoT query from the integration returned code `1` after Adaptive
 was selected. The REST clean-path endpoint returns `-1`, and the setting is not

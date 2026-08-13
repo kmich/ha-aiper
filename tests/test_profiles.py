@@ -67,6 +67,11 @@ def test_scuba_s1_exposes_verified_clean_path_without_temperature() -> None:
 
     assert Capability.CLEAN_PATH in profile.capabilities
     assert Capability.WATER_TEMPERATURE not in profile.capabilities
+    assert Capability.CHARGE_TYPE not in profile.capabilities
+    assert Capability.ROLLER_BRUSH not in profile.capabilities
+    assert Capability.MICROMESH_FILTER in profile.capabilities
+    assert Capability.CATERPILLAR_TREAD not in profile.capabilities
+    assert Capability.PROPELLER not in profile.capabilities
     assert profile.mode_map == {1: "Auto", 2: "Floor", 3: "Wall", 5: "Scheduled"}
 
 

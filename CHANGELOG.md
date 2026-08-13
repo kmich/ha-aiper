@@ -11,6 +11,9 @@
   corresponding `AT+MODE=1/2/3/5` commands, and no longer exposes Waterline.
 - Added bounded S1 clean-path write confirmation so stale immediate readback
   cannot briefly revert a newly acknowledged selection in Home Assistant.
+- Added an explicit S1 capability profile that retains the observed MicroMesh
+  consumable while suppressing unsupported temperature, charge-type, roller,
+  tread, and propeller entities.
 - Fixed `Scuba_S1_2025` post-cycle charging reconciliation. A fresh REST
   charging status now supersedes an hours-old MQTT Cleaning/Wet report and
   coherently reports Charging, Not running, Dry, Mode 0, and zero active

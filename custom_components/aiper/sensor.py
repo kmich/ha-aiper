@@ -17,7 +17,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from . import AiperConfigEntry
 from .const import DOMAIN
 from .coordinator import AiperDataUpdateCoordinator
-from .helpers import is_non_s1_cleaner, is_not_hydrocomm, is_not_scuba_s1_2025
+from .helpers import is_not_hydrocomm
 from .profiles import Capability
 from .state import DeviceState, state_has_capability
 
@@ -202,8 +202,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         name="Charge Type",
         icon="mdi:battery-charging",
         entity_category=EntityCategory.DIAGNOSTIC,
-        capability=Capability.CHARGING,
-        include_fn=is_not_scuba_s1_2025,
+        capability=Capability.CHARGE_TYPE,
     ),
     AiperSensorEntityDescription(
         key="supply_voltage",
@@ -335,7 +334,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         state_class=SensorStateClass.MEASUREMENT,
-        include_fn=is_non_s1_cleaner,
+        capability=Capability.ROLLER_BRUSH,
     ),
     AiperSensorEntityDescription(
         key="micromesh_filter",
@@ -344,7 +343,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         state_class=SensorStateClass.MEASUREMENT,
-        include_fn=is_not_hydrocomm,
+        capability=Capability.MICROMESH_FILTER,
     ),
     AiperSensorEntityDescription(
         key="caterpillar_tread",
@@ -353,7 +352,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         state_class=SensorStateClass.MEASUREMENT,
-        include_fn=is_non_s1_cleaner,
+        capability=Capability.CATERPILLAR_TREAD,
     ),
     AiperSensorEntityDescription(
         key="propeller",
@@ -362,7 +361,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         state_class=SensorStateClass.MEASUREMENT,
-        include_fn=lambda device: is_not_hydrocomm(device) and is_not_scuba_s1_2025(device),
+        capability=Capability.PROPELLER,
     ),
 )
 
