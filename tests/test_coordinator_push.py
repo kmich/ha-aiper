@@ -311,24 +311,28 @@ async def test_scuba_s1_fresh_rest_charging_replaces_stale_mqtt_state(hass: Home
     ]
 
 
+@pytest.mark.parametrize(("machine_status", "reported_water"), [(1, 0), (10, None)])
 @pytest.mark.asyncio
-async def test_scuba_s1_fresh_rest_cleaning_implies_wet_without_water_report(
+async def test_scuba_s1_rest_cleaning_or_parked_implies_wet(
     hass: HomeAssistant,
+    machine_status: int,
+    reported_water: int | None,
 ) -> None:
-    """Fresh S1 Cleaning status supersedes an older pre-submersion Dry value."""
+    """S1 Cleaning overrides stale Dry; Parked stays Wet without a newer report."""
 
     class FakeApi:
         async def get_devices(self):
-            return [
-                {
-                    "sn": "SN123",
-                    "name": "Scuba S1",
-                    "model": "Scuba_S1_2025",
-                    "online": False,
-                    "battLevel": 89,
-                    "machineStatus": 1,
-                }
-            ]
+            device = {
+                "sn": "SN123",
+                "name": "Scuba S1",
+                "model": "Scuba_S1_2025",
+                "online": False,
+                "battLevel": 89,
+                "machineStatus": machine_status,
+            }
+            if reported_water is not None:
+                device["in_water"] = reported_water
+            return [device]
 
         async def get_device_info(self, sn):
             raise AssertionError("metadata info should not be polled before refresh interval")

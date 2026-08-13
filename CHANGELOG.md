@@ -18,9 +18,10 @@
   samples spanning at least two minutes may provide the same fallback only
   when no newer MQTT Machine report exists. Diagnostics identify the trigger
   used. Other device models retain the existing MQTT precedence.
-- Fixed the S1 retaining its pre-submersion Dry value when a fresh REST poll
-  reports Cleaning but does not include a newer water-state field. For this
-  model, active Cleaning is treated as Wet until newer explicit state arrives.
+- Fixed the S1 flipping from Wet to Dry when a fresh REST poll reports Cleaning
+  together with a stale `in_water=0`. For this model, active Cleaning is always
+  Wet. Observed status 10 represents parking underwater and remains Wet when
+  REST omits a newer water-state report.
 
 ## [1.2.4] - 2026-08-06
 

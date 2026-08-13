@@ -798,14 +798,15 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                             self._record_s1_reconciliation(
                                 serial, trigger="rest_machine_status", rest_status=rest_status
                             )
-                        elif model_key == SCUBA_S1_2025_MODEL and rest_status == 1 and "in_water" not in discovered:
-                            # On S1 V2.0.1 the device-list poll can resume with
-                            # a current Cleaning status after the cleaner has
-                            # submerged, while in_water remains the older dry
-                            # value captured before Wi-Fi was lost. Physical
-                            # cleaning on this model necessarily occurs in the
-                            # pool, so a fresh Cleaning status is newer evidence.
-                            merged_device["in_water"] = 1
+                        elif model_key == SCUBA_S1_2025_MODEL and rest_status in (1, 10):
+                            # On S1 V2.0.1 the device-list poll reports
+                            # in_water=0 while status 1 still confirms active
+                            # cleaning. The S1 also parks underwater with status
+                            # 10, for which REST omits water state. Cleaning is
+                            # therefore authoritative; Parked implies Wet only
+                            # when REST has no newer explicit water report.
+                            if rest_status == 1 or "in_water" not in discovered:
+                                merged_device["in_water"] = 1
                         elif (
                             model_key == SCUBA_S1_2025_MODEL
                             and rest_status is None

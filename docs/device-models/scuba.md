@@ -115,10 +115,12 @@ whether `mqtt_machine_status`, `rest_machine_status`, or
 A bounded, de-duplicated event timeline preserves source order when a later
 REST poll confirms a transition first reported through MQTT.
 
-The inverse transition has a similar S1-only rule. If a fresh REST device-list
-poll reports Cleaning but omits `in_water`, it supersedes an older Dry value
-captured immediately before submersion: this model cannot physically clean
-outside the pool. A newer explicit water-state report remains authoritative.
+The inverse transition has similar S1-only rules. A fresh REST device-list poll
+can report Cleaning together with a stale `in_water=0`; Cleaning is authoritative
+because this model cannot physically clean outside the pool. Observed status 10
+means the S1 has parked underwater, so Parked remains Wet when REST omits a newer
+water-state report. Explicit water state remains authoritative outside active
+Cleaning, and charging always implies Dry.
 
 ## Legacy Clean-Path Runtime Path
 
