@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import suppress
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -661,12 +662,81 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         self._consumables_cache: dict[str, list[dict[str, Any]]] = {}
         self._clean_path_cache: dict[str, int] = {}
         self._selected_mode_cache: dict[str, int] = {}
+        self._s1_battery_samples: dict[str, list[dict[str, Any]]] = {}
+        self._last_s1_mqtt_machine_report: dict[str, dict[str, Any]] = {}
+        self._state_reconciliation: dict[str, dict[str, Any]] = {}
 
         # Command tracking (for community-friendly UX)
         # We do not apply optimistic state changes; instead we track pending commands
         # and mark them confirmed when the device reports the new value.
         self._command_state: dict[str, dict[str, dict[str, Any]]] = {}
         # Structure: {sn: {"pending": {kind: {...}}, "last": {kind: {...}}}}
+
+    def _record_s1_battery_sample(self, sn: str, value: Any, observed_at: datetime) -> None:
+        """Retain a small, non-sensitive battery trend for S1 fallback logic."""
+        try:
+            battery = int(value)
+        except (TypeError, ValueError):
+            return
+        samples = getattr(self, "_s1_battery_samples", None)
+        if samples is None:
+            samples = self._s1_battery_samples = {}
+        history = samples.setdefault(sn, [])
+        history.append({"observed_at": observed_at, "battery": battery})
+        del history[:-3]
+
+    def _s1_battery_rise_indicates_charging(self, sn: str) -> bool:
+        """Return true for a sustained S1 rise without a newer MQTT report."""
+        history = getattr(self, "_s1_battery_samples", {}).get(sn) or []
+        if len(history) < 3:
+            return False
+        first, middle, last = history[-3:]
+        if not (first["battery"] < middle["battery"] < last["battery"]):
+            return False
+        if last["battery"] - first["battery"] < 2:
+            return False
+        if (last["observed_at"] - first["observed_at"]).total_seconds() < 120:
+            return False
+        mqtt_report = getattr(self, "_last_s1_mqtt_machine_report", {}).get(sn) or {}
+        mqtt_at = _ensure_utc_aware(mqtt_report.get("observed_at"))
+        return mqtt_at is None or mqtt_at <= first["observed_at"]
+
+    def _record_s1_reconciliation(
+        self,
+        sn: str,
+        *,
+        trigger: str,
+        rest_status: int | None = None,
+    ) -> None:
+        """Record why S1 operational state was reconciled for diagnostics."""
+        history = getattr(self, "_s1_battery_samples", {}).get(sn) or []
+        records = getattr(self, "_state_reconciliation", None)
+        if records is None:
+            records = self._state_reconciliation = {}
+        previous = records.get(sn) or {}
+        events = list(previous.get("events") or [])
+        event = {
+            "trigger": trigger,
+            "observed_at": dt_util.utcnow().isoformat(),
+            "rest_status": rest_status,
+            "battery_samples": [
+                {"observed_at": sample["observed_at"].isoformat(), "battery": sample["battery"]} for sample in history
+            ],
+            "applied": {
+                "charging": True,
+                "running": False,
+                "in_water": False,
+                "mode": 0,
+                "runtime": 0,
+            },
+        }
+        if not events or (events[-1].get("trigger"), events[-1].get("rest_status")) != (
+            trigger,
+            rest_status,
+        ):
+            events.append(deepcopy(event))
+            del events[:-20]
+        records[sn] = {**event, "events": events}
 
     def _apply_device_profile(self, sn: str) -> None:
         """Derive and store family/capability metadata for a device."""
@@ -694,6 +764,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 self._last_metadata_fetch[_sn] = _ensure_utc_aware(_ts) or dt_util.utcnow()
 
             discovered_devices: list[RawDeviceData] | None = None
+            fresh_s1_rest_charging: set[str] = set()
             try:
                 discovered_devices = await self.api.get_devices()
                 _LOGGER.debug("Got %d devices from API", len(discovered_devices))
@@ -701,11 +772,56 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     sn = discovered.get("sn")
                     if sn:
                         serial = str(sn)
-                        self._devices[serial] = _merge_discovery_metadata(
+                        merged_device = _merge_discovery_metadata(
                             self._devices.get(serial, {}),
                             dict(discovered),
                             include_live=True,
                         )
+                        raw_model = merged_device.get("model") or merged_device.get("deviceModel") or ""
+                        model_key = str(raw_model).strip().lower().replace("-", "_").replace(" ", "_")
+                        if model_key == SCUBA_S1_2025_MODEL:
+                            self._record_s1_battery_sample(serial, discovered.get("battLevel"), now)
+                        try:
+                            rest_status = int(discovered.get("machineStatus"))
+                        except (TypeError, ValueError):
+                            rest_status = None
+                        if model_key == SCUBA_S1_2025_MODEL and rest_status in (2, 3):
+                            # Captured on S1 V2.0.1 after a low-battery cycle:
+                            # REST resumed with current status 2 while the last
+                            # MQTT report remained Cleaning/Wet for hours. A
+                            # physically charging cleaner is necessarily dry,
+                            # stopped, and outside an active cleaning mode.
+                            merged_device["in_water"] = 0
+                            merged_device["mode"] = 0
+                            merged_device["runTime"] = 0
+                            fresh_s1_rest_charging.add(serial)
+                            self._record_s1_reconciliation(
+                                serial, trigger="rest_machine_status", rest_status=rest_status
+                            )
+                        elif model_key == SCUBA_S1_2025_MODEL and rest_status == 1 and "in_water" not in discovered:
+                            # On S1 V2.0.1 the device-list poll can resume with
+                            # a current Cleaning status after the cleaner has
+                            # submerged, while in_water remains the older dry
+                            # value captured before Wi-Fi was lost. Physical
+                            # cleaning on this model necessarily occurs in the
+                            # pool, so a fresh Cleaning status is newer evidence.
+                            merged_device["in_water"] = 1
+                        elif (
+                            model_key == SCUBA_S1_2025_MODEL
+                            and rest_status is None
+                            and discovered.get("online") is not False
+                            and self._s1_battery_rise_indicates_charging(serial)
+                        ):
+                            # Conservative fallback only: three increasing
+                            # samples spanning at least two minutes, no explicit
+                            # REST status, and no newer MQTT Machine report.
+                            merged_device["machineStatus"] = 2
+                            merged_device["in_water"] = 0
+                            merged_device["mode"] = 0
+                            merged_device["runTime"] = 0
+                            fresh_s1_rest_charging.add(serial)
+                            self._record_s1_reconciliation(serial, trigger="battery_rise_fallback")
+                        self._devices[serial] = merged_device
             except Exception as err:
                 if not self._devices:
                     raise
@@ -885,7 +1001,11 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     # ("Idle" when no machineStatus is known) — in that case we let the
                     # incoming REST values flow through freely.
                     current_status = current.get("status")
-                    if current_status is not None and current_status.attributes.get("code") is not None:
+                    if (
+                        current_status is not None
+                        and current_status.attributes.get("code") is not None
+                        and sn not in fresh_s1_rest_charging
+                    ):
                         for _key in ("running", "status", "charging", "mode"):
                             normalized.pop(_key, None)
                     result[sn] = merge_device_state(current, normalized, ignore_none=True)
@@ -1064,6 +1184,19 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     machine.update({key: value for key, value in parsed.items() if key != "records"})
 
         if machine:
+            raw_model = raw_device.get("model") or raw_device.get("deviceModel") or ""
+            model_key = str(raw_model).strip().lower().replace("-", "_").replace(" ", "_")
+            if model_key == SCUBA_S1_2025_MODEL:
+                try:
+                    mqtt_status = int(machine.get("status"))
+                except (TypeError, ValueError):
+                    mqtt_status = None
+                reports = getattr(self, "_last_s1_mqtt_machine_report", None)
+                if reports is None:
+                    reports = self._last_s1_mqtt_machine_report = {}
+                reports[sn] = {"observed_at": dt_util.utcnow(), "status": mqtt_status}
+                if mqtt_status in (2, 3):
+                    self._record_s1_reconciliation(sn, trigger="mqtt_machine_status", rest_status=None)
             updates = merge_device_state(updates, normalize_machine_update(raw_device, machine, current_state))
 
         netstat: dict[str, Any] = {}

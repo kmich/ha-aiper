@@ -79,15 +79,9 @@ def test_scuba_s1_runtime_is_reported_in_minutes() -> None:
 
 def test_scuba_s1_runtime_is_only_exposed_while_cleaning() -> None:
     """S1 runTime becomes a state timer while parked or charging."""
-    cleaning = normalize_device_state(
-        {"model": "Scuba_S1_2025", "machineStatus": 1, "runTime": 12}
-    )
-    charging = normalize_device_state(
-        {"model": "Scuba_S1_2025", "machineStatus": 2, "runTime": 19}
-    )
-    parked = normalize_device_state(
-        {"model": "Scuba_S1_2025", "machineStatus": 10, "runTime": 242}
-    )
+    cleaning = normalize_device_state({"model": "Scuba_S1_2025", "machineStatus": 1, "runTime": 12})
+    charging = normalize_device_state({"model": "Scuba_S1_2025", "machineStatus": 2, "runTime": 19})
+    parked = normalize_device_state({"model": "Scuba_S1_2025", "machineStatus": 10, "runTime": 242})
 
     assert cleaning["runtime"].value == 0.2
     assert charging["runtime"].value == 0.0
@@ -102,9 +96,7 @@ def test_scuba_s1_runtime_is_only_exposed_while_cleaning() -> None:
 
 def test_other_models_keep_existing_runtime_semantics_when_not_running() -> None:
     """The S1 state-timer guard must not change other model profiles."""
-    state = normalize_device_state(
-        {"model": "Scuba_X1", "machineStatus": 3, "runTime": 1673}
-    )
+    state = normalize_device_state({"model": "Scuba_X1", "machineStatus": 3, "runTime": 1673})
     assert state["runtime"].value == 16.73
 
 

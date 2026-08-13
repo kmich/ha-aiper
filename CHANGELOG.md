@@ -11,6 +11,16 @@
   corresponding `AT+MODE=1/2/3/5` commands, and no longer exposes Waterline.
 - Added bounded S1 clean-path write confirmation so stale immediate readback
   cannot briefly revert a newly acknowledged selection in Home Assistant.
+- Fixed `Scuba_S1_2025` post-cycle charging reconciliation. A fresh REST
+  charging status now supersedes an hours-old MQTT Cleaning/Wet report and
+  coherently reports Charging, Not running, Dry, Mode 0, and zero active
+  cleaning runtime. If explicit status is absent, three increasing battery
+  samples spanning at least two minutes may provide the same fallback only
+  when no newer MQTT Machine report exists. Diagnostics identify the trigger
+  used. Other device models retain the existing MQTT precedence.
+- Fixed the S1 retaining its pre-submersion Dry value when a fresh REST poll
+  reports Cleaning but does not include a newer water-state field. For this
+  model, active Cleaning is treated as Wet until newer explicit state arrives.
 
 ## [1.2.4] - 2026-08-06
 

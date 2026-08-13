@@ -98,6 +98,28 @@ return a numeric value. The select therefore uses the active mode when present,
 the last confirmed local selection, or cleaning history after a restart. A set
 command is accepted only after the cleaner returns `+OK`.
 
+After a low-battery stop, firmware V2.0.1 can leave its last MQTT report at
+Cleaning/Wet even after retrieval and power-off. Once charging begins, the REST
+device list supplies a fresh status `2` and live battery updates while no new
+machine-state MQTT report arrives. For this model only, fresh REST charging
+therefore supersedes the stale MQTT report and implies Dry, Not running, Mode
+0, and zero current cleaning runtime. This source-precedence exception is not
+applied to other models.
+
+The explicit status remains authoritative. If an S1 REST response omits status,
+the integration has a conservative fallback requiring three strictly rising
+battery samples over at least two minutes while online, with a total rise of at
+least two percentage points and no newer MQTT Machine report. Diagnostics record
+whether `mqtt_machine_status`, `rest_machine_status`, or
+`battery_rise_fallback` caused reconciliation, along with the fields applied.
+A bounded, de-duplicated event timeline preserves source order when a later
+REST poll confirms a transition first reported through MQTT.
+
+The inverse transition has a similar S1-only rule. If a fresh REST device-list
+poll reports Cleaning but omits `in_water`, it supersedes an older Dry value
+captured immediately before submersion: this model cannot physically clean
+outside the pool. A newer explicit water-state report remains authoritative.
+
 ## Legacy Clean-Path Runtime Path
 
 Scuba models other than `Scuba_S1_2025` still use the legacy clean-path matrix
