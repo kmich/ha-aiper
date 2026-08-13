@@ -28,6 +28,7 @@ from .state import (
     DeviceState,
     RawDeviceData,
     _coerce_bool,
+    _coerce_int,
     merge_device_state,
     normalize_clean_path_update,
     normalize_device_state,
@@ -781,10 +782,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                         model_key = str(raw_model).strip().lower().replace("-", "_").replace(" ", "_")
                         if model_key == SCUBA_S1_2025_MODEL:
                             self._record_s1_battery_sample(serial, discovered.get("battLevel"), now)
-                        try:
-                            rest_status = int(discovered.get("machineStatus"))
-                        except (TypeError, ValueError):
-                            rest_status = None
+                        rest_status = _coerce_int(discovered.get("machineStatus"))
                         if model_key == SCUBA_S1_2025_MODEL and rest_status in (2, 3):
                             # Captured on S1 V2.0.1 after a low-battery cycle:
                             # REST resumed with current status 2 while the last
@@ -1188,10 +1186,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             raw_model = raw_device.get("model") or raw_device.get("deviceModel") or ""
             model_key = str(raw_model).strip().lower().replace("-", "_").replace(" ", "_")
             if model_key == SCUBA_S1_2025_MODEL:
-                try:
-                    mqtt_status = int(machine.get("status"))
-                except (TypeError, ValueError):
-                    mqtt_status = None
+                mqtt_status = _coerce_int(machine.get("status"))
                 reports = getattr(self, "_last_s1_mqtt_machine_report", None)
                 if reports is None:
                     reports = self._last_s1_mqtt_machine_report = {}
