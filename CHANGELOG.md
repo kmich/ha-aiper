@@ -9,6 +9,8 @@
 - Added the app-derived `Scuba_S1_2025` cleaning-mode profile: Auto, Floor,
   Wall, and Scheduled. The S1 now queries with `AT+MODE?`, writes only the
   corresponding `AT+MODE=1/2/3/5` commands, and no longer exposes Waterline.
+- Added bounded S1 clean-path write confirmation so stale immediate readback
+  cannot briefly revert a newly acknowledged selection in Home Assistant.
 
 ## [1.2.4] - 2026-08-06
 

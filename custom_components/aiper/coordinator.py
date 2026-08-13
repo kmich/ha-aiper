@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
@@ -1189,6 +1190,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
     # -----------------
 
     PENDING_TIMEOUT_SECONDS = 8
+    CLEAN_PATH_PENDING_TIMEOUT_SECONDS = 15
 
     def _ensure_cmd_state(self, sn: str) -> dict[str, dict[str, Any]]:
         st = self._command_state.get(sn)
@@ -1292,7 +1294,8 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 since = None
             if since is None:
                 continue
-            if (now - since).total_seconds() >= self.PENDING_TIMEOUT_SECONDS:
+            timeout = self.CLEAN_PATH_PENDING_TIMEOUT_SECONDS if kind == "clean_path" else self.PENDING_TIMEOUT_SECONDS
+            if (now - since).total_seconds() >= timeout:
                 expired.append(kind)
         for kind in expired:
             info = pend.pop(kind, None) or {}
@@ -1407,6 +1410,38 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
     def set_clean_path_cache(self, sn: str, value: int) -> None:
         """Update cached clean-path preference."""
         self._clean_path_cache[sn] = int(value)
+
+    async def async_confirm_clean_path_selection(
+        self,
+        sn: str,
+        target: int,
+        *,
+        retry_delays: tuple[float, ...] = (1.0, 2.0, 3.0, 4.0),
+    ) -> bool:
+        """Wait for an S1 clean-path write to propagate and confirm by query."""
+        device = self._devices.get(sn) or {}
+        raw_model = device.get("model") or device.get("deviceModel") or ""
+        model_key = str(raw_model).strip().lower().replace("-", "_").replace(" ", "_")
+        if model_key != SCUBA_S1_2025_MODEL:
+            return False
+
+        for delay in retry_delays:
+            await asyncio.sleep(delay)
+            try:
+                reported = await self.api.query_clean_path_setting(sn)
+            except Exception as err:
+                _LOGGER.debug("Clean-path confirmation query failed for %s: %s", sn, err)
+                continue
+            if reported == int(target):
+                self.set_clean_path_cache(sn, int(target))
+                self._devices[sn]["clean_path"] = int(target)
+                if self.data and sn in self.data:
+                    data = dict(self.data)
+                    data[sn] = merge_device_state(data[sn], normalize_clean_path_update({"cleanPath": int(target)}))
+                    self.async_set_updated_data(data)
+                self._confirm_pending_commands(sn, {"cleanPath": int(target)})
+                return True
+        return False
 
     def get_clean_path(self, sn: str) -> int | None:
         """Get current clean-path preference.

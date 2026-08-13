@@ -55,6 +55,9 @@ class FakeCoordinator:
             self.metadata_refreshed = []
         self.metadata_refreshed.append(sn)
 
+    async def async_confirm_clean_path_selection(self, sn: str, target: int) -> bool:
+        return True
+
     def clear_command_state(self, sn: str) -> None:
         if self.command_state_cleared is None:
             self.command_state_cleared = []
@@ -323,8 +326,11 @@ async def test_scuba_s1_only_publishes_observed_entities(hass: HomeAssistant) ->
     assert "clean_path" in sensor_keys
     assert _select_keys(select_entities) == {"mode_selection", "clean_path"}
     mode_select = next(entity for entity in select_entities if entity._key == "mode_selection")
+    clean_path_select = next(entity for entity in select_entities if entity._key == "clean_path")
     assert mode_select.options == ["Auto", "Floor", "Wall", "Scheduled"]
     assert mode_select.current_option == "Auto"
+    _coordinator.pending_targets = {("SN123", "clean_path"): 0}
+    assert clean_path_select.current_option == "S-shaped"
     assert _entity_by_key(sensor_entities, "last_cleaning_mode").native_value == "Auto"
     assert _entity_by_key(sensor_entities, "runtime").native_value == 4.03
 

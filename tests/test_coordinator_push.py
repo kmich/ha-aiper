@@ -294,3 +294,51 @@ def test_pending_running_intent_expires() -> None:
 
     assert coordinator.get_pending_command_target("SN123", "running") is None
     assert coordinator.get_command_state("SN123")["last"]["running"]["result"] == "timeout"
+
+
+def test_clean_path_pending_uses_longer_confirmation_window() -> None:
+    """S1 clean-path intent survives the normal command timeout."""
+    coordinator = _bare_coordinator()
+    coordinator._command_state = {
+        "SN123": {
+            "pending": {
+                "clean_path": {
+                    "target": 0,
+                    "since": (
+                        dt_util.utcnow() - timedelta(seconds=coordinator.PENDING_TIMEOUT_SECONDS + 1)
+                    ).isoformat(),
+                    "source": "test",
+                }
+            },
+            "last": {},
+        }
+    }
+
+    assert coordinator.get_pending_command_target("SN123", "clean_path") == 0
+
+
+@pytest.mark.asyncio
+async def test_scuba_s1_clean_path_confirmation_ignores_stale_readback() -> None:
+    """S1 confirmation retries until AT+AUTO? reports the requested value."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"]["model"] = "Scuba_S1_2025"
+
+    class FakeApi:
+        def __init__(self) -> None:
+            self.responses = iter((1, 0))
+
+        async def query_clean_path_setting(self, sn: str) -> int:
+            assert sn == "SN123"
+            return next(self.responses)
+
+    coordinator.api = cast(Any, FakeApi())
+    coordinator.note_command_sent("SN123", "clean_path", 0, source="test")
+
+    confirmed = await coordinator.async_confirm_clean_path_selection("SN123", 0, retry_delays=(0, 0))
+
+    assert confirmed is True
+    assert coordinator._clean_path_cache["SN123"] == 0
+    assert coordinator._devices["SN123"]["clean_path"] == 0
+    assert coordinator.data["SN123"]["clean_path"].value == "S-shaped"
+    assert coordinator.get_pending_command_target("SN123", "clean_path") is None
+    assert coordinator.get_command_state("SN123")["last"]["clean_path"]["result"] == "confirmed"
