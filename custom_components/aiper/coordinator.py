@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterable
 from contextlib import suppress
 from copy import deepcopy
 from datetime import datetime, timedelta
@@ -27,6 +28,7 @@ from .coordinator_parsing import (
     _merge_discovery_metadata,
     _parse_cleaning_history,
     _parse_consumables,
+    _parse_dt,
 )
 from .profiles import SCUBA_S1_2025_MODEL, Capability, derive_device_profile, has_capability, model_key
 from .repairs import async_update_unknown_model_issues
@@ -65,6 +67,16 @@ MQTT_RECONNECT_GRACE_SECONDS = 180
 # connection would have us rebuilding on each poll forever.
 MQTT_REBUILD_MIN_INTERVAL_SECONDS = 600
 
+# MQTT is the preferred source for operational state while its evidence is
+# recent. After two REST polling intervals without a new report, keeping it
+# forever can mask a newer device-list status (as observed on Scuba S1).
+MQTT_LIVE_STATE_TTL = LIVE_REFRESH_INTERVAL * 2
+MQTT_PREFERRED_STATE_KEYS = frozenset({"running", "status", "charging", "mode"})
+REST_STATE_FIELDS: dict[str, frozenset[str]] = {
+    "machineStatus": frozenset({"running", "status", "charging"}),
+    "mode": frozenset({"mode"}),
+}
+
 
 class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
     """Class to manage fetching Aiper data."""
@@ -97,6 +109,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         self._s1_battery_samples: dict[str, list[dict[str, Any]]] = {}
         self._last_s1_mqtt_machine_report: dict[str, dict[str, Any]] = {}
         self._state_reconciliation: dict[str, dict[str, Any]] = {}
+        self._live_field_sources: dict[str, dict[str, dict[str, Any]]] = {}
 
         # Command tracking (for community-friendly UX)
         # We do not apply optimistic state changes; instead we track pending commands
@@ -109,6 +122,67 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         # Wall-clock time of the last successful poll, surfaced by the
         # cloud-connection "last update" sensor for offline automations.
         self.last_successful_update: datetime | None = None
+
+    @property
+    def diagnostic_field_sources(self) -> dict[str, dict[str, dict[str, Any]]]:
+        """Return value-free per-field source ages for diagnostics."""
+        now = dt_util.utcnow()
+        result: dict[str, dict[str, dict[str, Any]]] = {}
+        for sn, fields in getattr(self, "_live_field_sources", {}).items():
+            result[sn] = {}
+            for field, observation in fields.items():
+                observed_at = _ensure_utc_aware(observation.get("observed_at"))
+                result[sn][field] = {
+                    "source": observation.get("source"),
+                    "observed_at": observed_at.isoformat() if observed_at else None,
+                    "age_seconds": max(0, round((now - observed_at).total_seconds()))
+                    if observed_at
+                    else None,
+                }
+        return result
+
+    def _record_live_field_sources(
+        self,
+        sn: str,
+        source: str,
+        fields: Iterable[str],
+        *,
+        observed_at: datetime,
+    ) -> None:
+        """Record which source most recently supplied normalized live fields."""
+        observations = getattr(self, "_live_field_sources", None)
+        if observations is None:
+            observations = self._live_field_sources = {}
+        device_fields = observations.setdefault(sn, {})
+        timestamp = _ensure_utc_aware(observed_at) or dt_util.utcnow()
+        for field in fields:
+            if field in MQTT_PREFERRED_STATE_KEYS:
+                device_fields[field] = {"source": source, "observed_at": timestamp}
+
+    def _mqtt_field_is_fresh(self, sn: str, field: str, now: datetime) -> bool:
+        """Return whether a field has recent MQTT evidence."""
+        observation = getattr(self, "_live_field_sources", {}).get(sn, {}).get(field) or {}
+        if observation.get("source") != "mqtt":
+            return False
+        observed_at = _ensure_utc_aware(observation.get("observed_at"))
+        if observed_at is None:
+            return False
+        age = (_ensure_utc_aware(now) or dt_util.utcnow()) - observed_at
+        return -LIVE_REFRESH_INTERVAL <= age <= MQTT_LIVE_STATE_TTL
+
+    @staticmethod
+    def _mqtt_observed_at(data: dict[str, Any]) -> datetime:
+        """Use a payload timestamp when available, otherwise receipt time."""
+        candidates: list[Any] = [data.get("timestamp"), data.get("ts")]
+        current = data.get("current")
+        if isinstance(current, dict):
+            candidates.extend((current.get("timestamp"), current.get("ts")))
+        now = dt_util.utcnow()
+        for candidate in candidates:
+            parsed = _parse_dt(candidate)
+            if parsed is not None and parsed <= now + LIVE_REFRESH_INTERVAL:
+                return parsed
+        return now
 
     def _record_s1_battery_sample(self, sn: str, value: Any, observed_at: datetime) -> None:
         """Retain a small, non-sensitive battery trend for S1 fallback logic."""
@@ -323,7 +397,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 self._last_metadata_fetch[_sn] = _ensure_utc_aware(_ts) or dt_util.utcnow()
 
             discovered_devices: list[RawDeviceData] | None = None
-            fresh_s1_rest_charging: set[str] = set()
+            rest_state_fields: dict[str, set[str]] = {}
             try:
                 discovered_devices = await self.api.get_devices()
                 _LOGGER.debug("Got %d devices from API", len(discovered_devices))
@@ -340,11 +414,19 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                         if mk == SCUBA_S1_2025_MODEL:
                             self._record_s1_battery_sample(serial, discovered.get("battLevel"), now)
                         rest_status = _coerce_int(discovered.get("machineStatus"))
-                        if (
-                            mk == SCUBA_S1_2025_MODEL
-                            and rest_status in (2, 3)
-                            and not self._s1_mqtt_reports_running_since(serial, since=now - timedelta(minutes=2))
-                        ):
+                        rest_state_fields[serial] = {
+                            field
+                            for raw_key, fields in REST_STATE_FIELDS.items()
+                            if discovered.get(raw_key) is not None
+                            for field in fields
+                        }
+                        if mk == SCUBA_S1_2025_MODEL and rest_status in (2, 3):
+                            if self._s1_mqtt_reports_running_since(serial, since=now - timedelta(minutes=2)):
+                                # Preserve the newer MQTT lifecycle even before
+                                # the generic per-field source map is populated.
+                                rest_state_fields[serial].difference_update(MQTT_PREFERRED_STATE_KEYS)
+                                self._devices[serial] = merged_device
+                                continue
                             # Captured on S1 V2.0.1 after a low-battery cycle:
                             # REST resumed with current status 2 while the last
                             # MQTT report remained Cleaning/Wet for hours. A
@@ -358,7 +440,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                             merged_device["in_water"] = 0
                             merged_device["mode"] = 0
                             merged_device["runTime"] = 0
-                            fresh_s1_rest_charging.add(serial)
+                            rest_state_fields[serial].add("mode")
                             self._record_s1_reconciliation(
                                 serial, trigger="rest_machine_status", rest_status=rest_status
                             )
@@ -384,7 +466,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                             merged_device["in_water"] = 0
                             merged_device["mode"] = 0
                             merged_device["runTime"] = 0
-                            fresh_s1_rest_charging.add(serial)
+                            rest_state_fields[serial].update(MQTT_PREFERRED_STATE_KEYS)
                             self._record_s1_reconciliation(serial, trigger="battery_rise_fallback")
                         self._devices[serial] = merged_device
             except Exception as err:
@@ -565,26 +647,24 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 normalized = normalize_device_state(device)
                 current = (self.data or {}).get(sn) if self.data else None
                 if current:
-                    # MQTT is authoritative for live machine state. Remove stale
-                    # REST-derived values so they don't overwrite live MQTT state
-                    # on the 5-minute slow refresh.
-                    #
-                    # Use the presence of a real status code as the gate: a non-None
-                    # "code" attribute on the current status means we have authoritative
-                    # machine-state data (from MQTT or from a REST machineStatus field).
-                    # A missing code means the current status is a fallback placeholder
-                    # ("Idle" when no machineStatus is known) — in that case we let the
-                    # incoming REST values flow through freely.
-                    current_status = current.get("status")
-                    if (
-                        current_status is not None
-                        and current_status.attributes.get("code") is not None
-                        and sn not in fresh_s1_rest_charging
-                    ):
-                        for _key in ("running", "status", "charging", "mode"):
-                            normalized.pop(_key, None)
+                    # Prefer recent MQTT evidence field by field. A REST value is
+                    # allowed through after the corresponding MQTT field ages out;
+                    # cached fields that were not present in this REST response are
+                    # never mislabelled as fresh REST evidence.
+                    incoming_rest_fields = rest_state_fields.get(sn, set())
+                    for key in MQTT_PREFERRED_STATE_KEYS:
+                        if key not in incoming_rest_fields or self._mqtt_field_is_fresh(sn, key, now):
+                            normalized.pop(key, None)
+                        elif key in normalized:
+                            self._record_live_field_sources(sn, "rest", (key,), observed_at=now)
                     result[sn] = merge_device_state(current, normalized, ignore_none=True)
                 else:
+                    self._record_live_field_sources(
+                        sn,
+                        "rest",
+                        rest_state_fields.get(sn, set()),
+                        observed_at=now,
+                    )
                     result[sn] = normalized
 
             _LOGGER.debug("Coordinator updated devices=%s", list(result.keys()))
@@ -654,6 +734,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
     def _on_shadow_update(self, sn: str, data: dict) -> None:
         """Process shadow update from MQTT."""
         topic = data.get("_topic") if isinstance(data, dict) else None
+        mqtt_observed_at = self._mqtt_observed_at(data)
 
         def _publish_updates(updates: DeviceState) -> None:
             if not updates:
@@ -767,7 +848,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 reports = getattr(self, "_last_s1_mqtt_machine_report", None)
                 if reports is None:
                     reports = self._last_s1_mqtt_machine_report = {}
-                reports[sn] = {"observed_at": dt_util.utcnow(), "status": mqtt_status}
+                reports[sn] = {"observed_at": mqtt_observed_at, "status": mqtt_status}
                 if mqtt_status in (2, 3):
                     self._record_s1_reconciliation(sn, trigger="mqtt_machine_status", rest_status=None)
             updates = merge_device_state(updates, normalize_machine_update(raw_device, machine, current_state))
@@ -836,6 +917,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         except Exception:
             pass
 
+        self._record_live_field_sources(sn, "mqtt", updates, observed_at=mqtt_observed_at)
         _publish_updates(updates)
 
         # Confirm pending commands when the device reports the new value.

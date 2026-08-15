@@ -59,6 +59,15 @@ async def test_diagnostics_redacts_sensitive_runtime_data(hass: HomeAssistant) -
                 }
             }
         },
+        diagnostic_field_sources={
+            "SN123": {
+                "status": {
+                    "source": "rest",
+                    "observed_at": "2026-08-15T09:41:45+00:00",
+                    "age_seconds": 30,
+                }
+            }
+        },
         _state_reconciliation={
             "SN123": {
                 "trigger": "rest_machine_status",
@@ -85,6 +94,7 @@ async def test_diagnostics_redacts_sensitive_runtime_data(hass: HomeAssistant) -
     assert diagnostics["api"]["mqtt_client"] == "SimpleNamespace"
     assert diagnostics["api"]["mqtt_reconnect_count"] == 1
     assert diagnostics["api"]["mqtt_connected"] is True
+    assert diagnostics["field_sources"]["SN123"]["status"]["source"] == "rest"
     assert diagnostics["state_reconciliation"]["SN123"]["trigger"] == "rest_machine_status"
 
 

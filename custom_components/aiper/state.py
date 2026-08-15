@@ -736,7 +736,11 @@ def normalize_device_state(raw: RawDeviceData) -> DeviceState:
     state["running"] = EntityState(running)
 
     status_text: str | None
-    if online is False:
+    # Connectivity and operation are independent signals. Some cleaners keep
+    # reporting a current cleaning status through REST while their cloud
+    # connectivity flag is false. Preserve that active status; an idle or
+    # otherwise non-running offline cleaner still displays Offline.
+    if online is False and running is not True:
         status_text = "Offline"
     elif hydrocomm:
         status_text = _hydrocomm_status_text(status_code)
