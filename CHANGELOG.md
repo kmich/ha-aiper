@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Persisted the last confirmed `Scuba_S1_2025` clean-path preference across
+  integration restarts. S1 path and mode queries now also run on an independent
+  five-minute timer, so frequent MQTT push updates cannot postpone them by
+  continually resetting the general coordinator refresh.
+
 ## [1.5.0] - 2026-09-06
 
 ### Added
@@ -115,7 +123,6 @@
   now read the current config-entry runtime location, and a Cognito 4xx
   triggers one bounded OpenID refresh/retry for regions that omit an OpenID
   expiry duration.
-
 ## [1.2.4] - 2026-08-06
 
 ### Fixed

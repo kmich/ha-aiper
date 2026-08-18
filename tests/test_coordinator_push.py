@@ -108,6 +108,61 @@ def test_shadow_update_promotes_live_state() -> None:
     assert device["mcu_version"].value == "V1.0.7.1,V1.0.6.0"
 
 
+@pytest.mark.asyncio
+async def test_clean_path_cache_restores_and_persists(hass: HomeAssistant) -> None:
+    """The last confirmed path should survive an integration restart."""
+    coordinator = _bare_coordinator()
+
+    class FakeStore:
+        def __init__(self) -> None:
+            self.saved: list[dict[str, int]] = []
+
+        async def async_load(self) -> dict[str, int]:
+            return {"SN123": 1, "INVALID": 9}
+
+        async def async_save(self, data: dict[str, int]) -> None:
+            self.saved.append(data)
+
+    store = FakeStore()
+    coordinator._clean_path_store = cast(Any, store)
+    coordinator.hass = hass
+
+    await coordinator.async_restore_clean_path_cache()
+    assert coordinator._clean_path_cache == {"SN123": 1}
+
+    coordinator.set_clean_path_cache("SN123", 0)
+    await hass.async_block_till_done()
+    assert store.saved == [{"SN123": 0}]
+
+
+@pytest.mark.asyncio
+async def test_s1_capability_refresh_is_independent_from_rest_poll() -> None:
+    """A direct capability tick should publish path/mode without a REST refresh."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"].update({"model": "Scuba_S1_2025", "name": "Scuba S1"})
+    coordinator._apply_device_profile("SN123")
+    coordinator.data = {"SN123": normalize_device_state(dict(coordinator._devices["SN123"]))}
+
+    class FakeApi:
+        def is_mqtt_connected(self) -> bool:
+            return True
+
+        async def query_clean_path_setting(self, sn: str) -> int:
+            assert sn == "SN123"
+            return 1
+
+        async def query_cleaning_mode_setting(self, sn: str) -> int:
+            assert sn == "SN123"
+            return 2
+
+    coordinator.api = cast(Any, FakeApi())
+
+    await coordinator.async_refresh_s1_capability_settings()
+
+    assert coordinator.data["SN123"]["clean_path"].value == "Adaptive"
+    assert coordinator.data["SN123"]["mode_options"].attributes["selected_mode"] == 2
+
+
 def test_shadow_update_promotes_hydrocomm_w2_state() -> None:
     """HydroComm/W2 shadow components should become live HA sensor state."""
     coordinator = _bare_coordinator()
