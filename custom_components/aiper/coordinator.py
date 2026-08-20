@@ -609,11 +609,6 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     self._devices[sn]["clean_path"] = None
                 self._devices[sn]["selected_mode"] = getattr(self, "_selected_mode_cache", {}).get(sn)
 
-            # Query S1 settings through their verified AT contracts. This same
-            # method also has an independent timer, so MQTT pushes cannot starve
-            # these capability reads by repeatedly resetting the REST poll.
-            await self.async_refresh_s1_capability_settings(publish=False)
-
             # Expire pending commands (UI hints)
             for _sn in list(self._command_state.keys()):
                 with suppress(Exception):
