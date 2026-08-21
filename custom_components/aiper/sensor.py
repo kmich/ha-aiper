@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
+from homeassistant.components.sensor import RestoreSensor, SensorEntity, SensorEntityDescription
 from homeassistant.components.sensor.const import SensorDeviceClass, SensorStateClass
-from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTemperature
-from homeassistant.core import HomeAssistant
+from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTemperature, UnitOfTime
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import AiperConfigEntry
@@ -366,6 +369,18 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
 )
 
+ESTIMATED_CLEANING_TIME_DESCRIPTION = AiperSensorEntityDescription(
+    key="estimated_cleaning_time",
+    name="Estimated Cleaning Time",
+    icon="mdi:timer-sand",
+    native_unit_of_measurement=UnitOfTime.MINUTES,
+    device_class=SensorDeviceClass.DURATION,
+    state_class=SensorStateClass.MEASUREMENT,
+    capability=Capability.ESTIMATED_CLEANING_TIME,
+)
+
+ESTIMATED_CLEANING_TIME_INTERVAL = timedelta(minutes=1)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -388,6 +403,14 @@ async def async_setup_entry(
                     AiperSensor(
                         coordinator=coordinator,
                         description=description,
+                        sn=sn,
+                        device_data=device_data,
+                    )
+                )
+            if state_has_capability(device_data, Capability.ESTIMATED_CLEANING_TIME):
+                entities.append(
+                    AiperEstimatedCleaningTimeSensor(
+                        coordinator=coordinator,
                         sn=sn,
                         device_data=device_data,
                     )
@@ -422,17 +445,7 @@ class AiperSensor(CoordinatorEntity[AiperDataUpdateCoordinator], SensorEntity):
         self._sn = sn
         self._attr_unique_id = f"{sn}_{description.key}"
         self._attr_entity_registry_enabled_default = bool(description.enabled_default)
-        device_info = device_data["device_info"]
-        device_info_attrs = device_info.attributes
-
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, sn)},
-            name=str(device_info.value or f"Aiper {sn}"),
-            manufacturer="Aiper",
-            model=device_info_attrs.get("model"),
-            serial_number=sn,
-            sw_version=device_info_attrs.get("sw_version"),
-        )
+        self._attr_device_info = _device_info(sn, device_data)
 
     @property
     def native_value(self) -> Any:
@@ -524,3 +537,185 @@ class AiperLastCloudUpdateSensor(_AiperCloudSensorBase):
     @property
     def native_value(self) -> Any:
         return self.coordinator.last_successful_update
+
+
+def _device_info(sn: str, device_data: DeviceState) -> DeviceInfo:
+    """Build shared Home Assistant device information."""
+    device_info = device_data["device_info"]
+    device_info_attrs = device_info.attributes
+    return DeviceInfo(
+        identifiers={(DOMAIN, sn)},
+        name=str(device_info.value or f"Aiper {sn}"),
+        manufacturer="Aiper",
+        model=device_info_attrs.get("model"),
+        serial_number=sn,
+        sw_version=device_info_attrs.get("sw_version"),
+    )
+
+
+class AiperEstimatedCleaningTimeSensor(CoordinatorEntity[AiperDataUpdateCoordinator], RestoreSensor):
+    """Estimate active cleaning duration between authoritative cloud samples."""
+
+    entity_description = ESTIMATED_CLEANING_TIME_DESCRIPTION
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: AiperDataUpdateCoordinator,
+        sn: str,
+        device_data: DeviceState,
+    ) -> None:
+        """Initialize the estimated cleaning-time sensor."""
+        super().__init__(coordinator)
+        self._sn = sn
+        self._attr_unique_id = f"{sn}_{self.entity_description.key}"
+        self._attr_device_info = _device_info(sn, device_data)
+        self._estimated_minutes = 0.0
+        self._authoritative_runtime_hours: float | None = None
+        self._unsub_tick: Callable[[], None] | None = None
+        self._sync_with_coordinator()
+
+    @property
+    def native_value(self) -> float:
+        """Return the locally advanced duration in minutes."""
+        return round(self._estimated_minutes, 2)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Describe the estimate and retain its restore anchor."""
+        return {
+            "estimated": True,
+            "authoritative_source": "Current Cleaning Time",
+            "authoritative_runtime_hours": self._authoritative_runtime_hours,
+            "estimation_method": "Aiper cloud runtime plus local one-minute ticks while cleaning",
+            "backend_lifecycle_caveat": (
+                "If Aiper remains latched at Cleaning after the robot stops, this estimate can continue "
+                "until a newer authoritative lifecycle report arrives."
+            ),
+        }
+
+    @property
+    def available(self) -> bool:
+        """Return whether the coordinator still provides this device."""
+        return bool(super().available and self.coordinator.data and self._sn in self.coordinator.data)
+
+    async def async_added_to_hass(self) -> None:
+        """Restore a running estimate and start its minute ticker when appropriate."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self._stop_ticking)
+        await self._async_restore_estimate()
+        self._sync_with_coordinator()
+
+    async def _async_restore_estimate(self) -> None:
+        """Restore only when current normalized lifecycle still permits estimating."""
+        snapshot = self._current_snapshot()
+        if snapshot is None or not snapshot[0] or snapshot[1] is None or snapshot[1] <= 0:
+            return
+        last_state = await self.async_get_last_state()
+        if last_state is None:
+            return
+        try:
+            restored_minutes = float(last_state.state)
+            restored_anchor = float(last_state.attributes["authoritative_runtime_hours"])
+        except (KeyError, TypeError, ValueError):
+            return
+        if not math.isfinite(restored_minutes) or not math.isfinite(restored_anchor):
+            return
+        self._estimated_minutes = max(0.0, restored_minutes)
+        self._authoritative_runtime_hours = max(0.0, restored_anchor)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Apply lifecycle resets or changed authoritative runtime anchors."""
+        self._sync_with_coordinator()
+        super()._handle_coordinator_update()
+
+    @callback
+    def _async_handle_tick(self, _now: datetime) -> None:
+        """Advance the estimate by one minute while its lifecycle remains active."""
+        if self._advance_estimate_one_minute():
+            self.async_write_ha_state()
+
+    def _current_snapshot(self) -> tuple[bool, float | None] | None:
+        """Return whether estimation is permitted and the raw runtime in hours."""
+        if not self.coordinator.data or self._sn not in self.coordinator.data:
+            return None
+        data = self.coordinator.data[self._sn]
+        running = data.get("running")
+        charging = data.get("charging")
+        status = data.get("status")
+        runtime = data.get("runtime")
+        active = bool(
+            running is not None
+            and running.value is True
+            and charging is not None
+            and charging.value is False
+            and status is not None
+            and str(status.value).casefold() == "cleaning"
+        )
+        try:
+            runtime_hours = float(runtime.value) if runtime is not None and runtime.value is not None else None
+        except (TypeError, ValueError):
+            runtime_hours = None
+        if runtime_hours is not None and not math.isfinite(runtime_hours):
+            runtime_hours = None
+        return active, runtime_hours
+
+    def _sync_with_coordinator(self) -> bool:
+        """Synchronize lifecycle and return whether a new raw anchor was applied."""
+        snapshot = self._current_snapshot()
+        if snapshot is None:
+            self._reset_estimate()
+            return False
+        active, runtime_hours = snapshot
+        if not active or runtime_hours is None or runtime_hours <= 0:
+            self._reset_estimate()
+            return False
+        if runtime_hours != self._authoritative_runtime_hours:
+            self._authoritative_runtime_hours = runtime_hours
+            self._estimated_minutes = runtime_hours * 60
+            self._restart_ticking()
+            return True
+        self._start_ticking()
+        return False
+
+    def _advance_estimate_one_minute(self) -> bool:
+        """Advance once without letting an unchanged stale sample re-anchor it."""
+        if self._sync_with_coordinator():
+            return True
+        snapshot = self._current_snapshot()
+        if snapshot is None or not snapshot[0] or snapshot[1] is None or snapshot[1] <= 0:
+            return False
+        self._estimated_minutes += 1
+        return True
+
+    def _reset_estimate(self) -> None:
+        """Reset and stop when the current-cycle lifecycle is no longer active."""
+        self._estimated_minutes = 0.0
+        self._authoritative_runtime_hours = None
+        self._stop_ticking()
+
+    def _start_ticking(self) -> None:
+        """Start a single minute ticker while the entity is attached to Home Assistant."""
+        if self._unsub_tick is not None or self.hass is None:
+            return
+        self._unsub_tick = async_track_time_interval(
+            self.hass,
+            self._async_handle_tick,
+            ESTIMATED_CLEANING_TIME_INTERVAL,
+            name=f"Aiper estimated cleaning time {self._sn}",
+            cancel_on_shutdown=True,
+        )
+
+    def _restart_ticking(self) -> None:
+        """Restart the minute interval from a changed authoritative sample."""
+        self._stop_ticking()
+        self._start_ticking()
+
+    @callback
+    def _stop_ticking(self) -> None:
+        """Cancel the active minute ticker."""
+        if self._unsub_tick is None:
+            return
+        self._unsub_tick()
+        self._unsub_tick = None
