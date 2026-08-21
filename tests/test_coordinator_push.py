@@ -164,6 +164,63 @@ async def test_s1_capability_refresh_is_independent_from_rest_poll() -> None:
     assert coordinator.data["SN123"]["mode_options"].attributes["selected_mode"] == 2
 
 
+@pytest.mark.asyncio
+async def test_s1_capability_refresh_does_not_regress_live_state() -> None:
+    """A capability response must not republish stale REST lifecycle fields."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"].update(
+        {
+            "model": "Scuba_S1_2025",
+            "name": "Scuba S1",
+            "battLevel": 100,
+            "machineStatus": 0,
+            "mode": 0,
+            "online": False,
+            "in_water": 0,
+            "runTime": 0,
+        }
+    )
+    coordinator._apply_device_profile("SN123")
+    coordinator.data = {
+        "SN123": normalize_device_state(
+            {
+                **coordinator._devices["SN123"],
+                "battLevel": 83,
+                "machineStatus": 1,
+                "mode": 1,
+                "online": True,
+                "in_water": 1,
+                "runTime": 44,
+            }
+        )
+    }
+
+    class FakeApi:
+        def is_mqtt_connected(self) -> bool:
+            return True
+
+        async def query_clean_path_setting(self, sn: str) -> int:
+            assert sn == "SN123"
+            return 1
+
+        async def query_cleaning_mode_setting(self, sn: str) -> int:
+            assert sn == "SN123"
+            return 1
+
+    coordinator.api = cast(Any, FakeApi())
+
+    await coordinator.async_refresh_s1_capability_settings()
+
+    device = coordinator.data["SN123"]
+    assert device["status"].value == "Cleaning"
+    assert device["battery"].value == 83
+    assert device["running"].value is True
+    assert device["in_water"].value is True
+    assert device["runtime"].value == 0.73
+    assert device["clean_path"].value == "Adaptive"
+    assert device["mode_options"].attributes["selected_mode"] == 1
+
+
 def test_shadow_update_promotes_hydrocomm_w2_state() -> None:
     """HydroComm/W2 shadow components should become live HA sensor state."""
     coordinator = _bare_coordinator()

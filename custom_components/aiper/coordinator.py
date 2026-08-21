@@ -1262,7 +1262,11 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             data = dict(self.data)
             for sn, device in self._devices.items():
                 if sn in data:
-                    data[sn] = merge_device_state(data[sn], normalize_device_state(device), ignore_none=True)
+                    normalized = normalize_device_state(device)
+                    capability_updates = {
+                        key: normalized[key] for key in ("clean_path", "mode_options") if key in normalized
+                    }
+                    data[sn] = merge_device_state(data[sn], capability_updates, ignore_none=True)
             self.async_set_updated_data(data)
 
     async def async_confirm_clean_path_selection(
