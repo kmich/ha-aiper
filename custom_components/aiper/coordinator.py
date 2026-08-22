@@ -22,6 +22,7 @@ from .const import (
     DOMAIN,
     Status,
     status_running,
+    status_value,
 )
 from .coordinator_parsing import (
     _clean_path_value,
@@ -79,6 +80,16 @@ MQTT_LIVE_STATE_TTL = LIVE_REFRESH_INTERVAL * 2
 MQTT_PREFERRED_STATE_KEYS = frozenset({"running", "status", "charging", "mode"})
 # Which normalized live fields a given raw REST device-list key stands in for.
 # Used to record fresh REST evidence only for fields the poll actually carried.
+
+# The S1 publishes the same lifecycle through several MQTT topics. On two
+# consecutive physical cycles, a current Parked report was followed within
+# 250 ms by an older Cleaning snapshot and then another current Parked report.
+# A genuine physical restart cannot occur in this narrow interval, so terminal
+# evidence wins briefly while redundant topic snapshots settle.
+S1_MQTT_LIFECYCLE_REPLAY_GUARD = timedelta(seconds=2)
+S1_TERMINAL_STATUS_CODES = frozenset({2, 3, 10})
+S1_RUNNING_STATUS_CODES = frozenset({1})
+S1_REPLAY_LIFECYCLE_FIELDS = frozenset({"status", "mode", "cap", "run_time", "in_water"})
 REST_STATE_FIELDS: dict[str, frozenset[str]] = {
     "machineStatus": frozenset({"running", "status", "charging"}),
     "mode": frozenset({"mode"}),
@@ -124,6 +135,8 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         self._selected_mode_cache: dict[str, int] = {}
         self._s1_battery_samples: dict[str, list[dict[str, Any]]] = {}
         self._last_s1_mqtt_machine_report: dict[str, dict[str, Any]] = {}
+        self._last_s1_terminal_report_at: dict[str, datetime] = {}
+        self._s1_mqtt_replay_suppressions: dict[str, dict[str, Any]] = {}
         self._state_reconciliation: dict[str, dict[str, Any]] = {}
         # Per-device, per-field record of which source (mqtt/rest) last supplied
         # each MQTT_PREFERRED_STATE_KEYS value, with the observation time. Used
@@ -260,6 +273,74 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             events.append(deepcopy(event))
             del events[:-20]
         records[sn] = {**event, "events": events}
+
+    @staticmethod
+    def _mqtt_source_label(topic: Any) -> str:
+        """Return a stable, identifier-free MQTT source label."""
+        if not isinstance(topic, str):
+            return "unknown"
+        if "shadow/get/accepted" in topic:
+            return "shadow_get"
+        if "shadow/update/documents" in topic:
+            return "shadow_documents"
+        if "shadow/update/accepted" in topic:
+            return "shadow_update"
+        if "upChan" in topic:
+            return "up_channel"
+        if "app/report" in topic:
+            return "app_report"
+        if "shadow/report" in topic:
+            return "device_report"
+        return "other"
+
+    def _suppress_s1_lifecycle_replay(
+        self,
+        sn: str,
+        machine: dict[str, Any],
+        *,
+        received_at: datetime,
+        topic: Any,
+    ) -> bool:
+        """Reject an impossible immediate S1 terminal-to-running replay."""
+        raw_status = _coerce_int(machine.get("status"))
+        base_status = status_value(raw_status)
+        terminal_reports = getattr(self, "_last_s1_terminal_report_at", None)
+        if terminal_reports is None:
+            terminal_reports = self._last_s1_terminal_report_at = {}
+
+        if base_status in S1_TERMINAL_STATUS_CODES:
+            terminal_reports[sn] = received_at
+            return False
+        if base_status not in S1_RUNNING_STATUS_CODES:
+            return False
+
+        terminal_at = _ensure_utc_aware(terminal_reports.get(sn))
+        now = _ensure_utc_aware(received_at) or dt_util.utcnow()
+        if terminal_at is None:
+            return False
+        age = now - terminal_at
+        if age < timedelta(0) or age > S1_MQTT_LIFECYCLE_REPLAY_GUARD:
+            return False
+
+        suppressions = getattr(self, "_s1_mqtt_replay_suppressions", None)
+        if suppressions is None:
+            suppressions = self._s1_mqtt_replay_suppressions = {}
+        previous = suppressions.get(sn) or {}
+        suppressions[sn] = {
+            "count": int(previous.get("count") or 0) + 1,
+            "last_suppressed_at": now.isoformat(),
+            "source": self._mqtt_source_label(topic),
+            "status": base_status,
+            "terminal_age_seconds": round(age.total_seconds(), 3),
+            "guard_seconds": S1_MQTT_LIFECYCLE_REPLAY_GUARD.total_seconds(),
+        }
+        _LOGGER.debug(
+            "Suppressed S1 MQTT lifecycle replay source=%s status=%s age=%.3fs",
+            self._mqtt_source_label(topic),
+            base_status,
+            age.total_seconds(),
+        )
+        return True
 
     def _apply_device_profile(self, sn: str) -> None:
         """Derive and store family/capability metadata for a device."""
@@ -710,6 +791,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
     def _on_shadow_update(self, sn: str, data: dict) -> None:
         """Process shadow update from MQTT."""
         topic = data.get("_topic") if isinstance(data, dict) else None
+        mqtt_received_at = dt_util.utcnow()
 
         def _publish_updates(updates: DeviceState) -> None:
             if not updates:
@@ -819,11 +901,20 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
 
         if machine:
             if model_key(raw_device) == SCUBA_S1_2025_MODEL:
+                if self._suppress_s1_lifecycle_replay(
+                    sn,
+                    machine,
+                    received_at=mqtt_received_at,
+                    topic=topic,
+                ):
+                    machine = {
+                        key: value for key, value in machine.items() if key not in S1_REPLAY_LIFECYCLE_FIELDS
+                    }
                 mqtt_status = _coerce_int(machine.get("status"))
                 reports = getattr(self, "_last_s1_mqtt_machine_report", None)
                 if reports is None:
                     reports = self._last_s1_mqtt_machine_report = {}
-                reports[sn] = {"observed_at": dt_util.utcnow(), "status": mqtt_status}
+                reports[sn] = {"observed_at": mqtt_received_at, "status": mqtt_status}
                 if mqtt_status in (2, 3):
                     self._record_s1_reconciliation(sn, trigger="mqtt_machine_status", rest_status=None)
             updates = merge_device_state(updates, normalize_machine_update(raw_device, machine, current_state))

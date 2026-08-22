@@ -221,6 +221,93 @@ async def test_s1_capability_refresh_does_not_regress_live_state() -> None:
     assert device["mode_options"].attributes["selected_mode"] == 1
 
 
+def test_scuba_s1_suppresses_immediate_terminal_to_cleaning_replay() -> None:
+    """A redundant stale topic cannot undo a just-reported S1 completion."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"].update(
+        {
+            "model": "Scuba_S1_2025",
+            "battLevel": 71,
+            "machineStatus": 1,
+            "mode": 1,
+            "runTime": 71,
+            "in_water": 1,
+        }
+    )
+    coordinator.data["SN123"] = normalize_device_state(dict(coordinator._devices["SN123"]))
+
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "_topic": "aiper/things/SN123/shadow/report",
+            "type": "Machine",
+            "data": {"status": 10, "cap": 9, "mode": 0, "run_time": 0, "in_water": 1},
+        },
+    )
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "_topic": "$aws/things/SN123/shadow/get/accepted",
+            "state": {
+                "reported": {
+                    "Machine": {"status": 1, "cap": 71, "mode": 1, "run_time": 71, "in_water": 1}
+                }
+            },
+        },
+    )
+
+    state = coordinator.data["SN123"]
+    assert state["status"].value == "Parked"
+    assert state["running"].value is False
+    assert state["charging"].value is False
+    assert state["battery"].value == 9
+    assert state["runtime"].value == 0.0
+    assert state["in_water"].value is True
+    suppression = coordinator._s1_mqtt_replay_suppressions["SN123"]
+    assert suppression["count"] == 1
+    assert suppression["source"] == "shadow_get"
+    assert suppression["status"] == 1
+    assert suppression["guard_seconds"] == 2.0
+    assert suppression["terminal_age_seconds"] <= 2.0
+    assert suppression["last_suppressed_at"]
+
+
+def test_scuba_s1_allows_cleaning_after_replay_guard_expires() -> None:
+    """The guard must not block a later genuine S1 cleaning transition."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"].update(
+        {
+            "model": "Scuba_S1_2025",
+            "battLevel": 9,
+            "machineStatus": 10,
+            "mode": 0,
+            "runTime": 0,
+            "in_water": 1,
+        }
+    )
+    coordinator.data["SN123"] = normalize_device_state(dict(coordinator._devices["SN123"]))
+    coordinator._last_s1_terminal_report_at = {
+        "SN123": dt_util.utcnow() - timedelta(seconds=3),
+    }
+
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "_topic": "aiper/things/SN123/shadow/report",
+            "type": "Machine",
+            "data": {"status": 1, "cap": 100, "mode": 1, "run_time": 1, "in_water": 1},
+        },
+    )
+
+    state = coordinator.data["SN123"]
+    assert state["status"].value == "Cleaning"
+    assert state["running"].value is True
+    assert state["battery"].value == 100
+    assert state["runtime"].value == 0.02
+    assert state["in_water"].value is True
+    assert not getattr(coordinator, "_s1_mqtt_replay_suppressions", {})
+
+
 def test_shadow_update_promotes_hydrocomm_w2_state() -> None:
     """HydroComm/W2 shadow components should become live HA sensor state."""
     coordinator = _bare_coordinator()
