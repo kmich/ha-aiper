@@ -148,6 +148,29 @@ def test_scuba_s1_status_semantics_apply_to_mqtt_updates() -> None:
     assert updates["in_water"].value is False
 
 
+def test_scuba_s1_charging_without_water_field_clears_stale_wet_state() -> None:
+    """S1 charging is authoritative dry evidence even when MQTT omits water."""
+    updates = normalize_machine_update(
+        {"model": "Scuba_S1_2025"},
+        {"status": 2, "cap": 15},
+    )
+
+    assert updates["status"].value == "Charging"
+    assert updates["charging"].value is True
+    assert updates["running"].value is False
+    assert updates["in_water"].value is False
+
+
+def test_other_models_do_not_infer_water_from_charging_status() -> None:
+    """The physically validated dry inference must remain S1-specific."""
+    updates = normalize_machine_update(
+        {"model": "Scuba_X1"},
+        {"status": 3, "cap": 15},
+    )
+
+    assert "in_water" not in updates
+
+
 def test_scuba_s3_semantics_resolve_from_device_list_model() -> None:
     """A failed device-info call must not revert the S3 to the default encoding."""
     state = normalize_device_state({"deviceModel": "Scuba_S3", "machineStatus": 2})

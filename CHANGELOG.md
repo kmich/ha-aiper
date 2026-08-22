@@ -8,6 +8,16 @@
   (cleaner status/controls and HydroComm water-quality gauges), installable as a
   HACS Dashboard custom repository.
 
+### Fixed
+- Suppressed an observed Scuba S1 MQTT lifecycle replay where redundant cloud
+  topics briefly republished an older Cleaning snapshot immediately after a
+  Parked or Charging report. The narrow two-second guard is enabled only for
+  `Scuba_S1_2025`, preserves the newer terminal state and battery/runtime/water
+  fields, and does not block a later genuine cleaning start.
+- Fixed `Scuba_S1_2025` charging reports that omit `in_water`: charging now
+  authoritatively clears a stale submerged state. Other models retain their
+  existing payload-driven water semantics.
+
 ## [1.4.0] - 2026-09-01
 
 ### Added
