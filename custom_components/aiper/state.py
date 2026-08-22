@@ -396,15 +396,14 @@ def normalize_machine_update(
         if raw_status is not None and not hydrocomm:
             current_running = _cleaner_running(rest, raw_status)
         updates["runtime"] = EntityState(_current_runtime_to_hours(rest, mqtt.get("run_time"), current_running))
-    if mqtt.get("in_water") is not None:
+    charging = raw_status is not None and _cleaner_charging(rest, status_value(raw_status))
+    if model_key(rest) == SCUBA_S1_2025_MODEL and charging:
+        # Physically validated S1 charging reports can omit in-water or repeat
+        # the stale submerged value from the completed run. Charging is stronger
+        # evidence that the cleaner is dry, so it wins over either payload form.
+        updates["in_water"] = EntityState(False)
+    elif mqtt.get("in_water") is not None:
         updates["in_water"] = EntityState(bool(mqtt.get("in_water")))
-    else:
-        charging = raw_status is not None and _cleaner_charging(rest, status_value(raw_status))
-        if model_key(rest) == SCUBA_S1_2025_MODEL and charging:
-            # Physically validated S1 charging reports do not always repeat the
-            # in-water field. Charging is authoritative evidence that the cleaner
-            # is dry, so do not retain a stale submerged value from the prior run.
-            updates["in_water"] = EntityState(False)
     solar_status_raw = mqtt.get("solar_status") if "solar_status" in mqtt else mqtt.get("solarStatus")
     if solar_status_raw is not None:
         updates["solar_charging"] = EntityState(solar_status_raw == 1)

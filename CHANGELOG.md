@@ -15,8 +15,8 @@
   `Scuba_S1_2025`, preserves the newer terminal state and battery/runtime/water
   fields, and does not block a later genuine cleaning start.
 - Fixed `Scuba_S1_2025` charging reports that omit `in_water`: charging now
-  authoritatively clears a stale submerged state. Other models retain their
-  existing payload-driven water semantics.
+  overrides both an omitted field and an explicitly replayed stale wet value.
+  Other models retain their existing payload-driven water semantics.
 
 ## [1.4.0] - 2026-09-01
 

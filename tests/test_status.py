@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from custom_components.aiper.const import status_label, status_running, status_value
 from custom_components.aiper.state import normalize_device_state, normalize_machine_update
 
@@ -148,11 +150,15 @@ def test_scuba_s1_status_semantics_apply_to_mqtt_updates() -> None:
     assert updates["in_water"].value is False
 
 
-def test_scuba_s1_charging_without_water_field_clears_stale_wet_state() -> None:
-    """S1 charging is authoritative dry evidence even when MQTT omits water."""
+@pytest.mark.parametrize("reported_water", [None, 1])
+def test_scuba_s1_charging_clears_stale_wet_state(reported_water: int | None) -> None:
+    """S1 charging is dry evidence when MQTT omits or repeats stale water."""
+    payload = {"status": 2, "cap": 15}
+    if reported_water is not None:
+        payload["in_water"] = reported_water
     updates = normalize_machine_update(
         {"model": "Scuba_S1_2025"},
-        {"status": 2, "cap": 15},
+        payload,
     )
 
     assert updates["status"].value == "Charging"
@@ -169,6 +175,16 @@ def test_other_models_do_not_infer_water_from_charging_status() -> None:
     )
 
     assert "in_water" not in updates
+
+
+def test_other_models_keep_explicit_water_value_while_charging() -> None:
+    """The S1 override must not alter another model's explicit water field."""
+    updates = normalize_machine_update(
+        {"model": "Scuba_X1"},
+        {"status": 3, "cap": 15, "in_water": 1},
+    )
+
+    assert updates["in_water"].value is True
 
 
 def test_scuba_s3_semantics_resolve_from_device_list_model() -> None:
