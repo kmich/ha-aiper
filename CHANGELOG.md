@@ -9,6 +9,12 @@
   HACS Dashboard custom repository.
 
 ### Fixed
+- Preserved a newly confirmed `Scuba_S1_2025` Cleaning start across delayed
+  redundant MQTT Idle/zero snapshots. A model-gated 15-second settling window
+  protects only coherent Cleaning reports with wet or positive-runtime
+  evidence; Parked and Charging still stop the cycle immediately, a later
+  uncorrelated Idle remains allowed, and explicitly older timestamped Idle
+  snapshots remain stale. Other Aiper models are unchanged.
 - Suppressed an observed Scuba S1 MQTT lifecycle replay where redundant cloud
   topics briefly republished an older Cleaning snapshot immediately after a
   Parked or Charging report. The narrow two-second guard is enabled only for
