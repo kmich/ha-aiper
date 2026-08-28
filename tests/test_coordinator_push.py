@@ -76,6 +76,23 @@ def test_apply_device_profile_reconciles_s1_mode_ids() -> None:
     assert coordinator._devices["SN123"]["supported_mode_ids"] == [1, 2, 3, 5]
 
 
+def _scuba_s1_coordinator() -> AiperDataUpdateCoordinator:
+    """Return a bare coordinator configured as the physically validated S1."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"].update(
+        {
+            "model": "Scuba_S1_2025",
+            "battLevel": 100,
+            "machineStatus": 0,
+            "mode": 0,
+            "runTime": 0,
+            "in_water": 0,
+        }
+    )
+    coordinator.data["SN123"] = normalize_device_state(dict(coordinator._devices["SN123"]))
+    return coordinator
+
+
 def test_shadow_update_promotes_live_state() -> None:
     """MQTT reported data should update normalized entity state."""
     coordinator = _bare_coordinator()
@@ -305,6 +322,161 @@ def test_scuba_s1_allows_cleaning_after_replay_guard_expires() -> None:
     assert state["battery"].value == 100
     assert state["runtime"].value == 0.02
     assert state["in_water"].value is True
+    assert not getattr(coordinator, "_s1_mqtt_replay_suppressions", {})
+
+
+def test_scuba_s1_preserves_confirmed_start_across_delayed_idle_replays() -> None:
+    """Redundant Idle topics cannot erase a coherent newly confirmed start."""
+    coordinator = _scuba_s1_coordinator()
+
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "_topic": "aiper/things/SN123/shadow/report",
+            "type": "Machine",
+            "data": {"status": 1, "cap": 98, "mode": 1, "run_time": 1, "in_water": 1},
+        },
+    )
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "_topic": "$aws/things/SN123/shadow/get/accepted",
+            "state": {"reported": {"Machine": {"status": 0, "cap": 100, "mode": 0, "run_time": 0, "in_water": 0}}},
+        },
+    )
+    coordinator._last_s1_confirmed_running_report["SN123"]["received_at"] = dt_util.utcnow() - timedelta(seconds=9)
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "_topic": "$aws/things/SN123/shadow/update/documents",
+            "current": {
+                "state": {"reported": {"Machine": {"status": 0, "cap": 100, "mode": 0, "run_time": 0, "in_water": 0}}}
+            },
+        },
+    )
+
+    state = coordinator.data["SN123"]
+    assert state["status"].value == "Cleaning"
+    assert state["running"].value is True
+    assert state["charging"].value is False
+    assert state["battery"].value == 98
+    assert state["runtime"].value == 0.02
+    assert state["in_water"].value is True
+    suppression = coordinator._s1_mqtt_replay_suppressions["SN123"]
+    assert suppression["count"] == 2
+    assert suppression["kind"] == "running_to_idle"
+    assert suppression["status"] == 0
+    assert suppression["guard_seconds"] == 15.0
+    assert 8 <= suppression["age_seconds"] <= 10
+
+
+def test_scuba_s1_allows_new_idle_after_start_guard_expires() -> None:
+    """A later uncorrelated Idle report must not be blocked indefinitely."""
+    coordinator = _scuba_s1_coordinator()
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "type": "Machine",
+            "data": {"status": 1, "cap": 98, "mode": 1, "run_time": 1, "in_water": 1},
+        },
+    )
+    coordinator._last_s1_confirmed_running_report["SN123"]["received_at"] = dt_util.utcnow() - timedelta(seconds=16)
+
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "type": "Machine",
+            "data": {"status": 0, "cap": 98, "mode": 0, "run_time": 0, "in_water": 0},
+        },
+    )
+
+    state = coordinator.data["SN123"]
+    assert state["status"].value == "Idle"
+    assert state["running"].value is False
+    assert state["runtime"].value == 0.0
+    assert state["in_water"].value is False
+    assert "SN123" not in coordinator._last_s1_confirmed_running_report
+
+
+def test_scuba_s1_suppresses_explicitly_older_idle_after_start_guard() -> None:
+    """An explicitly older snapshot stays stale beyond the settling window."""
+    coordinator = _scuba_s1_coordinator()
+    now = dt_util.utcnow().replace(microsecond=0)
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "timestamp": int(now.timestamp()),
+            "type": "Machine",
+            "data": {"status": 1, "cap": 98, "mode": 1, "run_time": 1, "in_water": 1},
+        },
+    )
+    coordinator._last_s1_confirmed_running_report["SN123"]["received_at"] = now - timedelta(minutes=1)
+
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "timestamp": int((now - timedelta(minutes=2)).timestamp()),
+            "type": "Machine",
+            "data": {"status": 0, "cap": 100, "mode": 0, "run_time": 0, "in_water": 0},
+        },
+    )
+
+    state = coordinator.data["SN123"]
+    assert state["status"].value == "Cleaning"
+    assert state["battery"].value == 98
+    assert coordinator._s1_mqtt_replay_suppressions["SN123"]["kind"] == "running_to_idle"
+
+
+def test_scuba_s1_terminal_status_ends_confirmed_start_immediately() -> None:
+    """Parked remains authoritative even inside the start settling window."""
+    coordinator = _scuba_s1_coordinator()
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "type": "Machine",
+            "data": {"status": 1, "cap": 98, "mode": 1, "run_time": 1, "in_water": 1},
+        },
+    )
+
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "type": "Machine",
+            "data": {"status": 10, "cap": 9, "mode": 0, "run_time": 0, "in_water": 1},
+        },
+    )
+
+    state = coordinator.data["SN123"]
+    assert state["status"].value == "Parked"
+    assert state["running"].value is False
+    assert state["runtime"].value == 0.0
+    assert "SN123" not in coordinator._last_s1_confirmed_running_report
+
+
+def test_scuba_s1_status_only_cleaning_does_not_guard_idle() -> None:
+    """A status-only report is not enough evidence to protect a start."""
+    coordinator = _scuba_s1_coordinator()
+    coordinator._on_shadow_update("SN123", {"type": "Machine", "data": {"status": 1}})
+    coordinator._on_shadow_update("SN123", {"type": "Machine", "data": {"status": 0}})
+
+    assert coordinator.data["SN123"]["status"].value == "Idle"
+    assert not getattr(coordinator, "_s1_mqtt_replay_suppressions", {})
+
+
+def test_non_s1_start_state_is_not_guarded() -> None:
+    """Unvalidated models keep their existing lifecycle semantics."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"]["model"] = "Scuba_X1"
+    coordinator._on_shadow_update(
+        "SN123",
+        {"type": "Machine", "data": {"status": 1, "run_time": 1, "in_water": 1}},
+    )
+    coordinator._on_shadow_update(
+        "SN123",
+        {"type": "Machine", "data": {"status": 0, "run_time": 0, "in_water": 0}},
+    )
+
+    assert coordinator.data["SN123"]["status"].value == "Idle"
     assert not getattr(coordinator, "_s1_mqtt_replay_suppressions", {})
 
 

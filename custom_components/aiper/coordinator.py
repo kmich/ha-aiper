@@ -30,6 +30,7 @@ from .coordinator_parsing import (
     _merge_discovery_metadata,
     _parse_cleaning_history,
     _parse_consumables,
+    _parse_dt,
 )
 from .profiles import SCUBA_S1_2025_MODEL, Capability, derive_device_profile, has_capability, model_key
 from .repairs import async_update_unknown_model_issues
@@ -87,8 +88,15 @@ MQTT_PREFERRED_STATE_KEYS = frozenset({"running", "status", "charging", "mode"})
 # A genuine physical restart cannot occur in this narrow interval, so terminal
 # evidence wins briefly while redundant topic snapshots settle.
 S1_MQTT_LIFECYCLE_REPLAY_GUARD = timedelta(seconds=2)
+# On 2026-08-27 a coherent S1 Cleaning/Wet/nonzero-runtime report was followed
+# by redundant Idle/zero snapshots at 137 ms and 8.7 seconds. The latter became
+# persistent for the entire submerged cycle. A verified S1 cycle ends with a
+# terminal Parked/Charging status, not an Idle snapshot, so preserve a newly
+# confirmed running sample while the redundant MQTT topics settle.
+S1_MQTT_START_REPLAY_GUARD = timedelta(seconds=15)
 S1_TERMINAL_STATUS_CODES = frozenset({2, 3, 10})
 S1_RUNNING_STATUS_CODES = frozenset({1})
+S1_IDLE_STATUS_CODES = frozenset({0})
 S1_REPLAY_LIFECYCLE_FIELDS = frozenset({"status", "mode", "cap", "run_time", "in_water"})
 REST_STATE_FIELDS: dict[str, frozenset[str]] = {
     "machineStatus": frozenset({"running", "status", "charging"}),
@@ -136,6 +144,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         self._s1_battery_samples: dict[str, list[dict[str, Any]]] = {}
         self._last_s1_mqtt_machine_report: dict[str, dict[str, Any]] = {}
         self._last_s1_terminal_report_at: dict[str, datetime] = {}
+        self._last_s1_confirmed_running_report: dict[str, dict[str, Any]] = {}
         self._s1_mqtt_replay_suppressions: dict[str, dict[str, Any]] = {}
         self._state_reconciliation: dict[str, dict[str, Any]] = {}
         # Per-device, per-field record of which source (mqtt/rest) last supplied
@@ -200,6 +209,20 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             return False
         age = (_ensure_utc_aware(now) or dt_util.utcnow()) - observed_at
         return -LIVE_REFRESH_INTERVAL <= age <= MQTT_LIVE_STATE_TTL
+
+    @staticmethod
+    def _mqtt_observation(data: dict[str, Any]) -> tuple[datetime, bool]:
+        """Return payload observation time and whether it was explicit."""
+        candidates: list[Any] = [data.get("timestamp"), data.get("ts")]
+        current = data.get("current")
+        if isinstance(current, dict):
+            candidates.extend((current.get("timestamp"), current.get("ts")))
+        now = dt_util.utcnow()
+        for candidate in candidates:
+            parsed = _parse_dt(candidate)
+            if parsed is not None and parsed <= now + LIVE_REFRESH_INTERVAL:
+                return parsed, True
+        return now, False
 
     def _record_s1_battery_sample(self, sn: str, value: Any, observed_at: datetime) -> None:
         """Retain a small, non-sensitive battery trend for S1 fallback logic."""
@@ -298,28 +321,78 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         sn: str,
         machine: dict[str, Any],
         *,
+        observed_at: datetime,
+        observed_at_explicit: bool,
         received_at: datetime,
         topic: Any,
     ) -> bool:
-        """Reject an impossible immediate S1 terminal-to-running replay."""
+        """Reject physically impossible S1 lifecycle replays."""
         raw_status = _coerce_int(machine.get("status"))
         base_status = status_value(raw_status)
         terminal_reports = getattr(self, "_last_s1_terminal_report_at", None)
         if terminal_reports is None:
             terminal_reports = self._last_s1_terminal_report_at = {}
+        running_reports = getattr(self, "_last_s1_confirmed_running_report", None)
+        if running_reports is None:
+            running_reports = self._last_s1_confirmed_running_report = {}
 
         if base_status in S1_TERMINAL_STATUS_CODES:
             terminal_reports[sn] = received_at
+            running_reports.pop(sn, None)
             return False
-        if base_status not in S1_RUNNING_STATUS_CODES:
+        now = _ensure_utc_aware(received_at) or dt_util.utcnow()
+        suppression_kind: str | None = None
+        suppression_age: timedelta | None = None
+        suppression_guard: timedelta | None = None
+
+        if base_status in S1_RUNNING_STATUS_CODES:
+            terminal_at = _ensure_utc_aware(terminal_reports.get(sn))
+            if terminal_at is not None:
+                age = now - terminal_at
+                if timedelta(0) <= age <= S1_MQTT_LIFECYCLE_REPLAY_GUARD:
+                    suppression_kind = "terminal_to_running"
+                    suppression_age = age
+                    suppression_guard = S1_MQTT_LIFECYCLE_REPLAY_GUARD
+
+            if suppression_kind is None:
+                run_time = _coerce_int(machine.get("run_time"))
+                in_water = _coerce_bool(machine.get("in_water"))
+                if (run_time is not None and run_time > 0) or in_water is True:
+                    running_reports[sn] = {
+                        "observed_at": _ensure_utc_aware(observed_at) or now,
+                        "observed_at_explicit": observed_at_explicit,
+                        "received_at": now,
+                        "source": self._mqtt_source_label(topic),
+                    }
+                return False
+
+        elif base_status in S1_IDLE_STATUS_CODES:
+            running_report = running_reports.get(sn) or {}
+            running_received_at = _ensure_utc_aware(running_report.get("received_at"))
+            running_observed_at = _ensure_utc_aware(running_report.get("observed_at"))
+            idle_age = now - running_received_at if running_received_at is not None else None
+            explicitly_older = (
+                observed_at_explicit
+                and bool(running_report.get("observed_at_explicit"))
+                and running_observed_at is not None
+                and (_ensure_utc_aware(observed_at) or now) < running_observed_at
+            )
+            if explicitly_older or (idle_age is not None and timedelta(0) <= idle_age <= S1_MQTT_START_REPLAY_GUARD):
+                suppression_kind = "running_to_idle"
+                suppression_age = idle_age
+                suppression_guard = S1_MQTT_START_REPLAY_GUARD
+            elif idle_age is not None and idle_age > S1_MQTT_START_REPLAY_GUARD:
+                # A newer Idle outside the narrow settling window is allowed.
+                # Do not let the old start protect against later uncorrelated
+                # Idle samples unless their own timestamp proves they are old.
+                running_reports.pop(sn, None)
+                return False
+            else:
+                return False
+        else:
             return False
 
-        terminal_at = _ensure_utc_aware(terminal_reports.get(sn))
-        now = _ensure_utc_aware(received_at) or dt_util.utcnow()
-        if terminal_at is None:
-            return False
-        age = now - terminal_at
-        if age < timedelta(0) or age > S1_MQTT_LIFECYCLE_REPLAY_GUARD:
+        if suppression_kind is None or suppression_age is None or suppression_guard is None:
             return False
 
         suppressions = getattr(self, "_s1_mqtt_replay_suppressions", None)
@@ -331,14 +404,20 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             "last_suppressed_at": now.isoformat(),
             "source": self._mqtt_source_label(topic),
             "status": base_status,
-            "terminal_age_seconds": round(age.total_seconds(), 3),
-            "guard_seconds": S1_MQTT_LIFECYCLE_REPLAY_GUARD.total_seconds(),
+            "kind": suppression_kind,
+            "age_seconds": round(suppression_age.total_seconds(), 3),
+            "guard_seconds": suppression_guard.total_seconds(),
         }
+        if suppression_kind == "terminal_to_running":
+            # Retain the established diagnostics key for compatibility with
+            # existing issue reports and tests.
+            suppressions[sn]["terminal_age_seconds"] = round(suppression_age.total_seconds(), 3)
         _LOGGER.debug(
-            "Suppressed S1 MQTT lifecycle replay source=%s status=%s age=%.3fs",
+            "Suppressed S1 MQTT lifecycle replay kind=%s source=%s status=%s age=%.3fs",
+            suppression_kind,
             self._mqtt_source_label(topic),
             base_status,
-            age.total_seconds(),
+            suppression_age.total_seconds(),
         )
         return True
 
@@ -791,6 +870,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
     def _on_shadow_update(self, sn: str, data: dict) -> None:
         """Process shadow update from MQTT."""
         topic = data.get("_topic") if isinstance(data, dict) else None
+        mqtt_observed_at, mqtt_observed_at_explicit = self._mqtt_observation(data)
         mqtt_received_at = dt_util.utcnow()
 
         def _publish_updates(updates: DeviceState) -> None:
@@ -904,6 +984,8 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 if self._suppress_s1_lifecycle_replay(
                     sn,
                     machine,
+                    observed_at=mqtt_observed_at,
+                    observed_at_explicit=mqtt_observed_at_explicit,
                     received_at=mqtt_received_at,
                     topic=topic,
                 ):
