@@ -39,6 +39,42 @@ def _bare_coordinator() -> AiperDataUpdateCoordinator:
     return coordinator
 
 
+def test_apply_device_profile_preserves_surfer_reported_mode_ids() -> None:
+    """Non-S1 families keep the device-reported supported_mode_ids untouched.
+
+    Regression test: _apply_device_profile must not unconditionally overwrite
+    supported_mode_ids with the family-derived mode map for every model, since
+    Surfer's mode-map construction always injects a synthetic mode 0 ("Off")
+    even when the hardware never reported it as supported.
+    """
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"] = {
+        "sn": "SN123",
+        "model": "Surfer_S2",
+        "supported_mode_ids": [1, 5],
+    }
+
+    coordinator._apply_device_profile("SN123")
+
+    assert coordinator._devices["SN123"]["supported_mode_ids"] == [1, 5]
+
+
+def test_apply_device_profile_reconciles_s1_mode_ids() -> None:
+    """Scuba_S1_2025 keeps the derived-profile-is-authoritative behavior,
+    stripping an unsupported Waterline id a generic Scuba fallback could
+    otherwise leave behind."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"] = {
+        "sn": "SN123",
+        "model": "Scuba_S1_2025",
+        "supported_mode_ids": [1, 2, 3, 4, 5],
+    }
+
+    coordinator._apply_device_profile("SN123")
+
+    assert coordinator._devices["SN123"]["supported_mode_ids"] == [1, 2, 3, 5]
+
+
 def test_shadow_update_promotes_live_state() -> None:
     """MQTT reported data should update normalized entity state."""
     coordinator = _bare_coordinator()
@@ -311,6 +347,82 @@ async def test_scuba_s1_fresh_rest_charging_replaces_stale_mqtt_state(hass: Home
     ]
 
 
+@pytest.mark.asyncio
+async def test_scuba_s1_rest_charging_defers_to_recent_mqtt_cleaning_report(hass: HomeAssistant) -> None:
+    """A stale REST 'charging' snapshot must not override a fresher MQTT
+    report that still shows the device actively cleaning.
+
+    Regression test: unlike the sibling battery_rise_fallback branch, the
+    rest_status-in-(2,3) branch originally had no recency check against
+    MQTT at all, so a lagging REST poll could silently overwrite a live
+    MQTT "Cleaning" state with "Charging".
+    """
+
+    class FakeApi:
+        async def get_devices(self):
+            return [
+                {
+                    "sn": "SN123",
+                    "name": "Scuba S1",
+                    "model": "Scuba_S1_2025",
+                    "online": True,
+                    "battLevel": 56,
+                    "machineStatus": 2,  # stale REST snapshot: Charging
+                }
+            ]
+
+        async def get_device_info(self, sn):
+            raise AssertionError("metadata info should not be polled before refresh interval")
+
+        def is_mqtt_connected(self) -> bool:
+            return False
+
+    now = dt_util.utcnow()
+    coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
+    coordinator.hass = hass
+    coordinator.api = cast(Any, FakeApi())
+    coordinator._devices = {
+        "SN123": {
+            "sn": "SN123",
+            "name": "Scuba S1",
+            "model": "Scuba_S1_2025",
+            "online": True,
+            "in_water": 1,
+            "mode": 1,
+            "runTime": 210,
+        }
+    }
+    coordinator._last_online = {"SN123": True}
+    coordinator.update_interval = timedelta(hours=1)
+    coordinator._metadata_refresh = timedelta(hours=24)
+    coordinator._last_metadata_fetch = {"SN123": now}
+    coordinator._history_cache = {}
+    coordinator._consumables_cache = {"SN123": []}
+    coordinator._clean_path_cache = {}
+    coordinator._selected_mode_cache = {}
+    coordinator._command_state = {}
+    # A very recent MQTT report still shows the device actively Cleaning.
+    coordinator._last_s1_mqtt_machine_report = {
+        "SN123": {"observed_at": now - timedelta(seconds=5), "status": 1}
+    }
+    coordinator.data = {
+        "SN123": normalize_device_state(
+            {
+                **coordinator._devices["SN123"],
+                "machineStatus": 1,
+            }
+        )
+    }
+
+    data = await coordinator._async_update_data()
+
+    # The stale REST "Charging" reading must not override the fresher,
+    # correct MQTT "Cleaning" state.
+    assert data["SN123"]["status"].value == "Cleaning"
+    assert data["SN123"]["running"].value is True
+    assert data["SN123"]["charging"].value is False
+
+
 @pytest.mark.parametrize(("machine_status", "reported_water"), [(1, 0), (10, None)])
 @pytest.mark.asyncio
 async def test_scuba_s1_rest_cleaning_or_parked_implies_wet(
@@ -554,6 +666,7 @@ def test_pending_running_intent_expires() -> None:
 def test_clean_path_pending_uses_longer_confirmation_window() -> None:
     """S1 clean-path intent survives the normal command timeout."""
     coordinator = _bare_coordinator()
+    coordinator._devices["SN123"]["model"] = "Scuba_S1_2025"
     coordinator._command_state = {
         "SN123": {
             "pending": {
@@ -570,6 +683,30 @@ def test_clean_path_pending_uses_longer_confirmation_window() -> None:
     }
 
     assert coordinator.get_pending_command_target("SN123", "clean_path") == 0
+
+
+def test_clean_path_pending_window_is_not_extended_for_non_s1_models() -> None:
+    """Non-S1 clean-path-capable models (e.g. Scuba S2/S3) keep the standard
+    command timeout — the extended window exists only for Scuba_S1_2025's
+    slower AT+AUTO? confirmation, not for every clean-path-capable model."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"]["model"] = "Scuba_S3"
+    coordinator._command_state = {
+        "SN123": {
+            "pending": {
+                "clean_path": {
+                    "target": 0,
+                    "since": (
+                        dt_util.utcnow() - timedelta(seconds=coordinator.PENDING_TIMEOUT_SECONDS + 1)
+                    ).isoformat(),
+                    "source": "test",
+                }
+            },
+            "last": {},
+        }
+    }
+
+    assert coordinator.get_pending_command_target("SN123", "clean_path") is None
 
 
 @pytest.mark.asyncio

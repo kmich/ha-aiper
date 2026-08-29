@@ -82,6 +82,19 @@ def test_scuba_s1_mode_profile_rejects_generic_waterline_evidence() -> None:
     assert profile.mode_map == {1: "Auto", 2: "Floor", 3: "Wall", 5: "Scheduled"}
 
 
+def test_scuba_s1_recognized_via_device_model_fallback() -> None:
+    """A device known only by `deviceModel` (before the first successful
+    get_device_info() call populates `model`) must still resolve to the
+    Scuba family and its full S1 capability/mode-map profile — not fall
+    through to DeviceFamily.UNKNOWN and COMMON_CAPABILITIES."""
+    profile = derive_device_profile({"deviceModel": "Scuba_S1_2025"})
+
+    assert profile.family == DeviceFamily.SCUBA
+    assert Capability.CLEANING_MODE_SELECT in profile.capabilities
+    assert Capability.CLEAN_PATH in profile.capabilities
+    assert profile.mode_map == {1: "Auto", 2: "Floor", 3: "Wall", 5: "Scheduled"}
+
+
 def test_surfer_mode_evidence_stays_read_only() -> None:
     """Surfer mode IDs describe cleaning context, not selectable cleaning modes."""
     profile = derive_device_profile(

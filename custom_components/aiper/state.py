@@ -14,7 +14,7 @@ from .profiles import (
     Capability,
     DeviceFamily,
     derive_device_profile,
-    device_model_string,
+    model_key,
     status_semantics,
 )
 
@@ -101,12 +101,9 @@ def _centihours_to_hours(value: Any) -> float | None:
     return None
 
 
-def _runtime_to_hours(device: RawDeviceData, value: Any) -> float | None:
+def _runtime_to_hours(device: RawDeviceData, value: Any, *, key: str | None = None) -> float | None:
     """Normalize model-specific current-cycle runtime units to hours."""
-    model_key = device_model_string(device).strip().lower().replace("-", "_").replace(" ", "_")
-    if not model_key:
-        model_key = str(device.get("deviceModel") or "").strip().lower().replace("-", "_").replace(" ", "_")
-    if model_key == SCUBA_S1_2025_MODEL:
+    if (key if key is not None else model_key(device)) == SCUBA_S1_2025_MODEL:
         minutes = _coerce_float(value)
         return round(minutes / 60.0, 2) if minutes is not None else None
     return _centihours_to_hours(value)
@@ -123,12 +120,10 @@ def _current_runtime_to_hours(
     current machine state. It resets when charging begins and then increments
     while charging, so it is a cleaning timer only while status is running.
     """
-    model_key = device_model_string(device).strip().lower().replace("-", "_").replace(" ", "_")
-    if not model_key:
-        model_key = str(device.get("deviceModel") or "").strip().lower().replace("-", "_").replace(" ", "_")
-    if model_key == SCUBA_S1_2025_MODEL and running is False:
+    key = model_key(device)
+    if key == SCUBA_S1_2025_MODEL and running is False:
         return 0.0
-    return _runtime_to_hours(device, value)
+    return _runtime_to_hours(device, value, key=key)
 
 
 def _hours(value: Any) -> float | None:
@@ -855,10 +850,7 @@ def normalize_device_state(raw: RawDeviceData) -> DeviceState:
     last_cleaning_mode = (
         raw.get("last_cleaning_mode") if "last_cleaning_mode" in raw else raw.get("_ha_last_cleaning_mode")
     )
-    model_key = device_model_string(raw).strip().lower().replace("-", "_").replace(" ", "_")
-    if not model_key:
-        model_key = str(raw.get("deviceModel") or "").strip().lower().replace("-", "_").replace(" ", "_")
-    if model_key == SCUBA_S1_2025_MODEL and str(last_cleaning_mode).strip().lower() == "smart":
+    if model_key(raw) == SCUBA_S1_2025_MODEL and str(last_cleaning_mode).strip().lower() == "smart":
         last_cleaning_mode = "Auto"
     last_cleaning_start = (
         raw.get("last_cleaning_start") if "last_cleaning_start" in raw else raw.get("_ha_last_cleaning_start")

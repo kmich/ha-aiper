@@ -32,7 +32,7 @@ from .const import (
 )
 from .crypto import AiperEncryption
 from .mqtt import AwsIotCredentials, AwsIotMqttTransport
-from .profiles import SCUBA_S1_2025_MODEL, DeviceFamily, device_family
+from .profiles import SCUBA_S1_2025_MODEL, DeviceFamily, device_family, model_key
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -700,9 +700,7 @@ class AiperApi:
     def _is_scuba_s1_2025(self, sn: str) -> bool:
         """Return whether the serial belongs to the verified Scuba S1 profile."""
         dev = self._devices.get(sn) or {}
-        raw_model = dev.get("model") or dev.get("deviceModel") or ""
-        model_key = str(raw_model).strip().lower().replace("-", "_").replace(" ", "_")
-        return model_key == SCUBA_S1_2025_MODEL
+        return model_key(dev) == SCUBA_S1_2025_MODEL
 
     async def query_clean_path_setting(self, sn: str) -> int | None:
         """Query the clean-path preference without blocking the event loop."""
