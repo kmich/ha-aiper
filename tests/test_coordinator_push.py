@@ -402,9 +402,7 @@ async def test_scuba_s1_rest_charging_defers_to_recent_mqtt_cleaning_report(hass
     coordinator._selected_mode_cache = {}
     coordinator._command_state = {}
     # A very recent MQTT report still shows the device actively Cleaning.
-    coordinator._last_s1_mqtt_machine_report = {
-        "SN123": {"observed_at": now - timedelta(seconds=5), "status": 1}
-    }
+    coordinator._last_s1_mqtt_machine_report = {"SN123": {"observed_at": now - timedelta(seconds=5), "status": 1}}
     coordinator.data = {
         "SN123": normalize_device_state(
             {

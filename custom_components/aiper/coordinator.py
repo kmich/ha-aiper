@@ -1474,7 +1474,9 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             # necessary.
             is_s1 = model_key(self._devices.get(sn) or {}) == SCUBA_S1_2025_MODEL
             timeout = (
-                self.CLEAN_PATH_PENDING_TIMEOUT_SECONDS if (kind == "clean_path" and is_s1) else self.PENDING_TIMEOUT_SECONDS
+                self.CLEAN_PATH_PENDING_TIMEOUT_SECONDS
+                if (kind == "clean_path" and is_s1)
+                else self.PENDING_TIMEOUT_SECONDS
             )
             if (now - since).total_seconds() >= timeout:
                 expired.append(kind)
