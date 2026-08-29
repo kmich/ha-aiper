@@ -43,10 +43,16 @@ class Capability(StrEnum):
     SOLAR_CHARGING = "solar_charging"
     BLUETOOTH = "bluetooth"
     DEVICE_LINK = "device_link"
+    CHARGE_TYPE = "charge_type"
+    ROLLER_BRUSH = "roller_brush"
+    MICROMESH_FILTER = "micromesh_filter"
+    CATERPILLAR_TREAD = "caterpillar_tread"
+    PROPELLER = "propeller"
 
 
 SURFER_MODEL_MARKERS = (DeviceFamily.SURFER.value,)
 SHARK_MODEL_MARKERS = (DeviceFamily.SHARK.value,)
+SCUBA_S1_2025_MODEL = "scuba_s1_2025"
 
 COMMON_CAPABILITIES = frozenset(
     {
@@ -60,6 +66,11 @@ COMMON_CAPABILITIES = frozenset(
         Capability.CHARGING,
         Capability.BLUETOOTH,
         Capability.DEVICE_LINK,
+        Capability.CHARGE_TYPE,
+        Capability.ROLLER_BRUSH,
+        Capability.MICROMESH_FILTER,
+        Capability.CATERPILLAR_TREAD,
+        Capability.PROPELLER,
     }
 )
 
@@ -72,7 +83,24 @@ SCUBA_CAPABILITIES = COMMON_CAPABILITIES | frozenset(
     }
 )
 
-SURFER_CAPABILITIES = COMMON_CAPABILITIES | frozenset(
+# The 2026 retail Scuba S1 identifies itself to Aiper's backend as
+# ``Scuba_S1_2025``. Captured REST, MQTT, and device-shadow payloads do not
+# expose water temperature, charge type, roller brush, caterpillar tread, or
+# propeller data. Clean-path and MicroMesh support are verified separately, so
+# those capabilities remain enabled for this model.
+SCUBA_S1_2025_CAPABILITIES = SCUBA_CAPABILITIES - frozenset(
+    {
+        Capability.WATER_TEMPERATURE,
+        Capability.CHARGE_TYPE,
+        Capability.ROLLER_BRUSH,
+        Capability.CATERPILLAR_TREAD,
+        Capability.PROPELLER,
+    }
+)
+
+SURFER_CAPABILITIES = (
+    COMMON_CAPABILITIES - frozenset({Capability.ROLLER_BRUSH, Capability.CATERPILLAR_TREAD})
+) | frozenset(
     {
         Capability.RUNNING_CONTROL,
         Capability.SOLAR_CHARGING,
@@ -95,6 +123,7 @@ HYDROCOMM_CAPABILITIES = frozenset(
         Capability.BLUETOOTH,
         Capability.MQTT_SHADOW,
         Capability.CHARGING,
+        Capability.CHARGE_TYPE,
         Capability.SOLAR_CHARGING,
         Capability.WATER_TEMPERATURE,
         Capability.WATER_QUALITY,
@@ -109,6 +138,12 @@ SCUBA_DEFAULT_MODE_IDS = [
     int(CleaningMode.WATERLINE),
     int(CleaningMode.SCHEDULED),
 ]
+SCUBA_S1_2025_MODE_MAP = {
+    int(CleaningMode.SMART): "Auto",
+    int(CleaningMode.FLOOR): "Floor",
+    int(CleaningMode.WALL): "Wall",
+    int(CleaningMode.SCHEDULED): "Scheduled",
+}
 SURFER_DEFAULT_MODE_IDS = [0, int(CleaningMode.SMART), int(CleaningMode.SCHEDULED)]
 
 
@@ -153,7 +188,21 @@ SCUBA_S3_STATUS_SEMANTICS = StatusSemantics(
     running=frozenset({int(Status.CLEANING)}),
 )
 
+# Captured on Scuba_S1_2025 main firmware V2.0.1:
+# - status 1 while physically cleaning
+# - status 10 after low-battery parking (not running)
+# - status 2 while physically connected to the charger
+SCUBA_S1_2025_STATUS_SEMANTICS = StatusSemantics(
+    labels={
+        int(Status.RETURNING): "Charging",
+        10: "Parked",
+    },
+    charging=frozenset({int(Status.RETURNING), int(Status.CHARGING)}),
+    running=frozenset({int(Status.CLEANING)}),
+)
+
 MODEL_STATUS_SEMANTICS: dict[str, StatusSemantics] = {
+    SCUBA_S1_2025_MODEL: SCUBA_S1_2025_STATUS_SEMANTICS,
     "scuba_s3": SCUBA_S3_STATUS_SEMANTICS,
 }
 
@@ -163,14 +212,22 @@ def device_model_string(device: dict[str, Any]) -> str:
     return str(device.get("model") or "")
 
 
+def model_key(device: dict[str, Any]) -> str:
+    """Return the normalized model key used to key model-specific behavior.
+
+    `model` is only populated once the device-info call succeeds; fall back to
+    the model carried by the device list (`deviceModel`) so a failed/pending
+    info call cannot silently revert the device to default/unknown handling.
+    This is the single source of truth for model normalization — every other
+    module should import and call this instead of re-deriving it.
+    """
+    raw_model = device_model_string(device) or str(device.get("deviceModel") or "")
+    return raw_model.strip().lower().replace("-", "_").replace(" ", "_")
+
+
 def status_semantics(device: dict[str, Any]) -> StatusSemantics | None:
     """Return model-specific status-code semantics, or None for the default."""
-    # `model` is only populated once the device-info call succeeds; fall back to
-    # the model carried by the device list so a failed info call cannot silently
-    # revert the device to the default encoding.
-    raw_model = device_model_string(device) or str(device.get("deviceModel") or "")
-    key = raw_model.strip().lower().replace("-", "_").replace(" ", "_")
-    return MODEL_STATUS_SEMANTICS.get(key)
+    return MODEL_STATUS_SEMANTICS.get(model_key(device))
 
 
 def device_family(device: dict[str, Any]) -> DeviceFamily:
@@ -181,7 +238,14 @@ def device_family(device: dict[str, Any]) -> DeviceFamily:
     if str(device.get("deviceType") or "") == "4":
         return DeviceFamily.HYDROCOMM
 
-    model = device_model_string(device).lower()
+    # Fall back to `deviceModel` (as status_semantics()/model_key() already do)
+    # so a device known only by `deviceModel` — e.g. before the first
+    # successful info call populates `model` — isn't misclassified as UNKNOWN
+    # while model_key()-keyed logic elsewhere still recognizes it correctly.
+    # Deliberately not using model_key() here: that also collapses spaces to
+    # underscores, which would break the exact-match candidates below (e.g.
+    # "hydrocomm pro").
+    model = (device_model_string(device) or str(device.get("deviceModel") or "")).lower()
     if DeviceFamily.SCUBA.value in model:
         return DeviceFamily.SCUBA
     if DeviceFamily.SURFER.value in model:
@@ -230,8 +294,16 @@ def derive_device_profile(device: dict[str, Any]) -> DeviceProfile:
         elif family == DeviceFamily.SURFER:
             mode_ids = list(SURFER_DEFAULT_MODE_IDS)
 
+    key = model_key(device)
+
+    if key == SCUBA_S1_2025_MODEL:
+        # Aiper Android 3.5.0's X5ProMax profile exposes Auto, Floor, Wall,
+        # and Eco/Scheduled with command IDs 1, 2, 3, and 5. Waterline is not
+        # supported by this hardware even though it is a generic Scuba default.
+        mode_ids = list(SCUBA_S1_2025_MODE_MAP)
+
     if family == DeviceFamily.SCUBA:
-        capabilities = set(SCUBA_CAPABILITIES)
+        capabilities = set(SCUBA_S1_2025_CAPABILITIES if key == SCUBA_S1_2025_MODEL else SCUBA_CAPABILITIES)
     elif family == DeviceFamily.SURFER:
         capabilities = set(SURFER_CAPABILITIES)
     elif family == DeviceFamily.SHARK:
@@ -249,11 +321,11 @@ def derive_device_profile(device: dict[str, Any]) -> DeviceProfile:
     else:
         capabilities = set(COMMON_CAPABILITIES)
 
-    if device.get("temp") is not None:
+    if device.get("temp") is not None and key != SCUBA_S1_2025_MODEL:
         capabilities.add(Capability.WATER_TEMPERATURE)
     if device.get("in_water") is not None:
         capabilities.add(Capability.IN_WATER)
-    mode_map = _mode_map_for_ids(family, mode_ids)
+    mode_map = dict(SCUBA_S1_2025_MODE_MAP) if key == SCUBA_S1_2025_MODEL else _mode_map_for_ids(family, mode_ids)
 
     return DeviceProfile(
         family=family,

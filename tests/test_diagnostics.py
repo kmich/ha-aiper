@@ -59,6 +59,13 @@ async def test_diagnostics_redacts_sensitive_runtime_data(hass: HomeAssistant) -
                 }
             }
         },
+        _state_reconciliation={
+            "SN123": {
+                "trigger": "rest_machine_status",
+                "rest_status": 2,
+                "applied": {"charging": True},
+            }
+        },
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"api": api, "coordinator": coordinator}
 
@@ -77,3 +84,5 @@ async def test_diagnostics_redacts_sensitive_runtime_data(hass: HomeAssistant) -
     assert diagnostics["command_state"]["SN123"]["pending"]["mode"]["value"] == 1
     assert diagnostics["api"]["mqtt_client"] == "SimpleNamespace"
     assert diagnostics["api"]["mqtt_reconnect_count"] == 1
+    assert diagnostics["api"]["mqtt_connected"] is True
+    assert diagnostics["state_reconciliation"]["SN123"]["trigger"] == "rest_machine_status"

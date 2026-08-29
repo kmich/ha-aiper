@@ -13,9 +13,13 @@ View live status, battery, charging state, cleaning modes, consumables, and wate
 
 | Cleaners | Monitors |
 |---|---|
-| ✅ **Scuba X1** | ✅ **HydroComm** |
-| ✅ **Surfer S2** | ✅ **HydroComm Pro / W2 Series** |
+| ✅ **Scuba S1 (2025/2026)** | ✅ **HydroComm** |
+| ✅ **Scuba X1** | ✅ **HydroComm Pro / W2 Series** |
+| ✅ **Surfer S2** | |
 | ✅ **Shark** | |
+
+The current 2026 retail Scuba S1 identifies itself through Aiper's cloud as
+`Scuba_S1_2025`; both names refer to the verified model listed above.
 
 *(Don't see your model? We need your help! Check our [Diagnostics Guide](docs/support/diagnostics-and-troubleshooting.md) for how to submit a payload.)*
 

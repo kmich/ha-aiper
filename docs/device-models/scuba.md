@@ -54,11 +54,85 @@ Clean-path values are normalized across observed payload variants:
 - label variants such as `S-shaped` or `Adaptive`
 - sentinel `-1`: default `0`
 
+### Scuba S1 2025 / 2026 retail hardware
+
+The 2026 retail Scuba S1 identifies itself as `Scuba_S1_2025` with serial
+prefix `52`. Aiper Android 3.5.0 maps it to the app's X5ProMax device family and
+opens the model-specific X6 clean-path screen.
+
+The clean-path contract was verified against a physical device running main
+firmware V2.0.1:
+
+- query: `AT+AUTO?`
+- S-shaped: `AT+AUTO=0`
+- Adaptive: `AT+AUTO=1`
+- successful writes return `+OK`
+
+The model capability profile exposes only hardware-backed S1 entities. It
+retains the observed MicroMesh consumable and suppresses water temperature,
+charge type, roller brush, caterpillar tread, and propeller entities for which
+this device provides no usable data.
+
+The query and both writes were captured from the official app. A subsequent
+read-only AWS IoT query from the integration returned code `1` after Adaptive
+was selected. The REST clean-path endpoint returns `-1`, and the setting is not
+present in the device shadow, so neither is used for this model.
+
+This model-specific path deliberately bypasses the legacy Scuba endpoint and
+command matrix below. Other Scuba models retain their existing behavior.
+
+The same app build exposes an S1-specific cleaning-mode list and AT contract:
+
+- query: `AT+MODE?`
+- `1`: Auto
+- `2`: Floor
+- `3`: Wall
+- `5`: Scheduled
+- set: `AT+MODE=<mode_id>`; successful writes return `+OK`
+
+Waterline (`4`) is not supported by this model and is not offered by its app
+screen. The integration therefore treats this exact list as authoritative for
+`Scuba_S1_2025`, rather than inheriting the generic Scuba mode list. The
+cleaning-mode select represents the configured program for the next run; the
+separate Mode sensor continues to represent the machine's currently reported
+operating mode. Aiper cleaning history calls mode `1` "Smart" generically; the
+S1's Last Cleaning Mode sensor normalizes that label to the model's "Auto".
+
+Over AWS IoT, this S1 currently acknowledges `AT+MODE?` with `+OK` but does not
+return a numeric value. The select therefore uses the active mode when present,
+the last confirmed local selection, or cleaning history after a restart. A set
+command is accepted only after the cleaner returns `+OK`.
+
+After a low-battery stop, firmware V2.0.1 can leave its last MQTT report at
+Cleaning/Wet even after retrieval and power-off. Once charging begins, the REST
+device list supplies a fresh status `2` and live battery updates while no new
+machine-state MQTT report arrives. For this model only, fresh REST charging
+therefore supersedes the stale MQTT report and implies Dry, Not running, Mode
+0, and zero current cleaning runtime. This source-precedence exception is not
+applied to other models.
+
+The explicit status remains authoritative. If an S1 REST response omits status,
+the integration has a conservative fallback requiring three strictly rising
+battery samples over at least two minutes while online, with a total rise of at
+least two percentage points and no newer MQTT Machine report. Diagnostics record
+whether `mqtt_machine_status`, `rest_machine_status`, or
+`battery_rise_fallback` caused reconciliation, along with the fields applied.
+A bounded, de-duplicated event timeline preserves source order when a later
+REST poll confirms a transition first reported through MQTT.
+
+The inverse transition has similar S1-only rules. A fresh REST device-list poll
+can report Cleaning together with a stale `in_water=0`; Cleaning is authoritative
+because this model cannot physically clean outside the pool. Observed status 10
+means the S1 has parked underwater, so Parked remains Wet when REST omits a newer
+water-state report. Explicit water state remains authoritative outside active
+Cleaning, and charging always implies Dry.
+
 ## Legacy Clean-Path Runtime Path
 
-Scuba still uses the legacy clean-path matrix in `custom_components/aiper/api.py`
-because current Scuba hardware has not been re-probed. The matrix tries multiple
-endpoint families, encrypted and plain envelopes, and several body shapes.
+Scuba models other than `Scuba_S1_2025` still use the legacy clean-path matrix
+in `custom_components/aiper/api.py` because current hardware has not been
+re-probed. The matrix tries multiple endpoint families, encrypted and plain
+envelopes, and several body shapes.
 
 Query endpoint families still present for non-Surfer devices:
 

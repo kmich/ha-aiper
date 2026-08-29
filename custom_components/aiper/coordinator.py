@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import suppress
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -17,15 +19,17 @@ from .const import (
     CLEAN_PATH_LABEL_TO_VALUE,
     DEFAULT_METADATA_REFRESH_HOURS,
     DOMAIN,
+    Status,
     mode_label,
     status_running,
 )
-from .profiles import Capability, derive_device_profile, has_capability
+from .profiles import SCUBA_S1_2025_MODEL, Capability, derive_device_profile, has_capability, model_key
 from .state import (
     DevicesState,
     DeviceState,
     RawDeviceData,
     _coerce_bool,
+    _coerce_int,
     merge_device_state,
     normalize_clean_path_update,
     normalize_device_state,
@@ -659,12 +663,89 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         self._history_cache: dict[str, dict[str, Any]] = {}
         self._consumables_cache: dict[str, list[dict[str, Any]]] = {}
         self._clean_path_cache: dict[str, int] = {}
+        self._selected_mode_cache: dict[str, int] = {}
+        self._s1_battery_samples: dict[str, list[dict[str, Any]]] = {}
+        self._last_s1_mqtt_machine_report: dict[str, dict[str, Any]] = {}
+        self._state_reconciliation: dict[str, dict[str, Any]] = {}
 
         # Command tracking (for community-friendly UX)
         # We do not apply optimistic state changes; instead we track pending commands
         # and mark them confirmed when the device reports the new value.
         self._command_state: dict[str, dict[str, dict[str, Any]]] = {}
         # Structure: {sn: {"pending": {kind: {...}}, "last": {kind: {...}}}}
+
+    def _record_s1_battery_sample(self, sn: str, value: Any, observed_at: datetime) -> None:
+        """Retain a small, non-sensitive battery trend for S1 fallback logic."""
+        battery = _coerce_int(value)
+        if battery is None:
+            return
+        samples = getattr(self, "_s1_battery_samples", None)
+        if samples is None:
+            samples = self._s1_battery_samples = {}
+        history = samples.setdefault(sn, [])
+        history.append({"observed_at": observed_at, "battery": battery})
+        del history[:-3]
+
+    def _s1_battery_rise_indicates_charging(self, sn: str) -> bool:
+        """Return true for a sustained S1 rise without a newer MQTT report."""
+        history = getattr(self, "_s1_battery_samples", {}).get(sn) or []
+        if len(history) < 3:
+            return False
+        first, middle, last = history[-3:]
+        if not (first["battery"] < middle["battery"] < last["battery"]):
+            return False
+        if last["battery"] - first["battery"] < 2:
+            return False
+        if (last["observed_at"] - first["observed_at"]).total_seconds() < 120:
+            return False
+        mqtt_report = getattr(self, "_last_s1_mqtt_machine_report", {}).get(sn) or {}
+        mqtt_at = _ensure_utc_aware(mqtt_report.get("observed_at"))
+        return mqtt_at is None or mqtt_at <= first["observed_at"]
+
+    def _s1_mqtt_reports_running_since(self, sn: str, *, since: datetime) -> bool:
+        """Return True if a Scuba S1 MQTT report at/after `since` still shows Cleaning."""
+        mqtt_report = getattr(self, "_last_s1_mqtt_machine_report", {}).get(sn) or {}
+        mqtt_at = _ensure_utc_aware(mqtt_report.get("observed_at"))
+        if mqtt_at is None or mqtt_at < since:
+            return False
+        return mqtt_report.get("status") == int(Status.CLEANING)
+
+    def _record_s1_reconciliation(
+        self,
+        sn: str,
+        *,
+        trigger: str,
+        rest_status: int | None = None,
+    ) -> None:
+        """Record why S1 operational state was reconciled for diagnostics."""
+        history = getattr(self, "_s1_battery_samples", {}).get(sn) or []
+        records = getattr(self, "_state_reconciliation", None)
+        if records is None:
+            records = self._state_reconciliation = {}
+        previous = records.get(sn) or {}
+        events = list(previous.get("events") or [])
+        event = {
+            "trigger": trigger,
+            "observed_at": dt_util.utcnow().isoformat(),
+            "rest_status": rest_status,
+            "battery_samples": [
+                {"observed_at": sample["observed_at"].isoformat(), "battery": sample["battery"]} for sample in history
+            ],
+            "applied": {
+                "charging": True,
+                "running": False,
+                "in_water": False,
+                "mode": 0,
+                "runtime": 0,
+            },
+        }
+        if not events or (events[-1].get("trigger"), events[-1].get("rest_status")) != (
+            trigger,
+            rest_status,
+        ):
+            events.append(deepcopy(event))
+            del events[:-20]
+        records[sn] = {**event, "events": events}
 
     def _apply_device_profile(self, sn: str) -> None:
         """Derive and store family/capability metadata for a device."""
@@ -676,7 +757,18 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         profile = derive_device_profile(profile_input)
         device["profile_family"] = profile.family.value
         device["capabilities"] = sorted(capability.value for capability in profile.capabilities)
-        if not device.get("supported_mode_ids"):
+        if model_key(profile_input) == SCUBA_S1_2025_MODEL:
+            # For Scuba_S1_2025 the derived profile is authoritative: a
+            # generic Scuba fallback may otherwise leave an unsupported
+            # Waterline option behind, so always reconcile to the model's
+            # verified mode map.
+            device["supported_mode_ids"] = list(profile.mode_map.keys())
+        elif not device.get("supported_mode_ids"):
+            # For every other family, preserve the device-reported mode list
+            # (set from supported_mode_ids_from_payload) rather than
+            # overwriting it with the family-default mode map, which can
+            # inject modes (e.g. Surfer's synthetic "Off") the hardware never
+            # actually advertised.
             device["supported_mode_ids"] = list(profile.mode_map.keys())
         device["mode_map"] = profile.mode_map
 
@@ -690,6 +782,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 self._last_metadata_fetch[_sn] = _ensure_utc_aware(_ts) or dt_util.utcnow()
 
             discovered_devices: list[RawDeviceData] | None = None
+            fresh_s1_rest_charging: set[str] = set()
             try:
                 discovered_devices = await self.api.get_devices()
                 _LOGGER.debug("Got %d devices from API", len(discovered_devices))
@@ -697,11 +790,62 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     sn = discovered.get("sn")
                     if sn:
                         serial = str(sn)
-                        self._devices[serial] = _merge_discovery_metadata(
+                        merged_device = _merge_discovery_metadata(
                             self._devices.get(serial, {}),
                             dict(discovered),
                             include_live=True,
                         )
+                        mk = model_key(merged_device)
+                        if mk == SCUBA_S1_2025_MODEL:
+                            self._record_s1_battery_sample(serial, discovered.get("battLevel"), now)
+                        rest_status = _coerce_int(discovered.get("machineStatus"))
+                        if (
+                            mk == SCUBA_S1_2025_MODEL
+                            and rest_status in (2, 3)
+                            and not self._s1_mqtt_reports_running_since(serial, since=now - timedelta(minutes=2))
+                        ):
+                            # Captured on S1 V2.0.1 after a low-battery cycle:
+                            # REST resumed with current status 2 while the last
+                            # MQTT report remained Cleaning/Wet for hours. A
+                            # physically charging cleaner is necessarily dry,
+                            # stopped, and outside an active cleaning mode.
+                            #
+                            # Guarded above by recency against MQTT (mirroring
+                            # the battery_rise_fallback branch below): if a
+                            # recent MQTT report still shows Cleaning, this
+                            # REST snapshot is stale and must not override it.
+                            merged_device["in_water"] = 0
+                            merged_device["mode"] = 0
+                            merged_device["runTime"] = 0
+                            fresh_s1_rest_charging.add(serial)
+                            self._record_s1_reconciliation(
+                                serial, trigger="rest_machine_status", rest_status=rest_status
+                            )
+                        elif mk == SCUBA_S1_2025_MODEL and rest_status in (1, 10):
+                            # On S1 V2.0.1 the device-list poll reports
+                            # in_water=0 while status 1 still confirms active
+                            # cleaning. The S1 also parks underwater with status
+                            # 10, for which REST omits water state. Cleaning is
+                            # therefore authoritative; Parked implies Wet only
+                            # when REST has no newer explicit water report.
+                            if rest_status == 1 or "in_water" not in discovered:
+                                merged_device["in_water"] = 1
+                        elif (
+                            mk == SCUBA_S1_2025_MODEL
+                            and rest_status is None
+                            and discovered.get("online") is not False
+                            and self._s1_battery_rise_indicates_charging(serial)
+                        ):
+                            # Conservative fallback only: three increasing
+                            # samples spanning at least two minutes, no explicit
+                            # REST status, and no newer MQTT Machine report.
+                            merged_device["machineStatus"] = 2
+                            merged_device["in_water"] = 0
+                            merged_device["mode"] = 0
+                            merged_device["runTime"] = 0
+                            fresh_s1_rest_charging.add(serial)
+                            self._record_s1_reconciliation(serial, trigger="battery_rise_fallback")
+                        self._devices[serial] = merged_device
             except Exception as err:
                 if not self._devices:
                     raise
@@ -829,11 +973,45 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 self._devices[sn]["bluetooth_name"] = info_data.get("bleName")
                 self._devices[sn]["consumables"] = self._consumables_cache.get(sn) or []
                 self._apply_device_profile(sn)
+                mk = model_key(self._devices[sn])
+                # The S1's clean-path/mode settings are only observable through
+                # a blocking MQTT AT-command round trip (no push/shadow source
+                # exists for them). Querying them on every poll would add up to
+                # ~8s of sequential blocking I/O per S1 device to every
+                # coordinator refresh, delaying state publication for every
+                # other device on the account. Query only when metadata is due
+                # (the normal periodic resync) or we don't have a cached value
+                # yet (first sighting) — writes are separately kept in sync via
+                # the immediate confirm-and-cache path in async_select_option.
+                s1_query_due = metadata_due or sn not in self._clean_path_cache
 
                 if has_capability(self._devices[sn], Capability.CLEAN_PATH):
+                    # Clean-path is not present in the Scuba_S1_2025 REST or
+                    # shadow payloads. Its verified source is AT+AUTO?, queried
+                    # through the existing serialized MQTT command channel.
+                    if mk == SCUBA_S1_2025_MODEL and s1_query_due and self.api.is_mqtt_connected():
+                        try:
+                            clean_path = await self.api.query_clean_path_setting(sn)
+                            if clean_path in (0, 1):
+                                self._clean_path_cache[sn] = clean_path
+                        except Exception as err:
+                            _LOGGER.debug("Clean-path query failed for %s: %s", sn, err)
                     self._devices[sn]["clean_path"] = self._clean_path_cache.get(sn)
                 else:
                     self._devices[sn]["clean_path"] = None
+
+                selected_mode_due = metadata_due or sn not in getattr(self, "_selected_mode_cache", {})
+                if mk == SCUBA_S1_2025_MODEL and selected_mode_due and self.api.is_mqtt_connected():
+                    try:
+                        selected_mode = await self.api.query_cleaning_mode_setting(sn)
+                        if selected_mode in (1, 2, 3, 5):
+                            selected_mode_cache = getattr(self, "_selected_mode_cache", None)
+                            if selected_mode_cache is None:
+                                selected_mode_cache = self._selected_mode_cache = {}
+                            selected_mode_cache[sn] = selected_mode
+                    except Exception as err:
+                        _LOGGER.debug("Cleaning-mode query failed for %s: %s", sn, err)
+                self._devices[sn]["selected_mode"] = getattr(self, "_selected_mode_cache", {}).get(sn)
 
             # Expire pending commands (UI hints)
             for _sn in list(self._command_state.keys()):
@@ -857,7 +1035,11 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     # ("Idle" when no machineStatus is known) — in that case we let the
                     # incoming REST values flow through freely.
                     current_status = current.get("status")
-                    if current_status is not None and current_status.attributes.get("code") is not None:
+                    if (
+                        current_status is not None
+                        and current_status.attributes.get("code") is not None
+                        and sn not in fresh_s1_rest_charging
+                    ):
                         for _key in ("running", "status", "charging", "mode"):
                             normalized.pop(_key, None)
                     result[sn] = merge_device_state(current, normalized, ignore_none=True)
@@ -1036,6 +1218,14 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     machine.update({key: value for key, value in parsed.items() if key != "records"})
 
         if machine:
+            if model_key(raw_device) == SCUBA_S1_2025_MODEL:
+                mqtt_status = _coerce_int(machine.get("status"))
+                reports = getattr(self, "_last_s1_mqtt_machine_report", None)
+                if reports is None:
+                    reports = self._last_s1_mqtt_machine_report = {}
+                reports[sn] = {"observed_at": dt_util.utcnow(), "status": mqtt_status}
+                if mqtt_status in (2, 3):
+                    self._record_s1_reconciliation(sn, trigger="mqtt_machine_status", rest_status=None)
             updates = merge_device_state(updates, normalize_machine_update(raw_device, machine, current_state))
 
         netstat: dict[str, Any] = {}
@@ -1157,11 +1347,22 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             return self.data.get(sn)
         return None
 
+    def has_scuba_s1_device(self) -> bool:
+        """Return True if any known device is a Scuba_S1_2025."""
+        return any(model_key(device) == SCUBA_S1_2025_MODEL for device in self._devices.values())
+
     # -----------------
     # Command tracking
     # -----------------
 
     PENDING_TIMEOUT_SECONDS = 8
+    # Scuba_S1_2025-only: async_confirm_clean_path_selection retries with
+    # sleeps summing to 10s, plus up to four more query_clean_path_setting
+    # calls that can each take up to their own ~4s ack timeout — a slow-ack
+    # worst case reaches ~26s. This must stay comfortably above that so the
+    # pending "hint" doesn't expire (and the UI flicker back to a stale
+    # value) while a legitimate confirmation is still in flight.
+    CLEAN_PATH_PENDING_TIMEOUT_SECONDS = 30
 
     def _ensure_cmd_state(self, sn: str) -> dict[str, dict[str, Any]]:
         st = self._command_state.get(sn)
@@ -1265,7 +1466,19 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 since = None
             if since is None:
                 continue
-            if (now - since).total_seconds() >= self.PENDING_TIMEOUT_SECONDS:
+            # The extended clean_path timeout exists specifically for
+            # Scuba_S1_2025's slow AT+AUTO? confirmation; other clean-path
+            # capable models (Scuba S2/S3) confirm quickly and should keep
+            # the standard timeout so a genuinely failed command doesn't
+            # leave a stale optimistic value on screen for longer than
+            # necessary.
+            is_s1 = model_key(self._devices.get(sn) or {}) == SCUBA_S1_2025_MODEL
+            timeout = (
+                self.CLEAN_PATH_PENDING_TIMEOUT_SECONDS
+                if (kind == "clean_path" and is_s1)
+                else self.PENDING_TIMEOUT_SECONDS
+            )
+            if (now - since).total_seconds() >= timeout:
                 expired.append(kind)
         for kind in expired:
             info = pend.pop(kind, None) or {}
@@ -1380,6 +1593,36 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
     def set_clean_path_cache(self, sn: str, value: int) -> None:
         """Update cached clean-path preference."""
         self._clean_path_cache[sn] = int(value)
+
+    async def async_confirm_clean_path_selection(
+        self,
+        sn: str,
+        target: int,
+        *,
+        retry_delays: tuple[float, ...] = (1.0, 2.0, 3.0, 4.0),
+    ) -> bool:
+        """Wait for an S1 clean-path write to propagate and confirm by query."""
+        device = self._devices.get(sn) or {}
+        if model_key(device) != SCUBA_S1_2025_MODEL:
+            return False
+
+        for delay in retry_delays:
+            await asyncio.sleep(delay)
+            try:
+                reported = await self.api.query_clean_path_setting(sn)
+            except Exception as err:
+                _LOGGER.debug("Clean-path confirmation query failed for %s: %s", sn, err)
+                continue
+            if reported == int(target):
+                self.set_clean_path_cache(sn, int(target))
+                self._devices[sn]["clean_path"] = int(target)
+                if self.data and sn in self.data:
+                    data = dict(self.data)
+                    data[sn] = merge_device_state(data[sn], normalize_clean_path_update({"cleanPath": int(target)}))
+                    self.async_set_updated_data(data)
+                self._confirm_pending_commands(sn, {"cleanPath": int(target)})
+                return True
+        return False
 
     def get_clean_path(self, sn: str) -> int | None:
         """Get current clean-path preference.

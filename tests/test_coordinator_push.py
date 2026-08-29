@@ -39,6 +39,42 @@ def _bare_coordinator() -> AiperDataUpdateCoordinator:
     return coordinator
 
 
+def test_apply_device_profile_preserves_surfer_reported_mode_ids() -> None:
+    """Non-S1 families keep the device-reported supported_mode_ids untouched.
+
+    Regression test: _apply_device_profile must not unconditionally overwrite
+    supported_mode_ids with the family-derived mode map for every model, since
+    Surfer's mode-map construction always injects a synthetic mode 0 ("Off")
+    even when the hardware never reported it as supported.
+    """
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"] = {
+        "sn": "SN123",
+        "model": "Surfer_S2",
+        "supported_mode_ids": [1, 5],
+    }
+
+    coordinator._apply_device_profile("SN123")
+
+    assert coordinator._devices["SN123"]["supported_mode_ids"] == [1, 5]
+
+
+def test_apply_device_profile_reconciles_s1_mode_ids() -> None:
+    """Scuba_S1_2025 keeps the derived-profile-is-authoritative behavior,
+    stripping an unsupported Waterline id a generic Scuba fallback could
+    otherwise leave behind."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"] = {
+        "sn": "SN123",
+        "model": "Scuba_S1_2025",
+        "supported_mode_ids": [1, 2, 3, 4, 5],
+    }
+
+    coordinator._apply_device_profile("SN123")
+
+    assert coordinator._devices["SN123"]["supported_mode_ids"] == [1, 2, 3, 5]
+
+
 def test_shadow_update_promotes_live_state() -> None:
     """MQTT reported data should update normalized entity state."""
     coordinator = _bare_coordinator()
@@ -235,6 +271,335 @@ async def test_rest_refresh_does_not_overwrite_mqtt_live_state(hass: HomeAssista
     assert data["SN123"]["charging"].value is False
 
 
+@pytest.mark.asyncio
+async def test_scuba_s1_fresh_rest_charging_replaces_stale_mqtt_state(hass: HomeAssistant) -> None:
+    """S1 REST charging coherently replaces a stale low-battery MQTT report."""
+
+    class FakeApi:
+        async def get_devices(self):
+            return [
+                {
+                    "sn": "SN123",
+                    "name": "Scuba S1",
+                    "model": "Scuba_S1_2025",
+                    "online": True,
+                    "battLevel": 56,
+                    "machineStatus": 2,
+                }
+            ]
+
+        async def get_device_info(self, sn):
+            raise AssertionError("metadata info should not be polled before refresh interval")
+
+        def is_mqtt_connected(self) -> bool:
+            return False
+
+    now = dt_util.utcnow()
+    coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
+    coordinator.hass = hass
+    coordinator.api = cast(Any, FakeApi())
+    coordinator._devices = {
+        "SN123": {
+            "sn": "SN123",
+            "name": "Scuba S1",
+            "model": "Scuba_S1_2025",
+            "online": True,
+            "in_water": 1,
+            "mode": 1,
+            "runTime": 210,
+        }
+    }
+    coordinator._last_online = {"SN123": True}
+    coordinator.update_interval = timedelta(hours=1)
+    coordinator._metadata_refresh = timedelta(hours=24)
+    coordinator._last_metadata_fetch = {"SN123": now}
+    coordinator._history_cache = {}
+    coordinator._consumables_cache = {"SN123": []}
+    coordinator._clean_path_cache = {}
+    coordinator._selected_mode_cache = {}
+    coordinator._command_state = {}
+    coordinator.data = {
+        "SN123": normalize_device_state(
+            {
+                **coordinator._devices["SN123"],
+                "battLevel": 9,
+                "machineStatus": 1,
+            }
+        )
+    }
+
+    data = await coordinator._async_update_data()
+
+    assert data["SN123"]["battery"].value == 56
+    assert data["SN123"]["status"].value == "Charging"
+    assert data["SN123"]["status"].attributes == {"code": 2}
+    assert data["SN123"]["charging"].value is True
+    assert data["SN123"]["running"].value is False
+    assert data["SN123"]["in_water"].value is False
+    assert data["SN123"]["mode"].attributes == {"code": 0}
+    assert data["SN123"]["runtime"].value == 0.0
+    assert coordinator._state_reconciliation["SN123"]["trigger"] == "rest_machine_status"
+    assert coordinator._state_reconciliation["SN123"]["events"] == [
+        {
+            key: coordinator._state_reconciliation["SN123"][key]
+            for key in ("trigger", "observed_at", "rest_status", "battery_samples", "applied")
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scuba_s1_rest_charging_defers_to_recent_mqtt_cleaning_report(hass: HomeAssistant) -> None:
+    """A stale REST 'charging' snapshot must not override a fresher MQTT
+    report that still shows the device actively cleaning.
+
+    Regression test: unlike the sibling battery_rise_fallback branch, the
+    rest_status-in-(2,3) branch originally had no recency check against
+    MQTT at all, so a lagging REST poll could silently overwrite a live
+    MQTT "Cleaning" state with "Charging".
+    """
+
+    class FakeApi:
+        async def get_devices(self):
+            return [
+                {
+                    "sn": "SN123",
+                    "name": "Scuba S1",
+                    "model": "Scuba_S1_2025",
+                    "online": True,
+                    "battLevel": 56,
+                    "machineStatus": 2,  # stale REST snapshot: Charging
+                }
+            ]
+
+        async def get_device_info(self, sn):
+            raise AssertionError("metadata info should not be polled before refresh interval")
+
+        def is_mqtt_connected(self) -> bool:
+            return False
+
+    now = dt_util.utcnow()
+    coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
+    coordinator.hass = hass
+    coordinator.api = cast(Any, FakeApi())
+    coordinator._devices = {
+        "SN123": {
+            "sn": "SN123",
+            "name": "Scuba S1",
+            "model": "Scuba_S1_2025",
+            "online": True,
+            "in_water": 1,
+            "mode": 1,
+            "runTime": 210,
+        }
+    }
+    coordinator._last_online = {"SN123": True}
+    coordinator.update_interval = timedelta(hours=1)
+    coordinator._metadata_refresh = timedelta(hours=24)
+    coordinator._last_metadata_fetch = {"SN123": now}
+    coordinator._history_cache = {}
+    coordinator._consumables_cache = {"SN123": []}
+    coordinator._clean_path_cache = {}
+    coordinator._selected_mode_cache = {}
+    coordinator._command_state = {}
+    # A very recent MQTT report still shows the device actively Cleaning.
+    coordinator._last_s1_mqtt_machine_report = {"SN123": {"observed_at": now - timedelta(seconds=5), "status": 1}}
+    coordinator.data = {
+        "SN123": normalize_device_state(
+            {
+                **coordinator._devices["SN123"],
+                "machineStatus": 1,
+            }
+        )
+    }
+
+    data = await coordinator._async_update_data()
+
+    # The stale REST "Charging" reading must not override the fresher,
+    # correct MQTT "Cleaning" state.
+    assert data["SN123"]["status"].value == "Cleaning"
+    assert data["SN123"]["running"].value is True
+    assert data["SN123"]["charging"].value is False
+
+
+@pytest.mark.parametrize(("machine_status", "reported_water"), [(1, 0), (10, None)])
+@pytest.mark.asyncio
+async def test_scuba_s1_rest_cleaning_or_parked_implies_wet(
+    hass: HomeAssistant,
+    machine_status: int,
+    reported_water: int | None,
+) -> None:
+    """S1 Cleaning overrides stale Dry; Parked stays Wet without a newer report."""
+
+    class FakeApi:
+        async def get_devices(self):
+            device = {
+                "sn": "SN123",
+                "name": "Scuba S1",
+                "model": "Scuba_S1_2025",
+                "online": False,
+                "battLevel": 89,
+                "machineStatus": machine_status,
+            }
+            if reported_water is not None:
+                device["in_water"] = reported_water
+            return [device]
+
+        async def get_device_info(self, sn):
+            raise AssertionError("metadata info should not be polled before refresh interval")
+
+        def is_mqtt_connected(self) -> bool:
+            return False
+
+    now = dt_util.utcnow()
+    coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
+    coordinator.hass = hass
+    coordinator.api = cast(Any, FakeApi())
+    coordinator._devices = {
+        "SN123": {
+            "sn": "SN123",
+            "name": "Scuba S1",
+            "model": "Scuba_S1_2025",
+            "online": False,
+            "in_water": 0,
+        }
+    }
+    coordinator._last_online = {"SN123": False}
+    coordinator.update_interval = timedelta(hours=1)
+    coordinator._metadata_refresh = timedelta(hours=24)
+    coordinator._last_metadata_fetch = {"SN123": now}
+    coordinator._history_cache = {}
+    coordinator._consumables_cache = {"SN123": []}
+    coordinator._clean_path_cache = {}
+    coordinator._selected_mode_cache = {}
+    coordinator._command_state = {}
+    coordinator._s1_battery_samples = {}
+    coordinator._last_s1_mqtt_machine_report = {}
+    coordinator._state_reconciliation = {}
+    coordinator.data = {
+        "SN123": normalize_device_state(
+            {
+                **coordinator._devices["SN123"],
+                "battLevel": 100,
+                "machineStatus": 0,
+            }
+        )
+    }
+
+    data = await coordinator._async_update_data()
+
+    assert data["SN123"]["battery"].value == 89
+    assert data["SN123"]["status"].value == "Offline"
+    assert data["SN123"]["in_water"].value is True
+    assert coordinator._devices["SN123"]["in_water"] == 1
+
+
+@pytest.mark.asyncio
+async def test_scuba_s1_sustained_battery_rise_is_conservative_charging_fallback(
+    hass: HomeAssistant,
+) -> None:
+    """S1 may infer charging only from a sustained rise without fresher status."""
+
+    class FakeApi:
+        async def get_devices(self):
+            return [
+                {
+                    "sn": "SN123",
+                    "name": "Scuba S1",
+                    "model": "Scuba_S1_2025",
+                    "online": True,
+                    "battLevel": 24,
+                }
+            ]
+
+        async def get_device_info(self, sn):
+            raise AssertionError("metadata info should not be polled before refresh interval")
+
+        def is_mqtt_connected(self) -> bool:
+            return False
+
+    now = dt_util.utcnow()
+    coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
+    coordinator.hass = hass
+    coordinator.api = cast(Any, FakeApi())
+    coordinator._devices = {
+        "SN123": {
+            "sn": "SN123",
+            "name": "Scuba S1",
+            "model": "Scuba_S1_2025",
+            "online": True,
+            "machineStatus": 1,
+            "in_water": 1,
+            "mode": 1,
+            "runTime": 210,
+        }
+    }
+    coordinator._last_online = {"SN123": True}
+    coordinator.update_interval = timedelta(hours=1)
+    coordinator._metadata_refresh = timedelta(hours=24)
+    coordinator._last_metadata_fetch = {"SN123": now}
+    coordinator._history_cache = {}
+    coordinator._consumables_cache = {"SN123": []}
+    coordinator._clean_path_cache = {}
+    coordinator._selected_mode_cache = {}
+    coordinator._command_state = {}
+    coordinator._s1_battery_samples = {
+        "SN123": [
+            {"observed_at": now - timedelta(minutes=5), "battery": 20},
+            {"observed_at": now - timedelta(minutes=3), "battery": 22},
+        ]
+    }
+    coordinator._last_s1_mqtt_machine_report = {}
+    coordinator.data = {
+        "SN123": normalize_device_state(
+            {
+                **coordinator._devices["SN123"],
+                "battLevel": 22,
+            }
+        )
+    }
+
+    data = await coordinator._async_update_data()
+
+    assert data["SN123"]["status"].value == "Charging"
+    assert data["SN123"]["charging"].value is True
+    assert data["SN123"]["running"].value is False
+    assert data["SN123"]["in_water"].value is False
+    assert coordinator._state_reconciliation["SN123"]["trigger"] == "battery_rise_fallback"
+
+
+def test_scuba_s1_battery_rise_fallback_rejects_recent_mqtt_report() -> None:
+    """A newer MQTT machine report remains authoritative over battery trend."""
+    coordinator = _bare_coordinator()
+    now = dt_util.utcnow()
+    coordinator._s1_battery_samples = {
+        "SN123": [
+            {"observed_at": now - timedelta(minutes=5), "battery": 20},
+            {"observed_at": now - timedelta(minutes=3), "battery": 22},
+            {"observed_at": now, "battery": 24},
+        ]
+    }
+    coordinator._last_s1_mqtt_machine_report = {"SN123": {"observed_at": now - timedelta(minutes=1), "status": 1}}
+
+    assert coordinator._s1_battery_rise_indicates_charging("SN123") is False
+
+
+def test_s1_reconciliation_timeline_deduplicates_repeated_source() -> None:
+    """Diagnostics retain source order without flooding on repeated REST polls."""
+    coordinator = _bare_coordinator()
+    coordinator._state_reconciliation = {}
+    coordinator._s1_battery_samples = {}
+
+    coordinator._record_s1_reconciliation("SN123", trigger="mqtt_machine_status")
+    coordinator._record_s1_reconciliation("SN123", trigger="rest_machine_status", rest_status=2)
+    coordinator._record_s1_reconciliation("SN123", trigger="rest_machine_status", rest_status=2)
+
+    events = coordinator._state_reconciliation["SN123"]["events"]
+    assert [(event["trigger"], event["rest_status"]) for event in events] == [
+        ("mqtt_machine_status", None),
+        ("rest_machine_status", 2),
+    ]
+
+
 def test_pending_running_intent_confirms_from_reported_status() -> None:
     """Running intent should clear when MQTT reports matching running state."""
     coordinator = _bare_coordinator()
@@ -294,3 +659,76 @@ def test_pending_running_intent_expires() -> None:
 
     assert coordinator.get_pending_command_target("SN123", "running") is None
     assert coordinator.get_command_state("SN123")["last"]["running"]["result"] == "timeout"
+
+
+def test_clean_path_pending_uses_longer_confirmation_window() -> None:
+    """S1 clean-path intent survives the normal command timeout."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"]["model"] = "Scuba_S1_2025"
+    coordinator._command_state = {
+        "SN123": {
+            "pending": {
+                "clean_path": {
+                    "target": 0,
+                    "since": (
+                        dt_util.utcnow() - timedelta(seconds=coordinator.PENDING_TIMEOUT_SECONDS + 1)
+                    ).isoformat(),
+                    "source": "test",
+                }
+            },
+            "last": {},
+        }
+    }
+
+    assert coordinator.get_pending_command_target("SN123", "clean_path") == 0
+
+
+def test_clean_path_pending_window_is_not_extended_for_non_s1_models() -> None:
+    """Non-S1 clean-path-capable models (e.g. Scuba S2/S3) keep the standard
+    command timeout — the extended window exists only for Scuba_S1_2025's
+    slower AT+AUTO? confirmation, not for every clean-path-capable model."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"]["model"] = "Scuba_S3"
+    coordinator._command_state = {
+        "SN123": {
+            "pending": {
+                "clean_path": {
+                    "target": 0,
+                    "since": (
+                        dt_util.utcnow() - timedelta(seconds=coordinator.PENDING_TIMEOUT_SECONDS + 1)
+                    ).isoformat(),
+                    "source": "test",
+                }
+            },
+            "last": {},
+        }
+    }
+
+    assert coordinator.get_pending_command_target("SN123", "clean_path") is None
+
+
+@pytest.mark.asyncio
+async def test_scuba_s1_clean_path_confirmation_ignores_stale_readback() -> None:
+    """S1 confirmation retries until AT+AUTO? reports the requested value."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"]["model"] = "Scuba_S1_2025"
+
+    class FakeApi:
+        def __init__(self) -> None:
+            self.responses = iter((1, 0))
+
+        async def query_clean_path_setting(self, sn: str) -> int:
+            assert sn == "SN123"
+            return next(self.responses)
+
+    coordinator.api = cast(Any, FakeApi())
+    coordinator.note_command_sent("SN123", "clean_path", 0, source="test")
+
+    confirmed = await coordinator.async_confirm_clean_path_selection("SN123", 0, retry_delays=(0, 0))
+
+    assert confirmed is True
+    assert coordinator._clean_path_cache["SN123"] == 0
+    assert coordinator._devices["SN123"]["clean_path"] == 0
+    assert coordinator.data["SN123"]["clean_path"].value == "S-shaped"
+    assert coordinator.get_pending_command_target("SN123", "clean_path") is None
+    assert coordinator.get_command_state("SN123")["last"]["clean_path"]["result"] == "confirmed"

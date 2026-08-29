@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import random
+import re
 import threading
 import time
 from collections import defaultdict, deque
@@ -31,7 +32,7 @@ from .const import (
 )
 from .crypto import AiperEncryption
 from .mqtt import AwsIotCredentials, AwsIotMqttTransport
-from .profiles import DeviceFamily, device_family
+from .profiles import SCUBA_S1_2025_MODEL, DeviceFamily, device_family, model_key
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -696,8 +697,22 @@ class AiperApi:
 
     # --- Clean path preference (REST) ---
 
+    def _is_scuba_s1_2025(self, sn: str) -> bool:
+        """Return whether the serial belongs to the verified Scuba S1 profile."""
+        dev = self._devices.get(sn) or {}
+        return model_key(dev) == SCUBA_S1_2025_MODEL
+
     async def query_clean_path_setting(self, sn: str) -> int | None:
         """Query the clean-path preference without blocking the event loop."""
+        if self._is_scuba_s1_2025(sn):
+            # Aiper Android 3.5.0 routes this model through its X5ProMax/X6
+            # clean-path screen. That screen queries the cleaner directly with
+            # AT+AUTO?; the REST endpoint returns -1 and device shadow does not
+            # report this setting.
+            if not self.is_mqtt_connected():
+                return None
+            return await self.query_machine_at_int(sn, "AUTO")
+
         if self._device_family_for_sn(sn) == DeviceFamily.SURFER:
             try:
                 payload = await self._call_with_zoneid(
@@ -789,6 +804,13 @@ class AiperApi:
 
     async def update_clean_path_setting(self, sn: str, value: int) -> bool:
         """Update clean-path preference and apply it to the device asynchronously."""
+        if self._is_scuba_s1_2025(sn):
+            # Verified against Aiper Android 3.5.0 and a physical
+            # Scuba_S1_2025: 0=S-shaped, 1=Adaptive, acknowledged with +OK.
+            if value not in (0, 1) or not self.is_mqtt_connected():
+                return False
+            return await self.send_machine_at(sn, f"AT+AUTO={value}") is True
+
         if self._device_family_for_sn(sn) == DeviceFamily.SURFER:
             rest_ok = False
             try:
@@ -959,6 +981,12 @@ class AiperApi:
             await self.request_shadow(sn)
 
         return bool(rest_ok or mqtt_published or shadow_ok)
+
+    async def query_cleaning_mode_setting(self, sn: str) -> int | None:
+        """Query the configured cleaning mode for models with a verified contract."""
+        if not self._is_scuba_s1_2025(sn) or not self.is_mqtt_connected():
+            return None
+        return await self.query_machine_at_int(sn, "MODE")
 
     async def connect_mqtt(self) -> bool:
         """Connect to AWS IoT MQTT broker."""
@@ -1265,6 +1293,41 @@ class AiperApi:
                 return False
             return None
 
+    async def query_machine_at_int(self, sn: str, name: str, timeout: float = 4.0) -> int | None:
+        """Query one numeric AT value through downChan.
+
+        Aiper's app emits ``AT+<name>?`` and parses the named response. Keep the
+        same command lock used by writes so an unrelated acknowledgement cannot
+        be mistaken for the query response.
+        """
+        self._async_loop = asyncio.get_running_loop()
+        command_name = name.strip().upper()
+        if not command_name or not re.fullmatch(r"[A-Z0-9_]+", command_name):
+            raise ValueError("AT query name contains unsupported characters")
+
+        tz = self._timezone_string_for_sn(sn)
+        payload = {"sn": sn, "timeZone": tz, "cmd": f"AT+{command_name}?"}
+        pattern = re.compile(rf"(?:\+?{re.escape(command_name)})\s*[:=]\s*(-?\d+)", re.IGNORECASE)
+
+        async with self._cmd_lock(sn):
+            self._async_ack_event(sn)
+            self._clear_ack_fifo(sn)
+            if not await self.send_command(sn, "Machine", payload):
+                return None
+
+            deadline = asyncio.get_running_loop().time() + timeout
+            while (remaining := deadline - asyncio.get_running_loop().time()) > 0:
+                ack = await self._wait_for_ack(sn, timeout=remaining)
+                if ack is None:
+                    return None
+                match = pattern.search(ack)
+                if match:
+                    return int(match.group(1))
+                if "+ERROR" in ack.upper():
+                    return None
+
+        return None
+
     async def send_command(self, sn: str, cmd_type: str, data: dict | None = None) -> bool:
         """Send a command to the device."""
         is_x9 = any(sn.upper().startswith(prefix) for prefix in X9_SERIES_PREFIXES)
@@ -1329,6 +1392,14 @@ class AiperApi:
         """Set a selectable cleaning mode."""
         mode_id = int(mode)
         _LOGGER.info("Setting cleaning mode for %s: %s", sn, mode_id)
+
+        if self._is_scuba_s1_2025(sn):
+            # Verified from Aiper Android 3.5.0's X5ProMax implementation.
+            # This model supports Auto/Floor/Wall/Scheduled as 1/2/3/5 and
+            # uses only AT+MODE. Do not fall through to speculative variants.
+            if mode_id not in (1, 2, 3, 5) or not self.is_mqtt_connected():
+                return False
+            return await self.send_machine_at(sn, f"AT+MODE={mode_id}") is True
 
         # Try MQTT AT commands first (preferred — low latency, confirmed by ack).
         # X1 firmware rejects AT+PLAN for normal mode selection. Earlier

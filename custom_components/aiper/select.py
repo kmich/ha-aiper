@@ -169,6 +169,10 @@ class AiperCleaningModeSelect(AiperSelectBase):
         if reported in self._mode_ids:
             return reported
 
+        selected = coerce_int(dev["mode_options"].attributes.get("selected_mode"))
+        if selected in self._mode_ids:
+            return selected
+
         pending = coerce_int(self.coordinator.get_pending_command_target(self._sn, "mode"))
         if pending in self._mode_ids:
             return pending
@@ -242,6 +246,9 @@ class AiperCleanPathSelect(AiperSelectBase):
     @property
     def current_option(self) -> str | None:
         dev = (self.coordinator.data or {})[self._sn]
+        pending = coerce_int(self.coordinator.get_pending_command_target(self._sn, "clean_path"))
+        if pending in CLEAN_PATH_MAP:
+            return CLEAN_PATH_MAP[pending]
         label = dev["clean_path"].value
         if label is not None and label not in CLEAN_PATH_MAP.values():
             try:
@@ -291,11 +298,21 @@ class AiperCleanPathSelect(AiperSelectBase):
         with suppress(Exception):
             self.coordinator.set_clean_path_cache(self._sn, path_id)
 
+        # Scuba S1 can acknowledge a write before AT+AUTO? reflects it. Hold
+        # the requested option while pending and confirm with bounded backoff,
+        # rather than allowing an immediate stale query to flicker the UI back.
+        confirmed = False
+        with suppress(Exception):
+            confirmed = await self.coordinator.async_confirm_clean_path_selection(self._sn, path_id)
+
         # Ask for a shadow refresh and a coordinator refresh.
         with suppress(Exception):
             await self.controller.refresh_shadow(self._sn)
 
-        await self.coordinator.async_request_refresh()
+        # A successful AT+AUTO? confirmation is newer than an immediately
+        # following full refresh, which can still return the previous value.
+        if not confirmed:
+            await self.coordinator.async_request_refresh()
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry, async_add_entities) -> None:

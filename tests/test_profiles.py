@@ -61,6 +61,40 @@ def test_scuba_profile_defaults_modes_by_family() -> None:
     }
 
 
+def test_scuba_s1_exposes_verified_clean_path_without_temperature() -> None:
+    """The S1 exposes only the clean-path capability verified on hardware."""
+    profile = derive_device_profile({"model": "Scuba_S1_2025"})
+
+    assert Capability.CLEAN_PATH in profile.capabilities
+    assert Capability.WATER_TEMPERATURE not in profile.capabilities
+    assert Capability.CHARGE_TYPE not in profile.capabilities
+    assert Capability.ROLLER_BRUSH not in profile.capabilities
+    assert Capability.MICROMESH_FILTER in profile.capabilities
+    assert Capability.CATERPILLAR_TREAD not in profile.capabilities
+    assert Capability.PROPELLER not in profile.capabilities
+    assert profile.mode_map == {1: "Auto", 2: "Floor", 3: "Wall", 5: "Scheduled"}
+
+
+def test_scuba_s1_mode_profile_rejects_generic_waterline_evidence() -> None:
+    """Generic Scuba mode evidence must not add Waterline to the S1."""
+    profile = derive_device_profile({"model": "Scuba_S1_2025", "supported_mode_ids": [1, 2, 3, 4, 5]})
+
+    assert profile.mode_map == {1: "Auto", 2: "Floor", 3: "Wall", 5: "Scheduled"}
+
+
+def test_scuba_s1_recognized_via_device_model_fallback() -> None:
+    """A device known only by `deviceModel` (before the first successful
+    get_device_info() call populates `model`) must still resolve to the
+    Scuba family and its full S1 capability/mode-map profile — not fall
+    through to DeviceFamily.UNKNOWN and COMMON_CAPABILITIES."""
+    profile = derive_device_profile({"deviceModel": "Scuba_S1_2025"})
+
+    assert profile.family == DeviceFamily.SCUBA
+    assert Capability.CLEANING_MODE_SELECT in profile.capabilities
+    assert Capability.CLEAN_PATH in profile.capabilities
+    assert profile.mode_map == {1: "Auto", 2: "Floor", 3: "Wall", 5: "Scheduled"}
+
+
 def test_surfer_mode_evidence_stays_read_only() -> None:
     """Surfer mode IDs describe cleaning context, not selectable cleaning modes."""
     profile = derive_device_profile(

@@ -9,7 +9,14 @@ from typing import Any
 
 from .const import CLEAN_PATH_MAP, Status, mode_label, status_label, status_running, status_value
 from .device_images import device_model_image_url
-from .profiles import Capability, DeviceFamily, derive_device_profile, status_semantics
+from .profiles import (
+    SCUBA_S1_2025_MODEL,
+    Capability,
+    DeviceFamily,
+    derive_device_profile,
+    model_key,
+    status_semantics,
+)
 
 
 @dataclass(frozen=True)
@@ -92,6 +99,31 @@ def _centihours_to_hours(value: Any) -> float | None:
         if stripped.lstrip("-").isdigit():
             return round(int(stripped) / 100.0, 2)
     return None
+
+
+def _runtime_to_hours(device: RawDeviceData, value: Any, *, key: str | None = None) -> float | None:
+    """Normalize model-specific current-cycle runtime units to hours."""
+    if (key if key is not None else model_key(device)) == SCUBA_S1_2025_MODEL:
+        minutes = _coerce_float(value)
+        return round(minutes / 60.0, 2) if minutes is not None else None
+    return _centihours_to_hours(value)
+
+
+def _current_runtime_to_hours(
+    device: RawDeviceData,
+    value: Any,
+    running: bool | None,
+) -> float | None:
+    """Return cleaning runtime without exposing the S1's state timer.
+
+    Scuba_S1_2025 firmware V2.0.1 reuses ``runTime`` for time spent in its
+    current machine state. It resets when charging begins and then increments
+    while charging, so it is a cleaning timer only while status is running.
+    """
+    key = model_key(device)
+    if key == SCUBA_S1_2025_MODEL and running is False:
+        return 0.0
+    return _runtime_to_hours(device, value, key=key)
 
 
 def _hours(value: Any) -> float | None:
@@ -432,7 +464,10 @@ def normalize_machine_update(
     if mqtt.get("temp") is not None:
         updates["temperature"] = EntityState(mqtt.get("temp"))
     if mqtt.get("run_time") is not None:
-        updates["runtime"] = EntityState(_centihours_to_hours(mqtt.get("run_time")))
+        current_running = getattr((current or {}).get("running"), "value", None)
+        if raw_status is not None and not hydrocomm:
+            current_running = _cleaner_running(rest, raw_status)
+        updates["runtime"] = EntityState(_current_runtime_to_hours(rest, mqtt.get("run_time"), current_running))
     if mqtt.get("in_water") is not None:
         updates["in_water"] = EntityState(bool(mqtt.get("in_water")))
     solar_status_raw = mqtt.get("solar_status") if "solar_status" in mqtt else mqtt.get("solarStatus")
@@ -707,6 +742,10 @@ def _normalize_identity(states: DeviceState, device: RawDeviceData) -> None:
     supported_mode_ids = device.get("supported_mode_ids")
     if not isinstance(supported_mode_ids, list):
         supported_mode_ids = []
+    if mode_map:
+        supported_mode_ids = [mode_id for mode_id in supported_mode_ids if _coerce_int(mode_id) in mode_map] or list(
+            mode_map
+        )
 
     states["device_info"] = EntityState(
         name,
@@ -719,7 +758,11 @@ def _normalize_identity(states: DeviceState, device: RawDeviceData) -> None:
     )
     states["device_family"] = EntityState(profile_family, {"capabilities": capabilities})
     states["capabilities"] = EntityState(capabilities)
-    states["mode_options"] = EntityState(supported_mode_ids, {"mode_map": mode_map})
+    mode_options_attributes: dict[str, Any] = {"mode_map": mode_map}
+    selected_mode = _coerce_int(device.get("selected_mode"))
+    if selected_mode is not None:
+        mode_options_attributes["selected_mode"] = selected_mode
+    states["mode_options"] = EntityState(supported_mode_ids, mode_options_attributes)
     states["entity_picture"] = EntityState(device_model_image_url(device))
 
 
@@ -794,7 +837,7 @@ def normalize_device_state(raw: RawDeviceData) -> DeviceState:
 
     state["battery"] = EntityState(raw.get("battLevel"))
     state["temperature"] = EntityState(raw.get("temp"))
-    runtime = _centihours_to_hours(raw.get("runTime"))
+    runtime = _current_runtime_to_hours(raw, raw.get("runTime"), running)
     state["runtime"] = EntityState(runtime)
 
     total_cleanings = raw.get("total_cleanings") if "total_cleanings" in raw else raw.get("_ha_total_cleanings")
@@ -807,6 +850,8 @@ def normalize_device_state(raw: RawDeviceData) -> DeviceState:
     last_cleaning_mode = (
         raw.get("last_cleaning_mode") if "last_cleaning_mode" in raw else raw.get("_ha_last_cleaning_mode")
     )
+    if model_key(raw) == SCUBA_S1_2025_MODEL and str(last_cleaning_mode).strip().lower() == "smart":
+        last_cleaning_mode = "Auto"
     last_cleaning_start = (
         raw.get("last_cleaning_start") if "last_cleaning_start" in raw else raw.get("_ha_last_cleaning_start")
     )

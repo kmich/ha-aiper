@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Added hardware-verified `Scuba_S1_2025` clean-path support using the official
+  app's `AT+AUTO?` query and `AT+AUTO=0/1` set contract. This model no longer
+  uses speculative REST, shadow, or fallback command variants for clean path.
+- Added the app-derived `Scuba_S1_2025` cleaning-mode profile: Auto, Floor,
+  Wall, and Scheduled. The S1 now queries with `AT+MODE?`, writes only the
+  corresponding `AT+MODE=1/2/3/5` commands, and no longer exposes Waterline.
+- Added bounded S1 clean-path write confirmation so stale immediate readback
+  cannot briefly revert a newly acknowledged selection in Home Assistant.
+- Added an explicit S1 capability profile that retains the observed MicroMesh
+  consumable while suppressing unsupported temperature, charge-type, roller,
+  tread, and propeller entities.
+- Fixed `Scuba_S1_2025` post-cycle charging reconciliation. A fresh REST
+  charging status now supersedes an hours-old MQTT Cleaning/Wet report and
+  coherently reports Charging, Not running, Dry, Mode 0, and zero active
+  cleaning runtime. If explicit status is absent, three increasing battery
+  samples spanning at least two minutes may provide the same fallback only
+  when no newer MQTT Machine report exists. Diagnostics identify the trigger
+  used. Other device models retain the existing MQTT precedence.
+- Fixed the S1 flipping from Wet to Dry when a fresh REST poll reports Cleaning
+  together with a stale `in_water=0`. For this model, active Cleaning is always
+  Wet. Observed status 10 represents parking underwater and remains Wet when
+  REST omits a newer water-state report.
+
 ## [1.2.4] - 2026-08-06
 
 ### Fixed
