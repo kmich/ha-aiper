@@ -20,9 +20,19 @@ from .redaction import redact, redact_str
 async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
 
-    data = hass.data.get(DOMAIN, {}).get(entry.entry_id) or {}
-    api = data.get("api")
-    coordinator = data.get("coordinator")
+    try:
+        runtime_data = entry.runtime_data
+    except (AttributeError, RuntimeError):
+        runtime_data = None
+    api = getattr(runtime_data, "api", None)
+    coordinator = getattr(runtime_data, "coordinator", None)
+
+    # Compatibility fallback for an entry loaded by an older integration
+    # version that still stored its runtime objects in hass.data.
+    if api is None or coordinator is None:
+        legacy_data = hass.data.get(DOMAIN, {}).get(entry.entry_id) or {}
+        api = api or legacy_data.get("api")
+        coordinator = coordinator or legacy_data.get("coordinator")
 
     # Config entry data: never expose credentials.
     entry_data = {

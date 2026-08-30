@@ -38,7 +38,10 @@
   including resubscribing any device that never got subscribed in the first
   place — if the connection stays down past a grace period. Entity setup no
   longer waits on MQTT to connect, and a slow reconnect attempt no longer
-  delays the REST polling that keeps working while MQTT is down.
+  delays the REST polling that keeps working while MQTT is down. Diagnostics
+  now read the current config-entry runtime location, and a Cognito 4xx
+  triggers one bounded OpenID refresh/retry for regions that omit an OpenID
+  expiry duration.
 
 ## [1.2.4] - 2026-08-06
 

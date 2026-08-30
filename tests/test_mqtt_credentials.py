@@ -15,6 +15,7 @@ import time
 from typing import Any, cast
 
 import pytest
+from aiohttp import ClientResponseError
 
 from custom_components.aiper.api import (
     AWS_CREDENTIALS_TTL_DEBUG_SECONDS,
@@ -126,6 +127,83 @@ def test_stale_credentials_schedule_a_refresh() -> None:
 
     api._aws_credentials_exp = time.time() + MQTT_CREDENTIALS_REFRESH_MARGIN_SECONDS + 600
     assert api._mqtt_credentials_due_for_refresh() is False
+
+
+@pytest.mark.asyncio
+async def test_cognito_4xx_refreshes_openid_without_token_duration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rejected OpenID token must refresh once even without an expiry hint."""
+    api = _api()
+    api._identity_id = "identity-old"
+    api._openid_token = "openid-old"
+    api._openid_token_exp = None
+    exchanges: list[dict[str, Any]] = []
+
+    async def fake_request(*_: Any, **kwargs: Any) -> tuple[int, str]:
+        exchanges.append(kwargs["json_body"])
+        if len(exchanges) == 1:
+            raise ClientResponseError(cast(Any, None), (), status=400, message="expired token")
+        return 200, json.dumps(
+            {
+                "Credentials": {
+                    "AccessKeyId": "AKIAREFRESHED",
+                    "SecretKey": "secret",
+                    "SessionToken": "session",
+                }
+            }
+        )
+
+    async def fake_openid_refresh() -> None:
+        api._identity_id = "identity-new"
+        api._openid_token = "openid-new"
+
+    monkeypatch.setattr(api, "_request_with_backoff", fake_request)
+    monkeypatch.setattr(api, "get_openid_token", fake_openid_refresh)
+
+    credentials = await api.get_aws_credentials()
+
+    assert credentials is not None
+    assert credentials["AccessKeyId"] == "AKIAREFRESHED"
+    assert exchanges == [
+        {
+            "IdentityId": "identity-old",
+            "Logins": {"cognito-identity.amazonaws.com": "openid-old"},
+        },
+        {
+            "IdentityId": "identity-new",
+            "Logins": {"cognito-identity.amazonaws.com": "openid-new"},
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cognito_4xx_retry_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A persistent Cognito rejection must not create a refresh loop."""
+    api = _api()
+    api._identity_id = "identity"
+    api._openid_token = "openid"
+    exchanges = 0
+    refreshes = 0
+
+    async def fake_request(*_: Any, **__: Any) -> tuple[int, str]:
+        nonlocal exchanges
+        exchanges += 1
+        raise ClientResponseError(cast(Any, None), (), status=400, message="still rejected")
+
+    async def fake_openid_refresh() -> None:
+        nonlocal refreshes
+        refreshes += 1
+        api._openid_token = "openid-refreshed"
+
+    monkeypatch.setattr(api, "_request_with_backoff", fake_request)
+    monkeypatch.setattr(api, "get_openid_token", fake_openid_refresh)
+
+    with pytest.raises(ClientResponseError):
+        await api.get_aws_credentials()
+
+    assert exchanges == 2
+    assert refreshes == 1
 
 
 def test_refresh_margin_scales_down_for_a_short_ttl() -> None:

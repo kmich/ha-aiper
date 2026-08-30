@@ -67,7 +67,7 @@ async def test_diagnostics_redacts_sensitive_runtime_data(hass: HomeAssistant) -
             }
         },
     )
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"api": api, "coordinator": coordinator}
+    entry.runtime_data = SimpleNamespace(api=api, coordinator=coordinator)
 
     diagnostics = await async_get_config_entry_diagnostics(hass, entry)
 
@@ -86,3 +86,17 @@ async def test_diagnostics_redacts_sensitive_runtime_data(hass: HomeAssistant) -
     assert diagnostics["api"]["mqtt_reconnect_count"] == 1
     assert diagnostics["api"]["mqtt_connected"] is True
     assert diagnostics["state_reconciliation"]["SN123"]["trigger"] == "rest_machine_status"
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_supports_legacy_hass_data_runtime(hass: HomeAssistant) -> None:
+    """Diagnostics retain compatibility with an entry loaded by an older version."""
+    entry = MockConfigEntry(domain=DOMAIN, entry_id="entry-legacy", data={}, options={})
+    api = SimpleNamespace(base_url="https://example.test", region="us", is_mqtt_connected=lambda: True)
+    coordinator = SimpleNamespace(last_update_success=True, update_interval=None, data={})
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"api": api, "coordinator": coordinator}
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert diagnostics["api"]["mqtt_connected"] is True
+    assert diagnostics["coordinator"]["last_update_success"] is True

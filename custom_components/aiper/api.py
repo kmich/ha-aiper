@@ -570,25 +570,42 @@ class AiperApi:
         if self._aws_credentials_exp and (self._aws_credentials_exp - time.time()) > 120:
             return self._aws_credentials
 
-        region = self._aws_region
-        if not region and self._iot_endpoint and ".iot." in self._iot_endpoint:
-            try:
-                region = self._iot_endpoint.split(".iot.", 1)[1].split(".", 1)[0]
-            except Exception:
-                region = None
-        region = region or "eu-central-1"
-
-        url = f"https://cognito-identity.{region}.amazonaws.com/"
         headers = {
             "Content-Type": "application/x-amz-json-1.1",
             "X-Amz-Target": "AWSCognitoIdentityService.GetCredentialsForIdentity",
         }
-        body = {
-            "IdentityId": self._identity_id,
-            "Logins": {"cognito-identity.amazonaws.com": self._openid_token},
-        }
 
-        _status, text = await self._request_with_backoff("POST", url, headers=headers, json_body=body, timeout=30)
+        async def _exchange_openid_token() -> tuple[int, str]:
+            """Exchange the current OpenID token for temporary AWS credentials."""
+            region = self._aws_region
+            if not region and self._iot_endpoint and ".iot." in self._iot_endpoint:
+                try:
+                    region = self._iot_endpoint.split(".iot.", 1)[1].split(".", 1)[0]
+                except Exception:
+                    region = None
+            region = region or "eu-central-1"
+            url = f"https://cognito-identity.{region}.amazonaws.com/"
+            body = {
+                "IdentityId": self._identity_id,
+                "Logins": {"cognito-identity.amazonaws.com": self._openid_token},
+            }
+            return await self._request_with_backoff("POST", url, headers=headers, json_body=body, timeout=30)
+
+        try:
+            _status, text = await _exchange_openid_token()
+        except aiohttp.ClientResponseError as err:
+            if not 400 <= err.status < 500:
+                raise
+            # Some Aiper regions omit tokenDuration, so the proactive expiry
+            # check above cannot know when the OpenID token has gone stale.
+            # A Cognito 4xx is authoritative evidence: refresh once and retry
+            # the exchange with the new token/identity values. The retry is
+            # deliberately bounded so invalid accounts cannot create a loop.
+            _LOGGER.info("Cognito rejected the cached OpenID token; refreshing it once")
+            await self.get_openid_token()
+            if not self._identity_id or not self._openid_token:
+                return None
+            _status, text = await _exchange_openid_token()
         out = json.loads(text)
 
         creds = out.get("Credentials") or {}
