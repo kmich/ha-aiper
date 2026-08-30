@@ -100,6 +100,9 @@ async def test_setup_entry_stores_runtime_data_and_unload_disconnects(
     entry.add_to_hass(hass)
 
     assert await aiper.async_setup_entry(hass, cast(ConfigEntry, entry)) is True
+    # MQTT connect/subscribe now runs as a background task so it doesn't
+    # delay entity setup; wait for it before asserting on its side effects.
+    await hass.async_block_till_done()
 
     runtime = entry.runtime_data
     api = cast(FakeApi, runtime.api)
@@ -118,6 +121,148 @@ async def test_setup_entry_stores_runtime_data_and_unload_disconnects(
 
     assert unloaded == [(cast(ConfigEntry, entry), aiper.PLATFORMS)]
     assert api.disconnected is True
+
+
+@pytest.mark.asyncio
+async def test_setup_survives_mqtt_failure(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed MQTT connect must not abort setup.
+
+    Raising ConfigEntryNotReady here puts HA into a setup-retry loop, and
+    since every retry re-runs login(), those retries trip Aiper's
+    single-session conflict and empty the REST device list -- turning a
+    degraded push channel into every entity going unavailable.
+    """
+
+    forwarded: list[tuple[ConfigEntry, list[Platform]]] = []
+
+    async def fake_forward_entry_setups(entry: ConfigEntry, platforms: list[Platform]) -> None:
+        forwarded.append((entry, platforms))
+
+    async def fake_unload_platforms(entry: ConfigEntry, platforms: list[Platform]) -> bool:
+        return True
+
+    class NoMqttApi(FakeApi):
+        async def connect_mqtt(self) -> bool:
+            self.connect_called = True
+            return False
+
+    monkeypatch.setattr(aiper, "AiperApi", NoMqttApi)
+    monkeypatch.setattr(aiper, "async_get_clientsession", lambda hass: "session")
+    monkeypatch.setattr(hass.config_entries, "async_forward_entry_setups", fake_forward_entry_setups)
+    monkeypatch.setattr(hass.config_entries, "async_unload_platforms", fake_unload_platforms)
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry-mqtt-down",
+        data={"username": "user@example.com", "password": "secret", "region": "asia"},
+        state=ConfigEntryState.SETUP_IN_PROGRESS,
+    )
+    entry.add_to_hass(hass)
+
+    assert await aiper.async_setup_entry(hass, cast(ConfigEntry, entry)) is True
+    await hass.async_block_till_done()
+
+    api = cast(NoMqttApi, entry.runtime_data.api)
+    assert api.connect_called is True
+    assert api.subscribed == []
+    # Entities are still published, backed by REST polling.
+    assert forwarded == [(cast(ConfigEntry, entry), aiper.PLATFORMS)]
+    assert entry.runtime_data.coordinator.data is not None
+
+    # Cancel the coordinator's refresh timer so it doesn't outlive the test.
+    assert await aiper.async_unload_entry(hass, cast(ConfigEntry, entry)) is True
+
+
+@pytest.mark.asyncio
+async def test_setup_forwards_platforms_exactly_once_when_mqtt_raises(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An exception from connect_mqtt must be contained, not propagated."""
+
+    forwarded: list[tuple[ConfigEntry, list[Platform]]] = []
+
+    async def fake_forward_entry_setups(entry: ConfigEntry, platforms: list[Platform]) -> None:
+        forwarded.append((entry, platforms))
+
+    async def fake_unload_platforms(entry: ConfigEntry, platforms: list[Platform]) -> bool:
+        return True
+
+    class ExplodingMqttApi(FakeApi):
+        async def connect_mqtt(self) -> bool:
+            self.connect_called = True
+            raise RuntimeError("AWS_ERROR_MQTT_UNEXPECTED_HANGUP")
+
+    monkeypatch.setattr(aiper, "AiperApi", ExplodingMqttApi)
+    monkeypatch.setattr(aiper, "async_get_clientsession", lambda hass: "session")
+    monkeypatch.setattr(hass.config_entries, "async_forward_entry_setups", fake_forward_entry_setups)
+    monkeypatch.setattr(hass.config_entries, "async_unload_platforms", fake_unload_platforms)
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry-mqtt-raises",
+        data={"username": "user@example.com", "password": "secret", "region": "asia"},
+        state=ConfigEntryState.SETUP_IN_PROGRESS,
+    )
+    entry.add_to_hass(hass)
+
+    assert await aiper.async_setup_entry(hass, cast(ConfigEntry, entry)) is True
+    await hass.async_block_till_done()
+    assert len(forwarded) == 1
+
+    # Cancel the coordinator's refresh timer so it doesn't outlive the test.
+    assert await aiper.async_unload_entry(hass, cast(ConfigEntry, entry)) is True
+
+
+@pytest.mark.asyncio
+async def test_platforms_are_forwarded_before_mqtt_connect_is_attempted(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Entity platforms must register before MQTT connect is even attempted.
+
+    Regression test: platform forwarding previously moved to run AFTER the
+    MQTT connect + per-device subscribe sequence, which could add tens of
+    seconds of startup latency (per device) before any entity existed. A
+    slow/unreachable broker must not delay entity availability -- REST
+    polling already provides full state.
+    """
+    order: list[str] = []
+
+    async def fake_forward_entry_setups(entry: ConfigEntry, platforms: list[Platform]) -> None:
+        order.append("forward_entry_setups")
+
+    async def fake_unload_platforms(entry: ConfigEntry, platforms: list[Platform]) -> bool:
+        return True
+
+    class OrderTrackingApi(FakeApi):
+        async def connect_mqtt(self) -> bool:
+            order.append("connect_mqtt")
+            self.connect_called = True
+            return True
+
+    monkeypatch.setattr(aiper, "AiperApi", OrderTrackingApi)
+    monkeypatch.setattr(aiper, "async_get_clientsession", lambda hass: "session")
+    monkeypatch.setattr(hass.config_entries, "async_forward_entry_setups", fake_forward_entry_setups)
+    monkeypatch.setattr(hass.config_entries, "async_unload_platforms", fake_unload_platforms)
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry-order",
+        data={"username": "user@example.com", "password": "secret", "region": "asia"},
+        state=ConfigEntryState.SETUP_IN_PROGRESS,
+    )
+    entry.add_to_hass(hass)
+
+    assert await aiper.async_setup_entry(hass, cast(ConfigEntry, entry)) is True
+    await hass.async_block_till_done()
+
+    assert order == ["forward_entry_setups", "connect_mqtt"]
+
+    assert await aiper.async_unload_entry(hass, cast(ConfigEntry, entry)) is True
 
 
 @pytest.mark.asyncio

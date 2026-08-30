@@ -75,6 +75,14 @@ LIVE_STATE_KEYS = frozenset(
 
 LIVE_REFRESH_INTERVAL = timedelta(minutes=5)
 
+# How long MQTT must stay down before we stop trusting the AWS CRT SDK's own
+# reconnect loop and rebuild the connection ourselves.
+MQTT_RECONNECT_GRACE_SECONDS = 180
+
+# Floor between forced rebuilds. Without this, an endpoint that refuses every
+# connection would have us rebuilding on each poll forever.
+MQTT_REBUILD_MIN_INTERVAL_SECONDS = 600
+
 
 def _ensure_utc_aware(value: datetime | None) -> datetime | None:
     """Ensure a datetime is timezone-aware in UTC."""
@@ -674,6 +682,8 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         self._command_state: dict[str, dict[str, dict[str, Any]]] = {}
         # Structure: {sn: {"pending": {kind: {...}}, "last": {kind: {...}}}}
 
+        self._mqtt_maintenance_task: asyncio.Task[None] | None = None
+
     def _record_s1_battery_sample(self, sn: str, value: Any, observed_at: datetime) -> None:
         """Retain a small, non-sensitive battery trend for S1 fallback logic."""
         battery = _coerce_int(value)
@@ -772,9 +782,114 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             device["supported_mode_ids"] = list(profile.mode_map.keys())
         device["mode_map"] = profile.mode_map
 
+    async def async_subscribe_all_devices(self) -> None:
+        """Subscribe every known device that doesn't yet have an MQTT subscription.
+
+        Covers a gap the transport-level reconnect can't fix on its own:
+        `api.reconnect_mqtt()`'s re-subscribe step only re-subscribes serials
+        it already knows about (`api.subscribed_serials()`), so if the
+        *initial* connect/subscribe at setup failed for a device (or never
+        ran at all), that device would otherwise stay silently unsubscribed
+        forever even once MQTT is reported "connected" again. Safe to call
+        repeatedly -- already-subscribed devices are skipped, and
+        `api.subscribe_device` registers callbacks idempotently.
+        """
+        if not self.data or not self.api.is_mqtt_connected():
+            return
+        subscribed = self.api.subscribed_serials()
+        for sn in self.data:
+            if sn in subscribed:
+                continue
+            try:
+                cb = self.make_shadow_callback(sn)
+                if await self.api.subscribe_device(sn, cb):
+                    await self.api.request_shadow(sn)
+            except Exception as err:
+                _LOGGER.debug("Failed to subscribe device %s to MQTT: %s", sn, err)
+
+    async def _async_maintain_mqtt(self) -> None:
+        """Keep the MQTT signing credentials warm and recover a dead connection.
+
+        Runs on every poll, as a backgrounded task (see _async_update_data) so
+        a slow reconnect attempt never delays the REST fetch that's supposed
+        to keep working while MQTT is down. Refreshing the credential
+        snapshot from here is what lets the AWS CRT's reconnect loop sign
+        with valid credentials instead of the ones it captured at first
+        connect -- the signing delegate itself must never block, so it can
+        only read a snapshot somebody else keeps current.
+        """
+        refresh = getattr(self.api, "async_refresh_mqtt_credentials", None)
+        if refresh is not None:
+            with suppress(Exception):
+                await refresh()
+
+        get_down_seconds = getattr(self.api, "mqtt_disconnected_seconds", None)
+        if get_down_seconds is None:
+            return
+        down_seconds = get_down_seconds()
+        if down_seconds is None:
+            # MQTT is connected right now -- opportunistically pick up any
+            # device that never got subscribed (see async_subscribe_all_devices).
+            with suppress(Exception):
+                await self.async_subscribe_all_devices()
+        if down_seconds is None or down_seconds < MQTT_RECONNECT_GRACE_SECONDS:
+            return
+
+        get_since_rebuild = getattr(self.api, "seconds_since_mqtt_rebuild", None)
+        reconnect = getattr(self.api, "reconnect_mqtt", None)
+        if get_since_rebuild is None or reconnect is None:
+            return
+
+        since_rebuild = get_since_rebuild()
+        if since_rebuild is not None and since_rebuild < MQTT_REBUILD_MIN_INTERVAL_SECONDS:
+            _LOGGER.debug(
+                "MQTT still down after %.0fs but last rebuild was only %.0fs ago; waiting",
+                down_seconds,
+                since_rebuild,
+            )
+            return
+
+        _LOGGER.warning("MQTT has been disconnected for %.0fs; rebuilding the connection", down_seconds)
+        with suppress(Exception):
+            if await reconnect():
+                _LOGGER.info("MQTT reconnected after %.0fs offline", down_seconds)
+                with suppress(Exception):
+                    await self.async_subscribe_all_devices()
+
+    def _start_mqtt_maintenance(self) -> None:
+        """Kick off MQTT credential refresh / reconnect maintenance without blocking the poll.
+
+        A forced reconnect involves real network round trips (disconnect,
+        connect, resubscribe) that can take many seconds. Awaiting that
+        inline, ahead of the REST fetch, would delay the one channel that's
+        supposed to keep working while MQTT is down -- exactly backwards.
+        Run it as a separate task instead, guarded so an overlapping poll
+        doesn't stack a second reconnect attempt on top of one still
+        running.
+
+        Uses ConfigEntry.async_create_task (tracked, awaited on unload)
+        rather than async_create_background_task (untracked, cancelled
+        immediately) so an in-flight reconnect finishes cleanly instead of
+        being cut off mid-rebuild, and so tests can observe it complete via
+        hass.async_block_till_done().
+        """
+        task = getattr(self, "_mqtt_maintenance_task", None)
+        if task is not None and not task.done():
+            return
+        config_entry = getattr(self, "config_entry", None)
+        if config_entry is not None:
+            self._mqtt_maintenance_task = config_entry.async_create_task(
+                self.hass, self._async_maintain_mqtt(), "aiper_mqtt_maintenance"
+            )
+        else:
+            self._mqtt_maintenance_task = self.hass.async_create_task(
+                self._async_maintain_mqtt(), "aiper_mqtt_maintenance"
+            )
+
     async def _async_update_data(self) -> DevicesState:
         """Fetch data from API."""
         try:
+            self._start_mqtt_maintenance()
             now = dt_util.utcnow()
 
             # Normalize cached timestamps (defensive against earlier versions).
