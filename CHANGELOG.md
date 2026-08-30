@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [1.3.0] - 2026-08-30
 
 ### Added
 - Added hardware-verified `Scuba_S1_2025` clean-path support using the official
@@ -13,18 +13,32 @@
   cannot briefly revert a newly acknowledged selection in Home Assistant.
 - Added an explicit S1 capability profile that retains the observed MicroMesh
   consumable while suppressing unsupported temperature, charge-type, roller,
-  tread, and propeller entities.
+  tread, and propeller entities. Thanks to @rellerton for the hardware
+  verification that made S1 support possible.
+
+### Fixed
 - Fixed `Scuba_S1_2025` post-cycle charging reconciliation. A fresh REST
   charging status now supersedes an hours-old MQTT Cleaning/Wet report and
   coherently reports Charging, Not running, Dry, Mode 0, and zero active
-  cleaning runtime. If explicit status is absent, three increasing battery
-  samples spanning at least two minutes may provide the same fallback only
-  when no newer MQTT Machine report exists. Diagnostics identify the trigger
-  used. Other device models retain the existing MQTT precedence.
+  cleaning runtime, but a fresher MQTT report showing the device still
+  actively cleaning is never overridden by a stale REST snapshot. If explicit
+  status is absent, three increasing battery samples spanning at least two
+  minutes may provide the same fallback only when no newer MQTT Machine
+  report exists. Diagnostics identify the trigger used. Other device models
+  retain the existing MQTT precedence.
 - Fixed the S1 flipping from Wet to Dry when a fresh REST poll reports Cleaning
   together with a stale `in_water=0`. For this model, active Cleaning is always
   Wet. Observed status 10 represents parking underwater and remains Wet when
   REST omits a newer water-state report.
+- Fixed MQTT reconnection after AWS credential expiry (#27). AWS Cognito
+  credentials are temporary (~55 min); the MQTT client previously couldn't
+  refresh them, so once they expired the connection could go down and never
+  come back. The credential signer now reads a non-blocking snapshot kept
+  current by the coordinator, and a watchdog forces a full reconnect —
+  including resubscribing any device that never got subscribed in the first
+  place — if the connection stays down past a grace period. Entity setup no
+  longer waits on MQTT to connect, and a slow reconnect attempt no longer
+  delays the REST polling that keeps working while MQTT is down.
 
 ## [1.2.4] - 2026-08-06
 
