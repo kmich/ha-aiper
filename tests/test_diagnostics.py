@@ -67,7 +67,7 @@ async def test_diagnostics_redacts_sensitive_runtime_data(hass: HomeAssistant) -
             }
         },
     )
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"api": api, "coordinator": coordinator}
+    entry.runtime_data = SimpleNamespace(api=api, coordinator=coordinator)
 
     diagnostics = await async_get_config_entry_diagnostics(hass, entry)
 
@@ -86,3 +86,22 @@ async def test_diagnostics_redacts_sensitive_runtime_data(hass: HomeAssistant) -
     assert diagnostics["api"]["mqtt_reconnect_count"] == 1
     assert diagnostics["api"]["mqtt_connected"] is True
     assert diagnostics["state_reconciliation"]["SN123"]["trigger"] == "rest_machine_status"
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_degrades_gracefully_before_runtime_data_is_set(hass: HomeAssistant) -> None:
+    """Diagnostics must not raise if requested before setup assigns runtime_data.
+
+    Regression test: a config entry stuck retrying setup (e.g. login failing,
+    or the first coordinator refresh failing) never gets `entry.runtime_data`
+    assigned. A user attaching diagnostics from that state must get a
+    degraded-but-valid payload, not an unhandled AttributeError.
+    """
+    entry = MockConfigEntry(domain=DOMAIN, entry_id="entry-not-ready", data={}, options={})
+    # Note: entry.runtime_data is deliberately left unset.
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert diagnostics["api"] == {"base_url": None, "region": None, "mqtt_connected": False}
+    assert "coordinator" not in diagnostics
+    assert "devices" not in diagnostics

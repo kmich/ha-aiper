@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Fixed config-entry diagnostics reading from a storage location the integration stopped writing to as of v1.2.0, so `mqtt_connected` and the MQTT signing/reconnect counters always read wrong on a live install regardless of actual connection state. Diagnostics now read from the current runtime location. Thanks to @shauneb for catching this on a live install and @rellerton for the fix.
+- Fixed OpenID token renewal for regions/devices whose `getOpenIdToken` response omits `tokenDuration`, where the integration had no way to know the cached token had gone stale until Cognito rejected it — and previously had no way to recover from that rejection. A Cognito 4xx now triggers one bounded OpenID refresh and retry. Validated with a 24-hour HydroComm soak test across AWS IoT's WebSocket connection boundary.
+
 ## [1.3.0] - 2026-08-30
 
 ### Added
@@ -38,7 +44,10 @@
   including resubscribing any device that never got subscribed in the first
   place — if the connection stays down past a grace period. Entity setup no
   longer waits on MQTT to connect, and a slow reconnect attempt no longer
-  delays the REST polling that keeps working while MQTT is down.
+  delays the REST polling that keeps working while MQTT is down. Diagnostics
+  now read the current config-entry runtime location, and a Cognito 4xx
+  triggers one bounded OpenID refresh/retry for regions that omit an OpenID
+  expiry duration.
 
 ## [1.2.4] - 2026-08-06
 

@@ -15,6 +15,7 @@ import time
 from typing import Any, cast
 
 import pytest
+from aiohttp import ClientResponseError
 
 from custom_components.aiper.api import (
     AWS_CREDENTIALS_TTL_DEBUG_SECONDS,
@@ -128,6 +129,194 @@ def test_stale_credentials_schedule_a_refresh() -> None:
     assert api._mqtt_credentials_due_for_refresh() is False
 
 
+@pytest.mark.asyncio
+async def test_cognito_4xx_refreshes_openid_without_token_duration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rejected OpenID token must refresh once even without an expiry hint."""
+    api = _api()
+    api._identity_id = "identity-old"
+    api._openid_token = "openid-old"
+    api._openid_token_exp = None
+    exchanges: list[dict[str, Any]] = []
+
+    async def fake_request(*_: Any, **kwargs: Any) -> tuple[int, str]:
+        exchanges.append(kwargs["json_body"])
+        if len(exchanges) == 1:
+            raise ClientResponseError(cast(Any, None), (), status=400, message="expired token")
+        return 200, json.dumps(
+            {
+                "Credentials": {
+                    "AccessKeyId": "AKIAREFRESHED",
+                    "SecretKey": "secret",
+                    "SessionToken": "session",
+                }
+            }
+        )
+
+    async def fake_openid_refresh() -> None:
+        api._identity_id = "identity-new"
+        api._openid_token = "openid-new"
+
+    monkeypatch.setattr(api, "_request_with_backoff", fake_request)
+    monkeypatch.setattr(api, "get_openid_token", fake_openid_refresh)
+
+    credentials = await api.get_aws_credentials()
+
+    assert credentials is not None
+    assert credentials["AccessKeyId"] == "AKIAREFRESHED"
+    assert exchanges == [
+        {
+            "IdentityId": "identity-old",
+            "Logins": {"cognito-identity.amazonaws.com": "openid-old"},
+        },
+        {
+            "IdentityId": "identity-new",
+            "Logins": {"cognito-identity.amazonaws.com": "openid-new"},
+        },
+    ]
+    # The successful retry must actually persist the credentials to the
+    # instance cache, not just return them -- otherwise every subsequent
+    # call would needlessly re-hit Cognito.
+    assert api._aws_credentials is not None
+    assert api._aws_credentials["AccessKeyId"] == "AKIAREFRESHED"
+    assert api._aws_credentials_exp is not None and api._aws_credentials_exp > time.time()
+    assert api._aws_credentials_cooldown_until == 0.0
+
+    # A subsequent call within the cached window must not re-hit Cognito.
+    credentials_again = await api.get_aws_credentials()
+    assert credentials_again is api._aws_credentials
+    assert len(exchanges) == 2
+
+
+@pytest.mark.asyncio
+async def test_cognito_4xx_retry_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A persistent Cognito rejection must not create a refresh loop.
+
+    Regression test: the retry's second failure previously escaped
+    get_aws_credentials as an uncaught ClientResponseError, breaking its
+    dict|None contract. It must now degrade to None and start a cooldown
+    instead, so a permanently-broken account doesn't hammer Cognito/Aiper on
+    every coordinator poll forever.
+    """
+    api = _api()
+    api._identity_id = "identity"
+    api._openid_token = "openid"
+    exchanges = 0
+    refreshes = 0
+
+    async def fake_request(*_: Any, **__: Any) -> tuple[int, str]:
+        nonlocal exchanges
+        exchanges += 1
+        raise ClientResponseError(cast(Any, None), (), status=400, message="still rejected")
+
+    async def fake_openid_refresh() -> None:
+        nonlocal refreshes
+        refreshes += 1
+        api._openid_token = "openid-refreshed"
+
+    monkeypatch.setattr(api, "_request_with_backoff", fake_request)
+    monkeypatch.setattr(api, "get_openid_token", fake_openid_refresh)
+
+    result = await api.get_aws_credentials()
+
+    assert result is None
+    assert exchanges == 2
+    assert refreshes == 1
+    assert api._aws_credentials_cooldown_until > time.time()
+
+    # And while the cooldown is active, a second call must not attempt any
+    # further Cognito/OpenID round trips at all.
+    result2 = await api.get_aws_credentials()
+    assert result2 is None
+    assert exchanges == 2
+    assert refreshes == 1
+
+
+@pytest.mark.asyncio
+async def test_cognito_4xx_retry_backs_off_when_refresh_does_not_change_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If get_openid_token() silently fails to produce new credentials, the
+    retry must not resend the identical already-rejected payload -- it
+    should back off immediately instead of guaranteeing a second failure.
+
+    Regression test: get_openid_token() swallows its own failures and
+    leaves self._identity_id/_openid_token unchanged on error, so the old
+    `if not self._identity_id or not self._openid_token` guard never caught
+    this case.
+    """
+    api = _api()
+    api._identity_id = "identity"
+    api._openid_token = "openid"
+    exchanges = 0
+
+    async def fake_request(*_: Any, **__: Any) -> tuple[int, str]:
+        nonlocal exchanges
+        exchanges += 1
+        raise ClientResponseError(cast(Any, None), (), status=400, message="still rejected")
+
+    async def fake_openid_refresh_noop() -> None:
+        # Mirrors get_openid_token()'s real behavior on failure: it just
+        # returns without touching _identity_id/_openid_token.
+        return None
+
+    monkeypatch.setattr(api, "_request_with_backoff", fake_request)
+    monkeypatch.setattr(api, "get_openid_token", fake_openid_refresh_noop)
+
+    result = await api.get_aws_credentials()
+
+    assert result is None
+    # Only the first exchange should have been attempted -- retrying with
+    # byte-identical rejected credentials would be pointless.
+    assert exchanges == 1
+    assert api._aws_credentials_cooldown_until > time.time()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_credential_fetches_are_serialized(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two concurrent callers must not race on identity/token state or
+    duplicate the Cognito exchange.
+
+    Regression test: the coordinator's poll-driven refresh and the MQTT
+    signing delegate's CRT-triggered background refresh can both call
+    get_aws_credentials() around the same time. Without serialization they
+    can interleave awaits inside the function and issue redundant network
+    calls.
+    """
+    api = _api()
+    api._identity_id = "identity"
+    api._openid_token = "openid"
+    exchanges = 0
+    release = asyncio.Event()
+
+    async def fake_request(*_: Any, **__: Any) -> tuple[int, str]:
+        nonlocal exchanges
+        exchanges += 1
+        if exchanges == 1:
+            # Let the second call start and try to enter the critical
+            # section while the first is still "in flight".
+            await release.wait()
+        return 200, json.dumps({"Credentials": {"AccessKeyId": "AKIAONE", "SecretKey": "s", "SessionToken": "t"}})
+
+    monkeypatch.setattr(api, "_request_with_backoff", fake_request)
+
+    task1 = asyncio.create_task(api.get_aws_credentials())
+    await asyncio.sleep(0)  # let task1 acquire the lock and start its request
+    task2 = asyncio.create_task(api.get_aws_credentials())
+    await asyncio.sleep(0)  # task2 should now be blocked waiting on the lock
+    release.set()
+
+    result1 = await task1
+    result2 = await task2
+
+    assert result1 is not None and result2 is not None
+    # task2 must have waited for task1 to finish and populate the cache,
+    # rather than racing it into a second network call.
+    assert exchanges == 1
+    assert result2 is result1
+
+
 def test_refresh_margin_scales_down_for_a_short_ttl() -> None:
     """A debug-mode TTL shorter than the production margin must still
     produce a clean due/not-due cycle instead of being 'due' immediately
@@ -222,6 +411,30 @@ def test_scheduling_a_refresh_resets_the_flag_if_scheduling_itself_fails() -> No
     api._async_loop = cast(Any, _WorkingLoop())
     api._schedule_mqtt_credentials_refresh()
     assert scheduled == ["scheduled"]
+
+
+def test_resolve_aws_region_prefers_reported_region_then_endpoint_then_default() -> None:
+    """The shared region resolver -- used by both get_aws_credentials and
+    connect_mqtt -- must apply its fallback chain in the documented order."""
+    api = _api()
+
+    # Explicit region wins even if an endpoint is also set.
+    api._aws_region = "us-west-2"
+    api._iot_endpoint = "abc123.iot.eu-central-1.amazonaws.com"
+    assert api._resolve_aws_region() == "us-west-2"
+
+    # No explicit region: parse it out of the endpoint.
+    api._aws_region = None
+    assert api._resolve_aws_region() == "eu-central-1"
+
+    # Neither available: hardcoded default.
+    api._aws_region = None
+    api._iot_endpoint = None
+    assert api._resolve_aws_region() == "eu-central-1"
+
+    # A malformed endpoint must not raise -- falls back to the default.
+    api._iot_endpoint = "not-a-valid-endpoint"
+    assert api._resolve_aws_region() == "eu-central-1"
 
 
 def test_transport_asks_the_resolver_on_every_signing() -> None:

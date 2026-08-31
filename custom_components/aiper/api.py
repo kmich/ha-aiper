@@ -40,6 +40,12 @@ SESSION_CONFLICT_CODE = "402"
 SESSION_CONFLICT_COOLDOWN_SECONDS = 180
 RETRYABLE_HTTP_STATUSES = (429, 500, 502, 503, 504)
 
+# If Cognito still rejects the AWS credentials exchange after a bounded
+# OpenID-token refresh-and-retry, back off for this long before trying
+# again, rather than repeating the same doomed 2-3 round trips on every
+# coordinator poll for a permanently broken account.
+AWS_CREDENTIALS_COOLDOWN_SECONDS = 180
+
 # Cognito hands out ~1 hour credentials; cache just under that. Overridable
 # per-instance (see `AiperApi.aws_credentials_ttl`) so the expiry/refresh path
 # can be exercised in minutes instead of an hour when validating on a device.
@@ -104,6 +110,13 @@ class AiperApi:
         self._openid_token_exp: float | None = None
         self._aws_credentials: dict[str, Any] | None = None
         self._aws_credentials_exp: float | None = None
+        self._aws_credentials_cooldown_until: float = 0.0
+        # Serializes get_aws_credentials(): it can be entered concurrently
+        # from the coordinator's poll-driven refresh and the MQTT signing
+        # delegate's CRT-triggered background refresh, which otherwise race
+        # on self._identity_id/_openid_token/_aws_credentials and duplicate
+        # Cognito/Aiper network calls.
+        self._aws_credentials_lock = asyncio.Lock()
         self._iot_endpoint: str | None = None
         self._aws_region: str | None = None
         self._mqtt_client: Any = None
@@ -559,9 +572,56 @@ class AiperApi:
         except Exception as err:
             _LOGGER.warning("Failed to get OpenID token data: %s", err)
 
+    def _resolve_aws_region(self) -> str:
+        """Return the AWS region to use for Cognito/IoT calls.
+
+        Prefers the region Aiper's backend reported, falls back to parsing
+        it out of the IoT endpoint hostname, and finally to a hardcoded
+        default. Shared by get_aws_credentials and connect_mqtt so the two
+        can't silently drift out of sync on how region is derived.
+        """
+        region = self._aws_region
+        if not region and self._iot_endpoint and ".iot." in self._iot_endpoint:
+            try:
+                region = self._iot_endpoint.split(".iot.", 1)[1].split(".", 1)[0]
+            except Exception:
+                region = None
+        return region or "eu-central-1"
+
+    async def _exchange_openid_token(self) -> tuple[int, str]:
+        """Exchange the current OpenID token for temporary AWS credentials."""
+        headers = {
+            "Content-Type": "application/x-amz-json-1.1",
+            "X-Amz-Target": "AWSCognitoIdentityService.GetCredentialsForIdentity",
+        }
+        url = f"https://cognito-identity.{self._resolve_aws_region()}.amazonaws.com/"
+        body = {
+            "IdentityId": self._identity_id,
+            "Logins": {"cognito-identity.amazonaws.com": self._openid_token},
+        }
+        return await self._request_with_backoff("POST", url, headers=headers, json_body=body, timeout=30)
+
     async def get_aws_credentials(self) -> dict[str, Any] | None:
-        """Exchange the OpenID token for temporary AWS credentials asynchronously."""
+        """Exchange the OpenID token for temporary AWS credentials asynchronously.
+
+        Serialized by _aws_credentials_lock: this can be entered concurrently
+        from the coordinator's poll-driven refresh and the MQTT signing
+        delegate's CRT-triggered background refresh, and without a lock they
+        can interleave awaits and duplicate network calls, or clobber each
+        other's writes to self._identity_id/_openid_token.
+        """
+        async with self._aws_credentials_lock:
+            return await self._get_aws_credentials_locked()
+
+    async def _get_aws_credentials_locked(self) -> dict[str, Any] | None:
+        """Body of get_aws_credentials(); must only be called holding the lock."""
         if not self._identity_id or not self._openid_token:
+            return None
+
+        if self._aws_credentials_cooldown_until and time.time() < self._aws_credentials_cooldown_until:
+            # A recent attempt was rejected and refreshing the OpenID token
+            # didn't produce new credentials to retry with -- back off
+            # instead of repeating the same doomed exchange on every poll.
             return None
 
         if self._openid_token_exp and (self._openid_token_exp - time.time()) < 120:
@@ -570,25 +630,47 @@ class AiperApi:
         if self._aws_credentials_exp and (self._aws_credentials_exp - time.time()) > 120:
             return self._aws_credentials
 
-        region = self._aws_region
-        if not region and self._iot_endpoint and ".iot." in self._iot_endpoint:
+        try:
+            _status, text = await self._exchange_openid_token()
+        except aiohttp.ClientResponseError as err:
+            if not 400 <= err.status < 500:
+                raise
+            # Some Aiper regions omit tokenDuration, so the proactive expiry
+            # check above cannot know when the OpenID token has gone stale.
+            # A Cognito 4xx is authoritative evidence: refresh once and retry
+            # the exchange with the new token/identity values. The retry is
+            # deliberately bounded so invalid accounts cannot create a loop.
+            _LOGGER.info("Cognito rejected the cached OpenID token; refreshing it once")
+            prior_identity, prior_token = self._identity_id, self._openid_token
+            await self.get_openid_token()
+            refreshed = (
+                self._identity_id
+                and self._openid_token
+                and (self._identity_id, self._openid_token) != (prior_identity, prior_token)
+            )
+            if not refreshed:
+                # get_openid_token() swallows its own failures and leaves the
+                # already-rejected identity/token in place on error, so
+                # retrying here would just resend the identical payload
+                # Cognito already rejected. Back off instead.
+                _LOGGER.warning(
+                    "OpenID token refresh did not produce new credentials; backing off AWS credential exchange for %ss",
+                    AWS_CREDENTIALS_COOLDOWN_SECONDS,
+                )
+                self._aws_credentials_cooldown_until = time.time() + AWS_CREDENTIALS_COOLDOWN_SECONDS
+                return None
             try:
-                region = self._iot_endpoint.split(".iot.", 1)[1].split(".", 1)[0]
-            except Exception:
-                region = None
-        region = region or "eu-central-1"
-
-        url = f"https://cognito-identity.{region}.amazonaws.com/"
-        headers = {
-            "Content-Type": "application/x-amz-json-1.1",
-            "X-Amz-Target": "AWSCognitoIdentityService.GetCredentialsForIdentity",
-        }
-        body = {
-            "IdentityId": self._identity_id,
-            "Logins": {"cognito-identity.amazonaws.com": self._openid_token},
-        }
-
-        _status, text = await self._request_with_backoff("POST", url, headers=headers, json_body=body, timeout=30)
+                _status, text = await self._exchange_openid_token()
+            except aiohttp.ClientResponseError as err2:
+                if not 400 <= err2.status < 500:
+                    raise
+                _LOGGER.warning(
+                    "Cognito rejected the AWS credentials exchange again after refreshing "
+                    "the OpenID token; backing off for %ss",
+                    AWS_CREDENTIALS_COOLDOWN_SECONDS,
+                )
+                self._aws_credentials_cooldown_until = time.time() + AWS_CREDENTIALS_COOLDOWN_SECONDS
+                return None
         out = json.loads(text)
 
         creds = out.get("Credentials") or {}
@@ -598,6 +680,7 @@ class AiperApi:
 
         self._aws_credentials = creds
         self._aws_credentials_exp = time.time() + self.aws_credentials_ttl
+        self._aws_credentials_cooldown_until = 0.0
         return creds
 
     async def get_devices(self) -> list[dict]:
@@ -1102,10 +1185,7 @@ class AiperApi:
                 return False
 
             client_id = self._identity_id
-            region = self._aws_region
-            if not region and self._iot_endpoint and ".iot." in self._iot_endpoint:
-                region = self._iot_endpoint.split(".iot.", 1)[1].split(".", 1)[0]
-            region = region or "eu-central-1"
+            region = self._resolve_aws_region()
 
             self._mqtt_client = AwsIotMqttTransport(
                 endpoint=self._iot_endpoint,
