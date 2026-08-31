@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [1.3.1] - 2026-08-31
 
 ### Fixed
 - Fixed config-entry diagnostics reading from a storage location the integration stopped writing to as of v1.2.0, so `mqtt_connected` and the MQTT signing/reconnect counters always read wrong on a live install regardless of actual connection state. Diagnostics now read from the current runtime location. Thanks to @shauneb for catching this on a live install and @rellerton for the fix.
