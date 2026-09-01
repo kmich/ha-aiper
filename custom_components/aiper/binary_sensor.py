@@ -10,6 +10,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -18,7 +19,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from . import AiperConfigEntry
 from .const import DOMAIN
 from .coordinator import AiperDataUpdateCoordinator
-from .helpers import is_not_hydrocomm
+from .helpers import cloud_connection_device_info, is_not_hydrocomm
 from .profiles import Capability
 from .state import DeviceState, state_has_capability
 
@@ -100,7 +101,7 @@ async def async_setup_entry(
     """Set up Aiper binary sensors based on a config entry."""
     coordinator: AiperDataUpdateCoordinator = entry.runtime_data.coordinator
 
-    entities: list[AiperBinarySensor] = []
+    entities: list[BinarySensorEntity] = []
 
     if coordinator.data:
         for sn, device_data in coordinator.data.items():
@@ -117,6 +118,8 @@ async def async_setup_entry(
                         device_data=device_data,
                     )
                 )
+
+    entities.append(AiperCloudConnectedBinarySensor(coordinator, entry.entry_id))
 
     async_add_entities(entities)
 
@@ -170,3 +173,32 @@ class AiperBinarySensor(CoordinatorEntity[AiperDataUpdateCoordinator], BinarySen
             data = self.coordinator.data[self._sn]
             return data[self.entity_description.key].value is not None
         return False
+
+
+class AiperCloudConnectedBinarySensor(CoordinatorEntity[AiperDataUpdateCoordinator], BinarySensorEntity):
+    """Whether the integration currently holds a live AWS IoT MQTT connection.
+
+    Lives on the per-entry "Aiper Cloud" service device and reflects the shared
+    connection tracker, so an automation can react to the cloud link dropping
+    for all devices at once.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "cloud_connected"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AiperDataUpdateCoordinator, entry_id: str) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry_id}_cloud_connected"
+        self._attr_device_info = cloud_connection_device_info(entry_id)
+
+    @property
+    def is_on(self) -> bool:
+        """Return True while the MQTT connection tracker reports CONNECTED."""
+        return self.coordinator.api.connection.is_connected
+
+    @property
+    def available(self) -> bool:
+        """Connection health is always meaningful, even when a poll has failed."""
+        return True

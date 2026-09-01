@@ -97,7 +97,9 @@ async def _setup_platform(platform_module, hass: HomeAssistant, entry: AiperConf
 
 
 def _keys(entities: list[Any]) -> set[str]:
-    return {entity.entity_description.key for entity in entities}
+    # Entry-level entities (e.g. the Aiper Cloud connection sensors) have no
+    # entity_description; this file only asserts on per-device entities.
+    return {entity.entity_description.key for entity in entities if hasattr(entity, "entity_description")}
 
 
 def _select_keys(entities: list[Any]) -> set[str]:
@@ -109,7 +111,11 @@ def _unique_ids(entities: list[Any]) -> set[str]:
 
 
 def _entity_by_key(entities: list[Any], key: str) -> Any:
-    return next(entity for entity in entities if entity.entity_description.key == key)
+    return next(
+        entity
+        for entity in entities
+        if hasattr(entity, "entity_description") and entity.entity_description.key == key
+    )
 
 
 @pytest.mark.asyncio
@@ -265,7 +271,10 @@ async def test_scuba_entity_publication_uses_scuba_capabilities(hass: HomeAssist
     assert _entity_by_key(sensor_entities, "last_cleaning_mode").native_value == "Floor"
     assert _entity_by_key(sensor_entities, "last_cleaning_duration").native_value == 42.0
     diagnostic_entities = [
-        entity for entity in sensor_entities if entity.entity_description.entity_category == EntityCategory.DIAGNOSTIC
+        entity
+        for entity in sensor_entities
+        if hasattr(entity, "entity_description")
+        and entity.entity_description.entity_category == EntityCategory.DIAGNOSTIC
     ]
     assert diagnostic_entities
     assert all(

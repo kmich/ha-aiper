@@ -15,9 +15,10 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import AiperConfigEntry
+from .connection import ConnectionState
 from .const import DOMAIN
 from .coordinator import AiperDataUpdateCoordinator
-from .helpers import is_not_hydrocomm
+from .helpers import cloud_connection_device_info, is_not_hydrocomm
 from .profiles import Capability
 from .state import DeviceState, state_has_capability
 
@@ -374,7 +375,7 @@ async def async_setup_entry(
     """Set up Aiper sensors based on a config entry."""
     coordinator: AiperDataUpdateCoordinator = entry.runtime_data.coordinator
 
-    entities: list[AiperSensor] = []
+    entities: list[SensorEntity] = []
 
     if coordinator.data:
         for sn, device_data in coordinator.data.items():
@@ -391,6 +392,13 @@ async def async_setup_entry(
                         device_data=device_data,
                     )
                 )
+
+    entities.extend(
+        (
+            AiperConnectionStateSensor(coordinator, entry.entry_id),
+            AiperLastCloudUpdateSensor(coordinator, entry.entry_id),
+        )
+    )
 
     async_add_entities(entities)
 
@@ -460,3 +468,59 @@ class AiperSensor(CoordinatorEntity[AiperDataUpdateCoordinator], SensorEntity):
             data = self.coordinator.data[self._sn]
             return data[self.entity_description.key].value is not None
         return False
+
+
+class _AiperCloudSensorBase(CoordinatorEntity[AiperDataUpdateCoordinator], SensorEntity):
+    """Base for sensors on the per-entry 'Aiper Cloud' service device."""
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: AiperDataUpdateCoordinator, entry_id: str, key: str) -> None:
+        super().__init__(coordinator)
+        self._attr_translation_key = key
+        self._attr_unique_id = f"{entry_id}_{key}"
+        self._attr_device_info = cloud_connection_device_info(entry_id)
+
+    @property
+    def available(self) -> bool:
+        """Connection health stays meaningful even when a poll has failed."""
+        return True
+
+
+class AiperConnectionStateSensor(_AiperCloudSensorBase):
+    """Current coarse state of the AWS IoT MQTT connection."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = [str(state) for state in ConnectionState]
+
+    def __init__(self, coordinator: AiperDataUpdateCoordinator, entry_id: str) -> None:
+        super().__init__(coordinator, entry_id, "connection_state")
+
+    @property
+    def native_value(self) -> str:
+        return str(self.coordinator.api.connection.state)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        conn = self.coordinator.api.connection
+        return {
+            "reconnect_count": conn.reconnect_count,
+            "connect_attempts": conn.connect_attempts,
+            "credential_refresh_count": conn.credential_refresh_count,
+            "credential_reject_count": conn.credential_reject_count,
+            "last_error": conn.last_error,
+        }
+
+
+class AiperLastCloudUpdateSensor(_AiperCloudSensorBase):
+    """Timestamp of the last successful coordinator poll."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, coordinator: AiperDataUpdateCoordinator, entry_id: str) -> None:
+        super().__init__(coordinator, entry_id, "last_cloud_update")
+
+    @property
+    def native_value(self) -> Any:
+        return self.coordinator.last_successful_update

@@ -105,6 +105,10 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
 
         self._mqtt_maintenance_task: asyncio.Task[None] | None = None
 
+        # Wall-clock time of the last successful poll, surfaced by the
+        # cloud-connection "last update" sensor for offline automations.
+        self.last_successful_update: datetime | None = None
+
     def _record_s1_battery_sample(self, sn: str, value: Any, observed_at: datetime) -> None:
         """Retain a small, non-sensitive battery trend for S1 fallback logic."""
         battery = _coerce_int(value)
@@ -583,6 +587,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     result[sn] = normalized
 
             _LOGGER.debug("Coordinator updated devices=%s", list(result.keys()))
+            self.last_successful_update = dt_util.utcnow()
             return result
 
         except Exception as err:

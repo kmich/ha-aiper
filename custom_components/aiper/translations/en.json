@@ -78,6 +78,21 @@
       },
       "charge_type": {
         "name": "Charge Type"
+      },
+      "connection_state": {
+        "name": "Connection State",
+        "state": {
+          "initializing": "Initializing",
+          "connecting": "Connecting",
+          "connected": "Connected",
+          "disconnected": "Disconnected",
+          "reconnecting": "Reconnecting",
+          "credentials_stale": "Credentials stale",
+          "fatal": "Needs attention"
+        }
+      },
+      "last_cloud_update": {
+        "name": "Last Cloud Update"
       }
     },
     "binary_sensor": {
@@ -104,6 +119,9 @@
       },
       "linked": {
         "name": "Device Linked"
+      },
+      "cloud_connected": {
+        "name": "Cloud Connected"
       }
     },
     "button": {

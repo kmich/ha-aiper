@@ -4,8 +4,26 @@ from __future__ import annotations
 
 from typing import Any
 
+from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+
+from .const import DOMAIN
 from .coordinator import AiperDataUpdateCoordinator
 from .state import Capability, DeviceState, state_has_capability
+
+
+def cloud_connection_device_info(entry_id: str) -> DeviceInfo:
+    """DeviceInfo for the per-config-entry Aiper cloud-connection service device.
+
+    The REST/MQTT link is shared by every device on the account, so its health
+    entities live on one service device rather than being duplicated per robot.
+    """
+    return DeviceInfo(
+        identifiers={(DOMAIN, f"cloud_{entry_id}")},
+        name="Aiper Cloud",
+        manufacturer="Aiper",
+        model="Cloud Connection",
+        entry_type=DeviceEntryType.SERVICE,
+    )
 
 
 def device_online(coordinator: AiperDataUpdateCoordinator, sn: str) -> bool | None:
