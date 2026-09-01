@@ -1,5 +1,37 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- New per-account **Aiper Cloud** service device exposing connection health as
+  entities: `binary_sensor` "Cloud Connected" (connectivity), `sensor`
+  "Connection State" (enum, with reconnect/reject counters as attributes), and
+  `sensor` "Last Cloud Update" (timestamp of the last successful poll). These
+  make "cleaner went offline" automations possible and self-document bug
+  reports.
+- Explicit MQTT connection-status tracker (`connection.py`): a single
+  authoritative `ConnectionState` (INITIALIZING / CONNECTING / CONNECTED /
+  DISCONNECTED / RECONNECTING / CREDENTIALS_STALE / FATAL) that the API client
+  reports transitions into. Diagnostics now read this one object instead of
+  scraping scattered private attributes (the class of bug fixed in v1.3.1).
+- Repairs: an unrecognized device model now raises a Home Assistant repair
+  issue linking the model-onboarding guide, cleared automatically once the
+  model is recognized. A rejected login now triggers the reauth flow instead
+  of looping setup retries.
+- Model onboarding pipeline: `python tools/aiper_probe.py bundle` emits one
+  redacted, paste-ready payload bundle, and `tools/fixture_from_probe.py` turns
+  it into a test fixture plus a profile stub. Seeded `tests/fixtures/models/`
+  for the supported models with a parametrized regression test.
+- Cassette-based REST/credential replay test harness (`tests/replay.py`,
+  `tests/cassettes/`) covering regional API variance, including the
+  `getOpenIdToken`-without-`tokenDuration` and Cognito-4xx-recovery paths.
+
+### Changed
+- Internal refactor (no behavior change): payload parsers and metadata-merge
+  helpers moved from `coordinator.py` (1762 -> ~1190 lines) into
+  `coordinator_parsing.py`; pure value coercers moved from `state.py` into
+  `state_common.py`.
+
 ## [1.3.1] - 2026-08-31
 
 ### Fixed
