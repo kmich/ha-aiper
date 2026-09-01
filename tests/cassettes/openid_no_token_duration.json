@@ -1,0 +1,120 @@
+[
+  {
+    "request": {"method": "POST", "path_contains": "/login"},
+    "response": {
+      "status": 200,
+      "json": {
+        "code": "0",
+        "successful": true,
+        "msg": "success",
+        "data": {
+          "token": "eu-nodur-session-token-0001",
+          "serialNumber": "1000000000000009",
+          "tokenExpires": 1893456000000,
+          "domain": ["https://apieurope.aiper.com"]
+        }
+      }
+    }
+  },
+  {
+    "request": {"method": "POST", "path_contains": "/users/getOpenIdToken"},
+    "response": {
+      "status": 200,
+      "json": {
+        "code": "0",
+        "successful": true,
+        "data": {
+          "developerProviderName": "login.aiper.com",
+          "identityId": "eu-central-1:aaaaaaaa-0001-0001-0001-000000000001",
+          "identityPoolId": "eu-central-1:99999999-9999-9999-9999-999999999999",
+          "iotEndpoint": "nodur01.iot.eu-central-1.amazonaws.com",
+          "region": "eu-central-1",
+          "token": "openid-token-eu-nodur-1"
+        }
+      }
+    }
+  },
+  {
+    "request": {"method": "POST", "path_contains": "/equipment/getEquipment"},
+    "response": {
+      "status": 200,
+      "json": {
+        "code": "0",
+        "successful": true,
+        "data": [
+          {
+            "sn": "1000000000000009",
+            "name": "Region Without TokenDuration",
+            "model": "Scuba_S1_2025",
+            "productId": "S1",
+            "equipmentId": "E1000009",
+            "zoneId": "Europe/Athens",
+            "online": 1
+          }
+        ]
+      }
+    }
+  },
+  {
+    "request": {"method": "POST", "path_contains": "/users/getOpenIdToken"},
+    "response": {
+      "status": 200,
+      "json": {
+        "code": "0",
+        "successful": true,
+        "data": {
+          "developerProviderName": "login.aiper.com",
+          "identityId": "eu-central-1:aaaaaaaa-0001-0001-0001-000000000001",
+          "identityPoolId": "eu-central-1:99999999-9999-9999-9999-999999999999",
+          "iotEndpoint": "nodur01.iot.eu-central-1.amazonaws.com",
+          "region": "eu-central-1",
+          "token": "openid-token-eu-nodur-2"
+        }
+      }
+    }
+  },
+  {
+    "request": {"method": "POST", "path_contains": "cognito-identity."},
+    "response": {
+      "status": 400,
+      "message": "Token expired or invalid (region omits tokenDuration, client had no expiry hint)",
+      "json": {
+        "__type": "NotAuthorizedException",
+        "message": "Token expired or invalid"
+      }
+    }
+  },
+  {
+    "request": {"method": "POST", "path_contains": "/users/getOpenIdToken"},
+    "response": {
+      "status": 200,
+      "json": {
+        "code": "0",
+        "successful": true,
+        "data": {
+          "developerProviderName": "login.aiper.com",
+          "identityId": "eu-central-1:aaaaaaaa-0002-0002-0002-000000000002",
+          "identityPoolId": "eu-central-1:99999999-9999-9999-9999-999999999999",
+          "iotEndpoint": "nodur01.iot.eu-central-1.amazonaws.com",
+          "region": "eu-central-1",
+          "token": "openid-token-eu-nodur-refreshed"
+        }
+      }
+    }
+  },
+  {
+    "request": {"method": "POST", "path_contains": "cognito-identity."},
+    "response": {
+      "status": 200,
+      "json": {
+        "IdentityId": "eu-central-1:aaaaaaaa-0002-0002-0002-000000000002",
+        "Credentials": {
+          "AccessKeyId": "ASIAEUNODURRECOVERED1",
+          "SecretKey": "eu-nodur-secret-key-3333333333333333333",
+          "SessionToken": "eu-nodur-session-token-FwoGZXIvYXdzEXAMPLE",
+          "Expiration": 1700003600
+        }
+      }
+    }
+  }
+]

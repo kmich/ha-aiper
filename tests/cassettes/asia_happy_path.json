@@ -1,0 +1,93 @@
+[
+  {
+    "request": {"method": "POST", "path_contains": "/login"},
+    "response": {
+      "status": 200,
+      "json": {
+        "code": "0",
+        "successful": true,
+        "msg": "success",
+        "data": {
+          "token": "asia-session-token-0001",
+          "serialNumber": "3000000000000003",
+          "tokenExpires": 1893456000000,
+          "domain": ["https://apiasia.aiper.com"]
+        }
+      }
+    }
+  },
+  {
+    "request": {"method": "POST", "path_contains": "/users/getOpenIdToken"},
+    "response": {
+      "status": 200,
+      "json": {
+        "code": "0",
+        "successful": true,
+        "data": {
+          "developerProviderName": "login.aiper.com",
+          "identityId": "ap-southeast-1:33333333-3333-3333-3333-333333333333",
+          "identityPoolId": "ap-southeast-1:77777777-7777-7777-7777-777777777777",
+          "iotEndpoint": "c3d4e5f6g7h8i9.iot.ap-southeast-1.amazonaws.com",
+          "region": "ap-southeast-1",
+          "token": "openid-token-asia-1",
+          "tokenDuration": 3600
+        }
+      }
+    }
+  },
+  {
+    "request": {"method": "POST", "path_contains": "/equipment/getEquipment"},
+    "response": {
+      "status": 200,
+      "json": {
+        "code": "0",
+        "successful": true,
+        "data": [
+          {
+            "sn": "3000000000000003",
+            "name": "Villa Pool",
+            "model": "Surfer_S2",
+            "productId": "S2",
+            "equipmentId": "E3000003",
+            "zoneId": "Asia/Singapore",
+            "online": 1
+          }
+        ]
+      }
+    }
+  },
+  {
+    "request": {"method": "POST", "path_contains": "/users/getOpenIdToken"},
+    "response": {
+      "status": 200,
+      "json": {
+        "code": "0",
+        "successful": true,
+        "data": {
+          "developerProviderName": "login.aiper.com",
+          "identityId": "ap-southeast-1:33333333-3333-3333-3333-333333333333",
+          "identityPoolId": "ap-southeast-1:77777777-7777-7777-7777-777777777777",
+          "iotEndpoint": "c3d4e5f6g7h8i9.iot.ap-southeast-1.amazonaws.com",
+          "region": "ap-southeast-1",
+          "token": "openid-token-asia-2",
+          "tokenDuration": 3600
+        }
+      }
+    }
+  },
+  {
+    "request": {"method": "POST", "path_contains": "cognito-identity."},
+    "response": {
+      "status": 200,
+      "json": {
+        "IdentityId": "ap-southeast-1:33333333-3333-3333-3333-333333333333",
+        "Credentials": {
+          "AccessKeyId": "ASIAASIAHAPPYPATH003",
+          "SecretKey": "asia-secret-key-2222222222222222222222",
+          "SessionToken": "asia-session-token-FwoGZXIvYXdzEXAMPLE",
+          "Expiration": 1700003600
+        }
+      }
+    }
+  }
+]

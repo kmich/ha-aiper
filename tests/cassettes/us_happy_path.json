@@ -1,0 +1,93 @@
+[
+  {
+    "request": {"method": "POST", "path_contains": "/login"},
+    "response": {
+      "status": 200,
+      "json": {
+        "code": "0",
+        "successful": true,
+        "msg": "success",
+        "data": {
+          "token": "us-session-token-0001",
+          "serialNumber": "2000000000000002",
+          "tokenExpires": 1893456000000,
+          "domain": ["https://apiamerica.aiper.com"]
+        }
+      }
+    }
+  },
+  {
+    "request": {"method": "POST", "path_contains": "/users/getOpenIdToken"},
+    "response": {
+      "status": 200,
+      "json": {
+        "code": "0",
+        "successful": true,
+        "data": {
+          "developerProviderName": "login.aiper.com",
+          "identityId": "us-east-1:22222222-2222-2222-2222-222222222222",
+          "identityPoolId": "us-east-1:88888888-8888-8888-8888-888888888888",
+          "iotEndpoint": "b2c3d4e5f6g7h8.iot.us-east-1.amazonaws.com",
+          "region": "us-east-1",
+          "token": "openid-token-us-1",
+          "tokenDuration": 3600
+        }
+      }
+    }
+  },
+  {
+    "request": {"method": "POST", "path_contains": "/equipment/getEquipment"},
+    "response": {
+      "status": 200,
+      "json": {
+        "code": "0",
+        "successful": true,
+        "data": [
+          {
+            "sn": "2000000000000002",
+            "name": "Backyard Cleaner",
+            "model": "Scuba_X1",
+            "productId": "X1",
+            "equipmentId": "E2000002",
+            "zoneId": "America/Los_Angeles",
+            "online": 1
+          }
+        ]
+      }
+    }
+  },
+  {
+    "request": {"method": "POST", "path_contains": "/users/getOpenIdToken"},
+    "response": {
+      "status": 200,
+      "json": {
+        "code": "0",
+        "successful": true,
+        "data": {
+          "developerProviderName": "login.aiper.com",
+          "identityId": "us-east-1:22222222-2222-2222-2222-222222222222",
+          "identityPoolId": "us-east-1:88888888-8888-8888-8888-888888888888",
+          "iotEndpoint": "b2c3d4e5f6g7h8.iot.us-east-1.amazonaws.com",
+          "region": "us-east-1",
+          "token": "openid-token-us-2",
+          "tokenDuration": 3600
+        }
+      }
+    }
+  },
+  {
+    "request": {"method": "POST", "path_contains": "cognito-identity."},
+    "response": {
+      "status": 200,
+      "json": {
+        "IdentityId": "us-east-1:22222222-2222-2222-2222-222222222222",
+        "Credentials": {
+          "AccessKeyId": "ASIAUSHAPPYPATH00002",
+          "SecretKey": "us-secret-key-111111111111111111111111",
+          "SessionToken": "us-session-token-FwoGZXIvYXdzEXAMPLE",
+          "Expiration": 1700003600
+        }
+      }
+    }
+  }
+]

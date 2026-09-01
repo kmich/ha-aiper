@@ -7,6 +7,8 @@ from collections.abc import Generator
 
 import pytest
 
+from tests.replay import replay_api  # noqa: F401  -- re-exported so tests can request it as a fixture
+
 if sys.platform == "win32":
     import pytest_socket
 
