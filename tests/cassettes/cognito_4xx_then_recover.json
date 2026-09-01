@@ -1,0 +1,102 @@
+[
+  {
+    "request": {"method": "POST", "path_contains": "/login"},
+    "response": {
+      "status": 200,
+      "json": {
+        "code": "0",
+        "successful": true,
+        "msg": "success",
+        "data": {
+          "token": "eu-4xx-session-token-0001",
+          "serialNumber": "1000000000000042",
+          "tokenExpires": 1893456000000,
+          "domain": ["https://apieurope.aiper.com"]
+        }
+      }
+    }
+  },
+  {
+    "request": {"method": "POST", "path_contains": "/users/getOpenIdToken"},
+    "response": {
+      "status": 200,
+      "json": {
+        "code": "0",
+        "successful": true,
+        "data": {
+          "developerProviderName": "login.aiper.com",
+          "identityId": "eu-central-1:bbbbbbbb-0001-0001-0001-000000000001",
+          "identityPoolId": "eu-central-1:99999999-9999-9999-9999-999999999999",
+          "iotEndpoint": "recover01.iot.eu-central-1.amazonaws.com",
+          "region": "eu-central-1",
+          "token": "openid-token-eu-4xx-1",
+          "tokenDuration": 3600
+        }
+      }
+    }
+  },
+  {
+    "request": {"method": "POST", "path_contains": "/users/getOpenIdToken"},
+    "response": {
+      "status": 200,
+      "json": {
+        "code": "0",
+        "successful": true,
+        "data": {
+          "developerProviderName": "login.aiper.com",
+          "identityId": "eu-central-1:bbbbbbbb-0001-0001-0001-000000000001",
+          "identityPoolId": "eu-central-1:99999999-9999-9999-9999-999999999999",
+          "iotEndpoint": "recover01.iot.eu-central-1.amazonaws.com",
+          "region": "eu-central-1",
+          "token": "openid-token-eu-4xx-2",
+          "tokenDuration": 3600
+        }
+      }
+    }
+  },
+  {
+    "request": {"method": "POST", "path_contains": "cognito-identity."},
+    "response": {
+      "status": 403,
+      "message": "Cognito rejected the cached OpenID token",
+      "json": {
+        "__type": "NotAuthorizedException",
+        "message": "Invalid login token."
+      }
+    }
+  },
+  {
+    "request": {"method": "POST", "path_contains": "/users/getOpenIdToken"},
+    "response": {
+      "status": 200,
+      "json": {
+        "code": "0",
+        "successful": true,
+        "data": {
+          "developerProviderName": "login.aiper.com",
+          "identityId": "eu-central-1:bbbbbbbb-0002-0002-0002-000000000002",
+          "identityPoolId": "eu-central-1:99999999-9999-9999-9999-999999999999",
+          "iotEndpoint": "recover01.iot.eu-central-1.amazonaws.com",
+          "region": "eu-central-1",
+          "token": "openid-token-eu-4xx-refreshed",
+          "tokenDuration": 3600
+        }
+      }
+    }
+  },
+  {
+    "request": {"method": "POST", "path_contains": "cognito-identity."},
+    "response": {
+      "status": 200,
+      "json": {
+        "IdentityId": "eu-central-1:bbbbbbbb-0002-0002-0002-000000000002",
+        "Credentials": {
+          "AccessKeyId": "ASIAEU4XXRECOVERED01",
+          "SecretKey": "eu-4xx-secret-key-44444444444444444444",
+          "SessionToken": "eu-4xx-session-token-FwoGZXIvYXdzEXAMPLE",
+          "Expiration": 1700003600
+        }
+      }
+    }
+  }
+]
