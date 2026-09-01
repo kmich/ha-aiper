@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from argparse import Namespace
 from typing import Any, cast
 
@@ -150,3 +151,80 @@ def test_clean_path_at_commands_match_legacy_control_variants() -> None:
         "AT+CLEANPATH=0",
         "AT+SETPATH=0",
     ]
+
+
+def test_parser_exposes_bundle_subcommand() -> None:
+    """The onboarding bundle emitter is wired as its own subcommand."""
+    args = aiper_probe.build_parser().parse_args(["bundle", "--sn", "SN123", "--no-write"])
+
+    assert args.func is aiper_probe.cmd_bundle
+    assert args.sn == "SN123"
+    assert args.skip_write is True
+    assert args.observe_seconds == 8.0
+
+
+def test_integration_version_reads_manifest() -> None:
+    """The bundle stamps the integration version straight from manifest.json."""
+    version = aiper_probe.integration_version()
+
+    assert version != "unknown"
+    assert version[0].isdigit()
+
+
+def test_extract_machine_report_and_shadow_pick_latest() -> None:
+    """Report/shadow extraction returns the most recent matching payload."""
+    events = [
+        {"payload": {"_topic": "x/shadow/get/accepted", "Machine": {"status": 1}}},
+        {"payload": {"type": "Machine", "data": {"report": "+INFO: 1,1,80"}}},
+        {"payload": {"NetStat": {"online": 1}}},
+        {"payload": {"type": "Machine", "data": {"report": "+INFO: 2,1,79"}}},
+    ]
+
+    assert aiper_probe.extract_machine_report(events) == "+INFO: 2,1,79"
+    assert aiper_probe.extract_shadow_snapshot(events) == {"type": "Machine", "data": {"report": "+INFO: 2,1,79"}}
+    assert aiper_probe.extract_shadow_snapshot(events[:3]) == {"NetStat": {"online": 1}}
+
+
+@pytest.mark.asyncio
+async def test_collect_bundle_uses_mocked_api_without_network() -> None:
+    """collect_bundle drives AiperApi methods and never touches the network."""
+
+    class FakeApi:
+        def __init__(self) -> None:
+            self.callback: Any = None
+
+        async def connect_mqtt(self) -> bool:
+            return True
+
+        async def subscribe_device(self, sn: str, callback: Any) -> bool:
+            self.callback = callback
+            return True
+
+        async def get_device_info(self, sn: str) -> dict[str, Any]:
+            return {"sn": sn, "model": "Scuba_V3", "name": "Scuba V3", "token": "leak-token"}
+
+        async def get_device_status(self, sn: str) -> dict[str, Any]:
+            return {"online": 1}
+
+        async def get_consumables(self, sn: str) -> dict[str, Any]:
+            return {"data": {"list": []}}
+
+        async def query_cleaning_mode_setting(self, sn: str) -> int:
+            return 1
+
+        async def query_clean_path_setting(self, sn: str) -> int:
+            return 0
+
+        async def request_shadow(self, sn: str) -> bool:
+            self.callback(sn, {"_topic": "x/shadow/get/accepted", "Machine": {"status": 1, "report": "+INFO: 1,1,80"}})
+            return True
+
+    bundle = await aiper_probe.collect_bundle(cast(Any, FakeApi()), "SN123", observe_seconds=0)
+
+    assert bundle["bundle_schema_version"] == aiper_probe.BUNDLE_SCHEMA_VERSION
+    assert bundle["sn"] == "SN123"
+    assert bundle["rest"]["get_device_info"]["ok"] is True
+    assert bundle["rest"]["get_device_info"]["data"]["token"] == "***"
+    assert bundle["mqtt"]["machine_report"] == "+INFO: 1,1,80"
+    assert bundle["mqtt_capture"]["subscribed"] is True
+    assert "leak-token" not in json.dumps(bundle)

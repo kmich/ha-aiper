@@ -1,0 +1,13 @@
+{
+  "_bundle_provenance": {
+    "generated_by": "tests/test_profiles.py payload shapes (reconstructed seed)",
+    "integration_version": "1.3.1",
+    "notes": "HydroComm is a water-quality monitor (deviceType 4), not a pool cleaner."
+  },
+  "deviceModel": "HydroComm",
+  "deviceType": "4",
+  "fw_main": "V1.2.3",
+  "model": "HydroComm",
+  "name": "HydroComm",
+  "sn": "W2XXXXXXXXXXX"
+}
