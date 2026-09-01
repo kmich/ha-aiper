@@ -29,6 +29,7 @@ from .coordinator_parsing import (
     _parse_consumables,
 )
 from .profiles import SCUBA_S1_2025_MODEL, Capability, derive_device_profile, has_capability, model_key
+from .repairs import async_update_unknown_model_issues
 from .state import (
     DevicesState,
     DeviceState,
@@ -588,6 +589,8 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
 
             _LOGGER.debug("Coordinator updated devices=%s", list(result.keys()))
             self.last_successful_update = dt_util.utcnow()
+            with suppress(Exception):
+                async_update_unknown_model_issues(self.hass, self._devices)
             return result
 
         except Exception as err:

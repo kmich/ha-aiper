@@ -135,5 +135,11 @@
         "name": "Clear Command State"
       }
     }
+  },
+  "issues": {
+    "unknown_model": {
+      "title": "Unrecognized Aiper model",
+      "description": "Home Assistant could not identify the Aiper device \"{model}\" (serial `{serial}`), so it is running on a minimal generic profile and some entities may be missing.\n\nYou can help add full support by following the model onboarding guide linked below and opening a GitHub issue with the generated bundle."
+    }
   }
 }

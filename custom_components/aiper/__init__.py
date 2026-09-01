@@ -11,13 +11,13 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import AWS_CREDENTIALS_TTL_DEBUG_SECONDS, AiperApi
+from .api import AWS_CREDENTIALS_TTL_DEBUG_SECONDS, AiperApi, AiperAuthenticationError
 from .const import (
     CONF_METADATA_REFRESH_HOURS,
     CONF_MQTT_DEBUG,
@@ -331,6 +331,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> boo
         _LOGGER.debug("Attempting login to Aiper API...")
         await api.login()
         _LOGGER.info("Login successful")
+    except AiperAuthenticationError as err:
+        # Bad or stale credentials will never succeed on retry -- surface a
+        # reauth prompt (Home Assistant's built-in "repair") instead of
+        # looping ConfigEntryNotReady forever.
+        _LOGGER.warning("Aiper rejected the stored credentials: %s", err)
+        raise ConfigEntryAuthFailed("Aiper rejected the stored credentials") from err
     except Exception as err:
         _LOGGER.error("Failed to login to Aiper: %s", err)
         raise ConfigEntryNotReady from err
