@@ -45,6 +45,10 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
         },
     }
 
+    connection = getattr(api, "connection", None)
+    if connection is not None and hasattr(connection, "as_diagnostics"):
+        diag["api"]["connection"] = connection.as_diagnostics()
+
     if api is not None:
         # Best-effort: include non-sensitive runtime details.
         mqtt_client = getattr(api, "_mqtt_client", None)

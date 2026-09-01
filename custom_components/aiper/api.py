@@ -23,6 +23,7 @@ try:
 except Exception:  # pragma: no cover
     ZoneInfo = None  # type: ignore
 
+from .connection import ConnectionState, ConnectionStatus
 from .const import (
     X9_SERIES_PREFIXES,
     XOR_KEY,
@@ -122,6 +123,9 @@ class AiperApi:
         self._mqtt_client: Any = None
         self._mqtt_connected = False
         self._mqtt_first_disconnected_at: datetime | None = None
+        # Single authoritative record of MQTT/credential connection health,
+        # read by diagnostics and the connection-status entities.
+        self.connection = ConnectionStatus()
         self._mqtt_credentials_snapshot: AwsIotCredentials | None = None
         self._mqtt_credentials_refreshing = False
         self._mqtt_last_rebuild_at: float | None = None
@@ -640,6 +644,7 @@ class AiperApi:
             # A Cognito 4xx is authoritative evidence: refresh once and retry
             # the exchange with the new token/identity values. The retry is
             # deliberately bounded so invalid accounts cannot create a loop.
+            self.connection.mark_credentials_stale(f"Cognito {err.status} on credentials exchange")
             _LOGGER.info("Cognito rejected the cached OpenID token; refreshing it once")
             prior_identity, prior_token = self._identity_id, self._openid_token
             await self.get_openid_token()
@@ -1107,6 +1112,7 @@ class AiperApi:
             session_token=creds.get("SessionToken", ""),
         )
         self._mqtt_credentials_snapshot = snapshot
+        self.connection.mark_credentials_refreshed()
         return snapshot
 
     def _mqtt_credentials_due_for_refresh(self) -> bool:
@@ -1175,13 +1181,16 @@ class AiperApi:
         """Connect to AWS IoT MQTT broker."""
         if not self._identity_id or not self._iot_endpoint:
             _LOGGER.error("No IoT identity/endpoint available")
+            self.connection.mark_disconnected("no IoT identity/endpoint available")
             return False
 
+        self.connection.mark_connecting()
         try:
             self._async_loop = asyncio.get_running_loop()
             initial_credentials = await self.async_refresh_mqtt_credentials()
             if initial_credentials is None:
                 _LOGGER.error("Unable to obtain AWS credentials for MQTT")
+                self.connection.mark_disconnected("unable to obtain AWS credentials for MQTT")
                 return False
 
             client_id = self._identity_id
@@ -1201,15 +1210,18 @@ class AiperApi:
             if await self._mqtt_client.async_connect():
                 self._mqtt_connected = True
                 self._mqtt_first_disconnected_at = None
+                self.connection.mark_connected()
                 _LOGGER.info("Connected to AWS IoT MQTT using AWS IoT Device SDK v2")
                 return True
 
             self._mqtt_connected = False
+            self.connection.mark_disconnected("MQTT transport did not establish a session")
             return False
 
         except Exception as err:
             _LOGGER.error("MQTT connection failed: %s", err)
             self._mqtt_connected = False
+            self.connection.mark_disconnected(err)
             return False
 
     async def reconnect_mqtt(self) -> bool:
@@ -1222,6 +1234,7 @@ class AiperApi:
         """
         _LOGGER.warning("Rebuilding AWS IoT MQTT connection after prolonged disconnect")
         self._mqtt_last_rebuild_at = time.time()
+        self.connection.mark_reconnecting()
 
         with suppress(Exception):
             await self.disconnect_mqtt()
@@ -1248,8 +1261,16 @@ class AiperApi:
         connected = bool(self._mqtt_connected and self._mqtt_client and self._mqtt_client.is_connected())
         if connected:
             self._mqtt_first_disconnected_at = None
-        elif self._mqtt_first_disconnected_at is None:
-            self._mqtt_first_disconnected_at = datetime.now(UTC)
+            if not self.connection.is_connected and self.connection.state is not ConnectionState.RECONNECTING:
+                self.connection.mark_connected()
+        else:
+            if self._mqtt_first_disconnected_at is None:
+                self._mqtt_first_disconnected_at = datetime.now(UTC)
+            # Sync the tracker when a drop is first observed here (e.g. via a
+            # CRT-thread interruption we don't otherwise see), but don't stomp
+            # a more specific state like RECONNECTING / CREDENTIALS_STALE.
+            if self.connection.state in (ConnectionState.CONNECTED, ConnectionState.CONNECTING):
+                self.connection.mark_disconnected()
         return connected
 
     def mqtt_disconnected_seconds(self) -> float | None:
