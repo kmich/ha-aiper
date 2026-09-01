@@ -64,7 +64,15 @@ The model string used for classification is selected from:
 
 ## How To Promote An Unknown Device
 
-Use probe output to identify the family and capabilities:
+Fastest path — capture one redacted, paste-ready bundle and turn it into a
+fixture plus a profile stub (see the [discovery guide](../discovery.md)):
+
+```bash
+uv run tools/aiper_probe.py bundle --sn <sn>
+uv run tools/fixture_from_probe.py probe-output/<stamp>-bundle/bundle.json
+```
+
+For deeper investigation, use the individual probe commands:
 
 ```bash
 uv run tools/aiper_probe.py list

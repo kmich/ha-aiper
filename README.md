@@ -51,7 +51,9 @@ The integration uses "capability profiles" to automatically expose only the feat
 
 - **Pool Cleaners:** Live state, battery, cleaning mode controls, clean path preferences, Surfer S2 start/stop, and filter/brush consumable tracking.
 - **Water Quality Monitors:** Live pH, ORP (mV), EC (µS/cm), TDS (ppm), Free Chlorine (mg/L), overall Water Quality Score, and bitmask-decoded alarm warnings.
+- **Cloud Connection Health:** A dedicated "Aiper Cloud" device with `binary_sensor.aiper_cloud_cloud_connected`, a `Connection State` sensor, and a `Last Cloud Update` timestamp — so an automation can alert you when the integration loses its cloud/MQTT link.
 - **Device Actions:** Safe buttons to force-refresh cloud metadata or re-sync the MQTT shadow state.
+- **Guided Recovery:** Home Assistant **Repairs** entries appear when a device model is not recognized (with a link to the onboarding guide) or when your stored credentials stop working (starts re-authentication).
 
 *(Note: Diagnostic telemetry like raw voltages, currents, and lifetime cleaning hours are hidden by default to keep your dashboard clean. You can enable them manually in the entity registry.)*
 

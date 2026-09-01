@@ -5,6 +5,8 @@ Bring your Aiper pool cleaner and water quality monitor into Home Assistant. Thi
 ## Features
 - **Pool Cleaners (Scuba S1, Scuba X1, Surfer S2, Shark):** Live state, battery, cleaning mode controls, clean path preferences, Surfer S2 start/stop, and supported consumable tracking.
 - **Water Quality Monitors (HydroComm, W2 Series):** Live pH, ORP (mV), EC (µS/cm), TDS (ppm), Free Chlorine (mg/L), overall Water Quality Score, and bitmask-decoded alarm warnings.
+- **Cloud connection health:** An "Aiper Cloud" device with Cloud Connected, Connection State, and Last Cloud Update entities so automations can react when the cloud link drops.
+- **Guided recovery:** A Repairs prompt for an unrecognized device model or rejected credentials, instead of the integration failing silently.
 
 ## Configuration
 
@@ -24,17 +26,18 @@ Alternatively, follow these manual steps:
 
 ## Recent Changes
 
+### v1.4.0
+- Added an "Aiper Cloud" device exposing connection health: Cloud Connected, Connection State, and Last Cloud Update.
+- Added Repairs issues for unrecognized device models (links the model onboarding guide) and for rejected credentials (triggers re-authentication).
+- Added an internal MQTT connection-status tracker so diagnostics report one authoritative connection state, plus a redacted one-command model-onboarding bundle for reporting new hardware.
+
+### v1.3.1
+- Fixed config-entry diagnostics reading a stale storage location, so `mqtt_connected` and the signing/reconnect counters always read wrong on a live install.
+- Fixed OpenID token renewal for regions whose `getOpenIdToken` response omits `tokenDuration`; a Cognito 4xx now triggers one bounded refresh and retry.
+
+### v1.3.0
+- Added hardware-verified `Scuba_S1_2025` clean-path and cleaning-mode support (Auto, Floor, Wall, Scheduled) with a dedicated capability profile.
+- Fixed MQTT reconnection after AWS credential expiry: the credential signer now reads a live snapshot and a watchdog forces a full reconnect (including resubscribing) after a grace period.
+
 ### v1.2.4
 - Fixed Scuba S3 reporting charging as "Returning" and full charge as "Charging", which left the charging sensor inverted. Status codes are now interpreted per model; other models are unchanged.
-
-### v1.2.3
-- Fixed HACS release notes layout bug by combining custom release notes with GitHub format.
-
-### v1.2.2
-- Fixed HACS release notes display timing issue by ensuring the GitHub Release is fully built before clients poll the new tag.
-
-### v1.2.1
-- Fixed empty release notes in HACS UI by dynamically injecting CHANGELOG.md snippets into GitHub Release tags.
-
-### v1.2.0
-- Removed "Experimental" tags from documentation. All supported models (Surfer S2, Shark, etc.) are now marked as "Verified".

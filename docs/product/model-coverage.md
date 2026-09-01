@@ -17,4 +17,4 @@
 | **HydroComm Pro / Pure** | Expected | Same as HydroComm | *None* | W2 alarm bitmasks might differ slightly | Low |
 | **HydroHub / Pro** | Expected | Same as HydroComm | *None* | Needs real-world verification | Low |
 | **W2 Series** | Expected | Same as HydroComm | *None* | Generic fallback family | Medium |
-| **Unknown Aiper** | Unsupported | Battery, Online, Status, Firmware | *None* | No model-specific features | High |
+| **Unknown Aiper** | Unsupported | Battery, Online, Status, Firmware | *None* | No model-specific features; raises a "Repairs" prompt linking the [onboarding guide](../discovery.md) | High |

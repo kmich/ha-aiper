@@ -50,7 +50,7 @@ async def test_happy_path_login_devices_openid_credentials(
     assert api._devices[sn]["sn"] == sn
 
     # Explicit second OpenID fetch: returns None by contract, keeps state populated.
-    assert await api.get_openid_token() is None
+    await api.get_openid_token()  # returns None by contract; call for its side effects
     assert api._openid_token
 
     creds = await api.get_aws_credentials()
@@ -62,7 +62,7 @@ async def test_happy_path_login_devices_openid_credentials(
 
     # The region Aiper reported must have flowed into the Cognito endpoint.
     assert api._resolve_aws_region() == aws_region
-    player = api.replay
+    player = api.replay  # type: ignore[attr-defined]  # attached by the replay harness
     assert player.count_calls(f"cognito-identity.{aws_region}.amazonaws.com") == 1
     assert player.remaining == 0
 
@@ -85,7 +85,7 @@ async def test_openid_without_token_duration_does_not_crash_and_refreshes_on_rej
     devices = await api.get_devices()
     assert [d["sn"] for d in devices] == ["1000000000000009"]
 
-    assert await api.get_openid_token() is None
+    await api.get_openid_token()  # returns None by contract; call for its side effects
     assert api._openid_token == "openid-token-eu-nodur-2"
     assert api._openid_token_exp is None
 
@@ -99,7 +99,7 @@ async def test_openid_without_token_duration_does_not_crash_and_refreshes_on_rej
     assert api._aws_credentials_cooldown_until == 0.0
     assert api._aws_credentials_exp is not None
 
-    player = api.replay
+    player = api.replay  # type: ignore[attr-defined]  # attached by the replay harness
     assert player.remaining == 0
     # One rejected exchange + one successful retry.
     assert player.count_calls("cognito-identity.") == 2
@@ -115,7 +115,7 @@ async def test_cognito_4xx_triggers_exactly_one_bounded_openid_refresh_and_retry
     api = replay_api("cognito_4xx_then_recover")
 
     assert await api.login() is True
-    assert await api.get_openid_token() is None
+    await api.get_openid_token()  # returns None by contract; call for its side effects
 
     identity_before = api._identity_id
     token_before = api._openid_token
@@ -137,7 +137,7 @@ async def test_cognito_4xx_triggers_exactly_one_bounded_openid_refresh_and_retry
     assert api._aws_credentials_exp is not None and api._aws_credentials_exp > time.time()
     assert api._aws_credentials_cooldown_until == 0.0
 
-    player = api.replay
+    player = api.replay  # type: ignore[attr-defined]  # attached by the replay harness
     assert player.count_calls("cognito-identity.") == 2  # 1 rejected + 1 retry
     assert player.count_calls("/users/getOpenIdToken") == 3  # login + explicit + 1 reactive
     assert player.remaining == 0

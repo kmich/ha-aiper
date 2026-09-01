@@ -4,7 +4,10 @@ This document classifies every entity exposed by `ha-aiper`. The goal is to prov
 
 | Entity | Platform | Family | Default | Category | Purpose | Automation Use |
 |---|---|---|---|---|---|---|
-| **Online** | Binary Sensor | All | **Enabled** | Diagnostic | Cloud connection state | Yes (Alert if offline) |
+| **Online** | Binary Sensor | All | **Enabled** | Diagnostic | Per-device online state reported by the cloud | Yes (Alert if offline) |
+| **Cloud Connected** | Binary Sensor | Account ("Aiper Cloud" device) | **Enabled** | Diagnostic | Whether the integration holds a live AWS IoT MQTT connection | Yes (Alert if the cloud link drops) |
+| **Connection State** | Sensor | Account ("Aiper Cloud" device) | **Enabled** | Diagnostic | Enum: initializing / connecting / connected / disconnected / reconnecting / credentials_stale / fatal, with reconnect and rejection counters as attributes | Yes |
+| **Last Cloud Update** | Sensor | Account ("Aiper Cloud" device) | **Enabled** | Diagnostic | Timestamp of the last successful cloud poll | Yes (Alert if stale) |
 | **Status** | Sensor | All | **Enabled** | None | Live cleaner/monitor state | Yes (Trigger on 'Idle') |
 | **Battery** | Sensor | All | **Enabled** | None | Battery % | Yes (Low battery alert) |
 | **Charging** | Binary Sensor | All | **Enabled** | None | Wall charging state | No |

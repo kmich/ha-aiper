@@ -173,7 +173,7 @@ def test_integration_version_reads_manifest() -> None:
 
 def test_extract_machine_report_and_shadow_pick_latest() -> None:
     """Report/shadow extraction returns the most recent matching payload."""
-    events = [
+    events: list[dict[str, Any]] = [
         {"payload": {"_topic": "x/shadow/get/accepted", "Machine": {"status": 1}}},
         {"payload": {"type": "Machine", "data": {"report": "+INFO: 1,1,80"}}},
         {"payload": {"NetStat": {"online": 1}}},

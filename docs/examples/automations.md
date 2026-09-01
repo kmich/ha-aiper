@@ -77,3 +77,26 @@ action:
       title: "Aiper Maintenance Needed"
       message: "The filter life is below 10%. Time to clean or replace it."
 ```
+
+## 5. Alert When the Cloud Connection Drops
+
+Uses the "Aiper Cloud" device added in v1.4.0. The `for:` delay avoids paging
+you for a brief reconnect.
+
+```yaml
+alias: "Pool: Aiper cloud link down"
+trigger:
+  - platform: state
+    entity_id: binary_sensor.aiper_cloud_cloud_connected
+    to: "off"
+    for:
+      minutes: 15
+action:
+  - service: notify.notify
+    data:
+      title: "Aiper cloud connection lost"
+      message: >
+        Home Assistant hasn't had an Aiper cloud connection for 15 minutes.
+        State: {{ states('sensor.aiper_cloud_connection_state') }}.
+        Last update: {{ states('sensor.aiper_cloud_last_cloud_update') }}.
+```

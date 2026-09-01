@@ -112,9 +112,7 @@ def _unique_ids(entities: list[Any]) -> set[str]:
 
 def _entity_by_key(entities: list[Any], key: str) -> Any:
     return next(
-        entity
-        for entity in entities
-        if hasattr(entity, "entity_description") and entity.entity_description.key == key
+        entity for entity in entities if hasattr(entity, "entity_description") and entity.entity_description.key == key
     )
 
 

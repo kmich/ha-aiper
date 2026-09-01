@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.4.0] - 2026-09-01
 
 ### Added
 - New per-account **Aiper Cloud** service device exposing connection health as
