@@ -1,0 +1,13 @@
+{
+  "_bundle_provenance": {
+    "generated_by": "tests/test_profiles.py payload shapes (reconstructed seed)",
+    "integration_version": "1.3.1",
+    "notes": "Shark uses the shared cleaner capability set; no cleaning-mode select without explicit payload mode IDs."
+  },
+  "deviceModel": "Shark",
+  "deviceType": "3",
+  "fw_main": "V1.0.0",
+  "model": "Shark",
+  "name": "Aiper Shark",
+  "sn": "SHXXXXXXXXXXX"
+}

@@ -1,0 +1,15 @@
+{
+  "_bundle_provenance": {
+    "generated_by": "tests/test_profiles.py payload shapes (reconstructed seed)",
+    "integration_version": "1.3.1",
+    "notes": "Scuba X1 exposes the generic Scuba mode set (Smart/Floor/Wall/Waterline/Scheduled)."
+  },
+  "deviceModel": "Scuba_X1",
+  "deviceType": "3",
+  "fw_main": "V3.0.0",
+  "model": "Scuba_X1",
+  "name": "Scuba X1",
+  "sn": "X1XXXXXXXXXXX",
+  "supported_mode_ids": [1, 2, 3, 4, 5],
+  "supported_modes_explicit": false
+}

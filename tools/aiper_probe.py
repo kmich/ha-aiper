@@ -15,7 +15,7 @@ import json
 import os
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -38,6 +38,10 @@ from custom_components.aiper.redaction import redact, redact_str  # noqa: E402
 DEFAULT_OUTPUT_DIR = Path("probe-output")
 DISCOVERY_FLOWS_DIR = REPO_ROOT / "tools" / "discovery_flows"
 DEFAULT_DISCOVERY_FLOW = "generic"
+
+MANIFEST_PATH = REPO_ROOT / "custom_components" / "aiper" / "manifest.json"
+# Bump when the `bundle` subcommand changes the shape of its emitted object.
+BUNDLE_SCHEMA_VERSION = 1
 
 
 def _utc_now() -> str:
@@ -319,6 +323,140 @@ def _payload_summary(payload: Any) -> dict[str, Any]:
     return summary
 
 
+def integration_version() -> str:
+    """Return the integration version string from the bundled manifest.json."""
+    try:
+        manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "unknown"
+    return str(manifest.get("version") or "unknown")
+
+
+def _looks_like_shadow(payload: Any) -> bool:
+    """Return True for MQTT payloads that carry device shadow / report state."""
+    if not isinstance(payload, dict):
+        return False
+    topic = str(payload.get("_topic") or "").lower()
+    if "shadow" in topic or "report" in topic:
+        return True
+    if any(key in payload for key in ("state", "Machine", "machine", "reported", "NetStat")):
+        return True
+    return payload.get("type") in ("Machine", "NetStat", "OtaStatus", "GetWorkMode")
+
+
+def extract_shadow_snapshot(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Return the most recent shadow-like MQTT payload captured in the window."""
+    snapshot: dict[str, Any] | None = None
+    for event in events:
+        payload = event.get("payload") if "payload" in event else event
+        if _looks_like_shadow(payload):
+            snapshot = payload
+    return snapshot
+
+
+def extract_machine_report(events: list[dict[str, Any]]) -> str | None:
+    """Return the most recent raw ``Machine`` report string seen in the window."""
+    report: str | None = None
+    for event in events:
+        payload = event.get("payload") if "payload" in event else event
+        if not isinstance(payload, dict):
+            continue
+        for container in (payload, payload.get("data"), payload.get("Machine"), payload.get("machine")):
+            if isinstance(container, dict) and isinstance(container.get("report"), str):
+                report = container["report"]
+    return report
+
+
+def build_bundle(
+    *,
+    sn: str,
+    device_identity: Any,
+    device_status: Any,
+    consumables: Any,
+    device_shadow: Any,
+    machine_report: Any,
+    mode_query: Any,
+    clean_path_query: Any,
+    devices: Any = None,
+    captured_at: str | None = None,
+) -> dict[str, Any]:
+    """Assemble the single redacted onboarding bundle object.
+
+    Every value is routed through :func:`redaction.redact`, so the result is
+    safe to paste into a public GitHub issue. Serial numbers are intentionally
+    preserved (see ``redaction`` module docs).
+    """
+    bundle: dict[str, Any] = {
+        "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
+        "integration_version": integration_version(),
+        "captured_at": captured_at or _utc_now(),
+        "sn": sn,
+        "devices": devices,
+        "rest": {
+            "get_device_info": device_identity,
+            "get_device_status": device_status,
+            "consumables": consumables,
+        },
+        "mqtt": {
+            "device_shadow": device_shadow,
+            "machine_report": machine_report,
+        },
+        "queries": {
+            "mode": mode_query,
+            "clean_path": clean_path_query,
+        },
+    }
+    return redact(bundle)
+
+
+async def collect_bundle(
+    api: AiperApi,
+    sn: str,
+    *,
+    observe_seconds: float = 8.0,
+    devices: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Drive a live ``AiperApi`` to produce one redacted onboarding bundle."""
+    events: list[dict[str, Any]] = []
+
+    def _recorder(*args: Any) -> None:
+        payload = args[1] if len(args) == 2 else (args[0] if args else None)
+        events.append({"ts": _utc_now(), "payload": payload})
+
+    mqtt: dict[str, Any] = {"connected": False, "subscribed": False}
+    try:
+        mqtt["connected"] = bool(await api.connect_mqtt())
+        if mqtt["connected"]:
+            mqtt["subscribed"] = bool(await api.subscribe_device(sn, _recorder))
+    except Exception as err:  # pragma: no cover - live-only failure path
+        mqtt["error"] = f"{type(err).__name__}: {err}"
+
+    device_identity = await _capture_call("get_device_info", lambda: api.get_device_info(sn))
+    device_status = await _capture_call("get_device_status", lambda: api.get_device_status(sn))
+    consumables = await _capture_call("get_consumables", lambda: api.get_consumables(sn))
+    mode_query = await _capture_call("query_cleaning_mode_setting", lambda: api.query_cleaning_mode_setting(sn))
+    clean_path_query = await _capture_call("query_clean_path_setting", lambda: api.query_clean_path_setting(sn))
+
+    if mqtt["subscribed"]:
+        with suppress(Exception):
+            await api.request_shadow(sn)
+        await asyncio.sleep(observe_seconds)
+
+    bundle = build_bundle(
+        sn=sn,
+        device_identity=device_identity,
+        device_status=device_status,
+        consumables=consumables,
+        device_shadow=extract_shadow_snapshot(events),
+        machine_report=extract_machine_report(events),
+        mode_query=mode_query,
+        clean_path_query=clean_path_query,
+        devices=devices,
+    )
+    bundle["mqtt_capture"] = redact({**mqtt, "events_captured": len(events)})
+    return bundle
+
+
 async def probe_consumables(api: AiperApi, sn: str) -> dict[str, Any]:
     """Call the consumables endpoint and capture the outcome."""
     body = {"sn": sn}
@@ -555,6 +693,25 @@ async def cmd_snapshot(args: argparse.Namespace) -> int:
         _write_summary(out_dir, "snapshot", sn, 0)
         print(out_dir)
         return 0
+
+
+async def cmd_bundle(args: argparse.Namespace) -> int:
+    async with _make_api(args) as api:
+        devices = await _get_devices(api)
+        sn = _select_sn(devices, args.sn)
+        bundle = await collect_bundle(api, sn, observe_seconds=args.observe_seconds, devices=devices)
+
+    text = json.dumps(bundle, indent=2, sort_keys=True, default=_json_default)
+    if not getattr(args, "skip_write", False) and args.output_dir is not None:
+        out_dir = _run_dir(args.output_dir, "bundle")
+        _write_manifest(out_dir, args, "bundle", sn, devices)
+        (out_dir / "bundle.json").write_text(text + "\n", encoding="utf-8")
+        _write_summary(out_dir, "bundle", sn, int(bundle.get("mqtt_capture", {}).get("events_captured", 0)))
+        print(f"# Wrote {out_dir / 'bundle.json'}", file=sys.stderr)
+
+    # The single pasteable object goes to stdout so it can be piped or copied.
+    print(text)
+    return 0
 
 
 async def cmd_consumables_probe(args: argparse.Namespace) -> int:
@@ -825,6 +982,26 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot_parser = subparsers.add_parser("snapshot", parents=[common], help="Capture read-only REST state")
     snapshot_parser.add_argument("--sn", help="Device serial number; defaults to the first discovered device")
     snapshot_parser.set_defaults(func=cmd_snapshot)
+
+    bundle_parser = subparsers.add_parser(
+        "bundle",
+        parents=[common],
+        help="Emit one redacted onboarding bundle for a single device (safe to paste into an issue)",
+    )
+    bundle_parser.add_argument("--sn", help="Device serial number; defaults to the first discovered device")
+    bundle_parser.add_argument(
+        "--observe-seconds",
+        type=float,
+        default=8.0,
+        help="How long to listen for shadow/report MQTT payloads",
+    )
+    bundle_parser.add_argument(
+        "--no-write",
+        dest="skip_write",
+        action="store_true",
+        help="Only print the bundle to stdout; do not write a run directory",
+    )
+    bundle_parser.set_defaults(func=cmd_bundle)
 
     consumables_parser = subparsers.add_parser(
         "consumables",

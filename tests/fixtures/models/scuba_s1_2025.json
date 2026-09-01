@@ -1,0 +1,13 @@
+{
+  "_bundle_provenance": {
+    "generated_by": "tests/test_profiles.py payload shapes (reconstructed seed)",
+    "integration_version": "1.3.1",
+    "notes": "Scuba S1 (2026 retail) reports model 'Scuba_S1_2025'; V2.0.1 main firmware."
+  },
+  "deviceModel": "Scuba_S1_2025",
+  "deviceType": "3",
+  "fw_main": "V2.0.1",
+  "model": "Scuba_S1_2025",
+  "name": "Scuba S1",
+  "sn": "S1XXXXXXXXXXX"
+}

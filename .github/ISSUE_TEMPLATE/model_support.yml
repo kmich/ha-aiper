@@ -5,7 +5,10 @@ body:
   - type: markdown
     attributes:
       value: |
-        To support a new model, we need the exact JSON payload your device sends to the cloud.
+        To support a new model we need the exact JSON payloads your device
+        exchanges with the Aiper cloud. The fastest path is the one-command
+        onboarding bundle emitter (see below); the Home Assistant diagnostics
+        download is an acceptable fallback.
   - type: input
     id: model
     attributes:
@@ -14,14 +17,38 @@ body:
     validations:
       required: true
   - type: textarea
+    id: bundle
+    attributes:
+      label: Onboarding Bundle (preferred)
+      description: |
+        From a checkout of this repo, with your Aiper credentials in the
+        environment, run:
+
+        ```
+        python tools/aiper_probe.py bundle --sn <YOUR_SERIAL>
+        ```
+
+        Paste the single JSON object it prints to stdout here. Every value is
+        passed through the shared redactor, so tokens, passwords, and AWS /
+        Cognito / OpenID credentials are stripped; serial numbers are kept on
+        purpose so payloads and MQTT topics can be correlated. Review it before
+        posting anyway.
+      render: json
+    validations:
+      required: false
+  - type: textarea
     id: payload
     attributes:
-      label: Device Diagnostics Payload
+      label: Device Diagnostics Payload (fallback)
       description: |
+        If you cannot run the bundle emitter:
+
         1. Go to Settings > Devices & Services > Aiper.
         2. Click on your Device.
         3. Click "Download diagnostics".
         4. Paste the contents here.
         CRITICAL: Ensure `email`, `password`, and AWS tokens are redacted (the diagnostic tool usually handles this, but please double check).
+
+        If you already pasted an onboarding bundle above, write "see bundle".
     validations:
       required: true

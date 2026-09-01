@@ -80,6 +80,12 @@ password is provided, the tool prompts for one.
 
 ## Commands
 
+Emit a model onboarding bundle (the fast path for "new model -> supported"):
+
+```bash
+uv run tools/aiper_probe.py bundle --sn T1B50900024
+```
+
 List devices:
 
 ```bash
@@ -148,6 +154,16 @@ uv run tools/aiper_probe.py contract-verify --sn T1B50900024 --allow-control
 ```
 
 ### Command Behavior
+
+`bundle` logs in, connects MQTT, and emits a **single redacted JSON object** for
+one device to stdout. It bundles REST device identity (`get_device_info`),
+device status (`get_device_status`), consumables, a device-shadow snapshot, the
+raw `Machine` report string, and the mode + clean-path query results, plus
+top-level `integration_version` and `bundle_schema_version` fields. Every value
+is routed through `custom_components/aiper/redaction.py`, so it is safe to paste
+into a public GitHub issue (serial numbers are intentionally kept). It also
+writes a `probe-output/<stamp>-bundle/` run directory unless `--no-write` is
+given. This is the payload the model-support issue template asks for.
 
 `list` logs in and prints the discovered devices as redacted JSON. Use it first
 to confirm the account, region, and serial numbers.
@@ -247,6 +263,43 @@ Supported step fields:
 Keep flows focused on repeatable observations. They should ask the user to
 perform actions in the official Aiper app; they should not encode protocol
 guesses.
+
+## Model Onboarding Pipeline
+
+Turning a new model into a supported one is a two-command loop:
+
+1. **Capture** a redacted bundle from a user's device:
+
+   ```bash
+   uv run tools/aiper_probe.py bundle --sn <SERIAL> > bundle.json
+   ```
+
+   Users can run this and paste the output straight into the
+   "Unsupported Model / Payload Request" issue.
+
+2. **Materialize** a fixture and a profile stub from that bundle:
+
+   ```bash
+   uv run python tools/fixture_from_probe.py bundle.json
+   ```
+
+   This writes `tests/fixtures/models/<model_key>.json` -- a normalized device
+   dict that `custom_components.aiper.profiles.derive_device_profile()` accepts
+   -- and prints a paste-ready `StatusSemantics(...)` + profile-stub snippet for
+   `profiles.py`. Every field it had to guess (status semantics, family when
+   `derive_device_profile()` returns `UNKNOWN`, mode map when no payload mode
+   evidence was present) is marked `# TODO: verify on hardware`.
+
+3. `tests/test_model_fixtures.py` is parametrized over every
+   `tests/fixtures/models/*.json`: it asserts the fixture loads, that
+   `model_key()` matches the filename, and that the derived capability set and
+   mode map match a snapshot recorded in the test. Add the new model's expected
+   surface there once verified.
+
+The seeded fixtures (`scuba_s1_2025`, `scuba_x1`, `surfer_s2`, `shark`,
+`hydrocomm`) were reconstructed from the payload shapes in
+`tests/test_profiles.py` / `tests/test_parsers.py` and are the reference for the
+dict shape a bundle-derived fixture should have.
 
 ## Discovery Workflow
 
