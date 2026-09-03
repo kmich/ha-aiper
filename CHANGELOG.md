@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Documentation
+- The README and HACS info page now point to the companion
+  [ha-aiper-card](https://github.com/kmich/ha-aiper-card) Lovelace cards
+  (cleaner status/controls and HydroComm water-quality gauges), installable as a
+  HACS Dashboard custom repository.
+
 ## [1.4.0] - 2026-09-01
 
 ### Added
