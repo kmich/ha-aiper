@@ -70,9 +70,25 @@ If you encounter issues, please read our guides before opening a ticket:
 
 ---
 
-## Lovelace Dashboard Examples
+## Lovelace Dashboards
 
-You can find copy-paste YAML for beautiful dashboards in our repository:
+### Custom cards (recommended)
+
+[**ha-aiper-card**](https://github.com/kmich/ha-aiper-card) is a companion set of
+Lovelace cards built for this integration:
+
+- **Aiper Cleaner Card** – status, battery, connectivity, warnings, cleaning-mode
+  and clean-path chips, start/stop, consumable wear.
+- **Aiper Water Quality Card** – water-quality score, pH / ORP / chlorine / TDS /
+  EC gauges, temperature and sample age.
+
+Install it via HACS as a **Dashboard** custom repository
+(`https://github.com/kmich/ha-aiper-card`). Point a card at your Aiper device and
+it wires up the entities itself.
+
+### Plain YAML examples
+
+If you prefer stock cards, copy-paste YAML lives in this repository:
 - `lovelace/example-dashboard.yaml` (stock Lovelace)
 - `lovelace/mushroom-example.yaml` (Mushroom cards)
 
