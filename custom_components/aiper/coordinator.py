@@ -156,9 +156,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 result[sn][field] = {
                     "source": observation.get("source"),
                     "observed_at": observed_at.isoformat() if observed_at else None,
-                    "age_seconds": max(0, round((now - observed_at).total_seconds()))
-                    if observed_at
-                    else None,
+                    "age_seconds": max(0, round((now - observed_at).total_seconds())) if observed_at else None,
                 }
         return result
 
@@ -1003,9 +1001,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     received_at=mqtt_received_at,
                     topic=topic,
                 ):
-                    machine = {
-                        key: value for key, value in machine.items() if key not in S1_REPLAY_LIFECYCLE_FIELDS
-                    }
+                    machine = {key: value for key, value in machine.items() if key not in S1_REPLAY_LIFECYCLE_FIELDS}
                 mqtt_status = _coerce_int(machine.get("status"))
                 if mqtt_status is not None:
                     reports = getattr(self, "_last_s1_mqtt_machine_report", None)

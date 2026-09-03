@@ -9,6 +9,11 @@
   HACS Dashboard custom repository.
 
 ### Fixed
+- Fixed recent MQTT lifecycle state being retained indefinitely over newer REST
+  status. MQTT now remains authoritative per field for two polling intervals;
+  after that, fresh REST can update running, status, charging, and mode. Active
+  cleaning remains visible even when the independent cloud-online flag is
+  false, and redacted diagnostics report each field's source and age.
 - Preserved a newly confirmed `Scuba_S1_2025` Cleaning start across delayed
   redundant MQTT Idle/zero snapshots. A model-gated 15-second settling window
   protects only coherent Cleaning reports with wet or positive-runtime
@@ -104,12 +109,6 @@
   now read the current config-entry runtime location, and a Cognito 4xx
   triggers one bounded OpenID refresh/retry for regions that omit an OpenID
   expiry duration.
-- Fixed recent MQTT lifecycle state being retained indefinitely over newer REST
-  status. MQTT now remains authoritative per field for two polling intervals;
-  after that, fresh REST can update running, status, charging, and mode. Active
-  cleaning remains visible even when the independent cloud-online flag is
-  false, and redacted diagnostics report each field's source and age.
-
 ## [1.2.4] - 2026-08-06
 
 ### Fixed

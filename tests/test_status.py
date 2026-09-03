@@ -117,9 +117,7 @@ def test_scuba_s1_reports_charging_on_status_2() -> None:
 
 def test_scuba_s1_active_status_is_visible_while_cloud_marks_offline() -> None:
     """Connectivity must not hide fresh evidence that the cleaner is running."""
-    state = normalize_device_state(
-        {"model": "Scuba_S1_2025", "machineStatus": 1, "online": False}
-    )
+    state = normalize_device_state({"model": "Scuba_S1_2025", "machineStatus": 1, "online": False})
 
     assert state["online"].value is False
     assert state["status"].value == "Cleaning"
