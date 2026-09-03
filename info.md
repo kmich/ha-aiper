@@ -21,6 +21,8 @@ Alternatively, follow these manual steps:
 4. Sign in with the Aiper account used by your mobile app.
 
 ---
+> **Dashboard cards:** the companion [**ha-aiper-card**](https://github.com/kmich/ha-aiper-card) adds purpose-built Lovelace cards for the cleaner and the water quality monitor. Install it in HACS as a **Dashboard** custom repository.
+>
 > For advanced troubleshooting, security practices, and Lovelace dashboard examples, please view the full documentation on [GitHub](https://github.com/kmich/ha-aiper).
 
 
