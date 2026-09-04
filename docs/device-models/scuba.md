@@ -106,10 +106,14 @@ command is accepted only after the cleaner returns `+OK`.
 After a low-battery stop, firmware V2.0.1 can leave its last MQTT report at
 Cleaning/Wet even after retrieval and power-off. Once charging begins, the REST
 device list supplies a fresh status `2` and live battery updates while no new
-machine-state MQTT report arrives. For this model only, fresh REST charging
-therefore supersedes the stale MQTT report and implies Dry, Not running, Mode
-0, and zero current cleaning runtime. This source-precedence exception is not
-applied to other models.
+machine-state MQTT report arrives. The integration tracks, per field, which
+source last set `running` / `status` / `charging` / `mode`, and lets a REST
+value take over once the MQTT evidence for that field is older than two polling
+intervals; this applies to every model. For the S1 specifically, a fresh REST
+charging status supersedes the stale MQTT report immediately (without waiting
+out that window) and also implies Dry, Not running, Mode 0, and zero current
+cleaning runtime. A recent MQTT report that still shows Cleaning keeps MQTT
+authoritative for that poll.
 
 The explicit status remains authoritative. If an S1 REST response omits status,
 the integration has a conservative fallback requiring three strictly rising
