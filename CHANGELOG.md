@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.5.0] - 2026-09-06
 
 ### Added
 - Scuba P1 Pro (`Scuba_P1_Pro`) capability profile, onboarded from a community
