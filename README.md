@@ -17,9 +17,14 @@ View live status, battery, charging state, cleaning modes, consumables, and wate
 | ✅ **Scuba X1** | ✅ **HydroComm Pro / W2 Series** |
 | ✅ **Surfer S2** | |
 | ✅ **Shark** | |
+| 🧪 **Scuba P1 Pro** | |
 
 The current 2026 retail Scuba S1 identifies itself through Aiper's cloud as
 `Scuba_S1_2025`; both names refer to the verified model listed above.
+
+🧪 **Scuba P1 Pro** support is onboarded from a community diagnostics bundle
+(no `temp` field; Roller Brush and MicroMesh Filter consumables) and has not
+been verified on hardware by the maintainer. Reports welcome.
 
 *(Don't see your model? We need your help! Check our [Diagnostics Guide](docs/support/diagnostics-and-troubleshooting.md) for how to submit a payload.)*
 

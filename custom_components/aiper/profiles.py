@@ -53,6 +53,7 @@ class Capability(StrEnum):
 SURFER_MODEL_MARKERS = (DeviceFamily.SURFER.value,)
 SHARK_MODEL_MARKERS = (DeviceFamily.SHARK.value,)
 SCUBA_S1_2025_MODEL = "scuba_s1_2025"
+SCUBA_P1_PRO_MODEL = "scuba_p1_pro"
 
 COMMON_CAPABILITIES = frozenset(
     {
@@ -93,6 +94,21 @@ SCUBA_S1_2025_CAPABILITIES = SCUBA_CAPABILITIES - frozenset(
         Capability.WATER_TEMPERATURE,
         Capability.CHARGE_TYPE,
         Capability.ROLLER_BRUSH,
+        Capability.CATERPILLAR_TREAD,
+        Capability.PROPELLER,
+    }
+)
+
+# The Scuba P1 Pro identifies itself as ``Scuba_P1_Pro`` (X6 Pro hardware
+# family). Its onboarding bundle (issue #45, integration 1.4.0) shows an MQTT
+# Machine shadow with no ``temp`` field, and a consumables list of exactly a
+# Roller Brush and a MicroMesh Filter. Charge-type, caterpillar-tread, and
+# propeller data are absent, so those entities stay off; roller-brush
+# maintenance is kept because the device reports that consumable.
+SCUBA_P1_PRO_CAPABILITIES = SCUBA_CAPABILITIES - frozenset(
+    {
+        Capability.WATER_TEMPERATURE,
+        Capability.CHARGE_TYPE,
         Capability.CATERPILLAR_TREAD,
         Capability.PROPELLER,
     }
@@ -303,7 +319,12 @@ def derive_device_profile(device: dict[str, Any]) -> DeviceProfile:
         mode_ids = list(SCUBA_S1_2025_MODE_MAP)
 
     if family == DeviceFamily.SCUBA:
-        capabilities = set(SCUBA_S1_2025_CAPABILITIES if key == SCUBA_S1_2025_MODEL else SCUBA_CAPABILITIES)
+        if key == SCUBA_S1_2025_MODEL:
+            capabilities = set(SCUBA_S1_2025_CAPABILITIES)
+        elif key == SCUBA_P1_PRO_MODEL:
+            capabilities = set(SCUBA_P1_PRO_CAPABILITIES)
+        else:
+            capabilities = set(SCUBA_CAPABILITIES)
     elif family == DeviceFamily.SURFER:
         capabilities = set(SURFER_CAPABILITIES)
     elif family == DeviceFamily.SHARK:
@@ -321,7 +342,7 @@ def derive_device_profile(device: dict[str, Any]) -> DeviceProfile:
     else:
         capabilities = set(COMMON_CAPABILITIES)
 
-    if device.get("temp") is not None and key != SCUBA_S1_2025_MODEL:
+    if device.get("temp") is not None and key not in (SCUBA_S1_2025_MODEL, SCUBA_P1_PRO_MODEL):
         capabilities.add(Capability.WATER_TEMPERATURE)
     if device.get("in_water") is not None:
         capabilities.add(Capability.IN_WATER)

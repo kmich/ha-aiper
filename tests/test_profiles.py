@@ -82,6 +82,44 @@ def test_scuba_s1_mode_profile_rejects_generic_waterline_evidence() -> None:
     assert profile.mode_map == {1: "Auto", 2: "Floor", 3: "Wall", 5: "Scheduled"}
 
 
+def test_scuba_p1_pro_profile_keeps_roller_brush_drops_temperature() -> None:
+    """P1 Pro (issue #45 bundle): no shadow temp, but a Roller Brush consumable.
+
+    Same conservative base as the S1 (no water temp, charge type, caterpillar,
+    propeller) but roller-brush maintenance stays because the device reports
+    that consumable. Mode map is the generic Scuba default; no app evidence
+    narrows it.
+    """
+    profile = derive_device_profile({"model": "Scuba_P1_Pro"})
+
+    assert profile.family is DeviceFamily.SCUBA
+    assert Capability.CLEAN_PATH in profile.capabilities
+    assert Capability.CLEANING_MODE_SELECT in profile.capabilities
+    assert Capability.ROLLER_BRUSH in profile.capabilities
+    assert Capability.MICROMESH_FILTER in profile.capabilities
+    assert Capability.WATER_TEMPERATURE not in profile.capabilities
+    assert Capability.CHARGE_TYPE not in profile.capabilities
+    assert Capability.CATERPILLAR_TREAD not in profile.capabilities
+    assert Capability.PROPELLER not in profile.capabilities
+    assert profile.mode_map == {1: "Smart", 2: "Floor", 3: "Wall", 4: "Waterline", 5: "Scheduled"}
+
+
+def test_scuba_p1_pro_ignores_stray_temp_evidence() -> None:
+    """A stray `temp` field must not re-add the water-temperature entity."""
+    profile = derive_device_profile({"model": "Scuba_P1_Pro", "temp": 27})
+
+    assert Capability.WATER_TEMPERATURE not in profile.capabilities
+
+
+def test_scuba_p1_pro_recognized_via_device_model_fallback() -> None:
+    """Known only by `deviceModel`, the P1 Pro still gets its full profile."""
+    profile = derive_device_profile({"deviceModel": "Scuba_P1_Pro"})
+
+    assert profile.family is DeviceFamily.SCUBA
+    assert Capability.ROLLER_BRUSH in profile.capabilities
+    assert Capability.WATER_TEMPERATURE not in profile.capabilities
+
+
 def test_scuba_s1_recognized_via_device_model_fallback() -> None:
     """A device known only by `deviceModel` (before the first successful
     get_device_info() call populates `model`) must still resolve to the
