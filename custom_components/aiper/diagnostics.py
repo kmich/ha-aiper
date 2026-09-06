@@ -102,9 +102,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
             diag["devices"] = redact(coordinator.data or {})
             diag["field_sources"] = redact(getattr(coordinator, "diagnostic_field_sources", {}) or {})
             diag["state_reconciliation"] = redact(getattr(coordinator, "_state_reconciliation", {}) or {})
-            diag["mqtt_replay_suppressions"] = redact(
-                getattr(coordinator, "_s1_mqtt_replay_suppressions", {}) or {}
-            )
+            diag["mqtt_replay_suppressions"] = redact(getattr(coordinator, "_s1_mqtt_replay_suppressions", {}) or {})
             image_urls = {}
             for sn, device in (coordinator.data or {}).items():
                 if not isinstance(device, dict):

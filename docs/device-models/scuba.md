@@ -85,6 +85,13 @@ read-only AWS IoT query from the integration returned code `1` after Adaptive
 was selected. The REST clean-path endpoint returns `-1`, and the setting is not
 present in the device shadow, so neither is used for this model.
 
+The persistence and independently scheduled capability-refresh mechanism is
+not inherently S1-specific. It remains enabled only for `Scuba_S1_2025` because
+that is the profile for which the path/mode query contracts, returned values,
+and safe polling cadence have been verified on hardware. Other model profiles
+can reuse the mechanism after their corresponding capability contracts and
+timing are validated; this implementation does not assume that they match S1.
+
 This model-specific path deliberately bypasses the legacy Scuba endpoint and
 command matrix below. Other Scuba models retain their existing behavior.
 

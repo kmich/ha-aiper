@@ -989,9 +989,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     received_at=mqtt_received_at,
                     topic=topic,
                 ):
-                    machine = {
-                        key: value for key, value in machine.items() if key not in S1_REPLAY_LIFECYCLE_FIELDS
-                    }
+                    machine = {key: value for key, value in machine.items() if key not in S1_REPLAY_LIFECYCLE_FIELDS}
                 mqtt_status = _coerce_int(machine.get("status"))
                 reports = getattr(self, "_last_s1_mqtt_machine_report", None)
                 if reports is None:
@@ -1395,16 +1393,19 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 self._clean_path_cache[sn] = normalized
 
     async def async_refresh_s1_capability_settings(self, *, publish: bool = True) -> None:
-        """Refresh S1 path/mode independently from push-resettable REST polls."""
+        """Refresh verified S1 capabilities outside push-resettable REST polls.
+
+        The persistence, scheduling, and capability-only publication pattern is
+        reusable. Query contracts remain profile-gated; only the S1 contracts
+        have been validated on hardware.
+        """
         is_mqtt_connected = getattr(self.api, "is_mqtt_connected", None)
         if is_mqtt_connected is None or not is_mqtt_connected():
             return
 
         changed = False
         for sn, device in self._devices.items():
-            raw_model = device.get("model") or device.get("deviceModel") or ""
-            model_key = str(raw_model).strip().lower().replace("-", "_").replace(" ", "_")
-            if model_key != SCUBA_S1_2025_MODEL:
+            if model_key(device) != SCUBA_S1_2025_MODEL:
                 continue
 
             if has_capability(device, Capability.CLEAN_PATH):

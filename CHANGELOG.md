@@ -6,7 +6,25 @@
 - Persisted the last confirmed `Scuba_S1_2025` clean-path preference across
   integration restarts. S1 path and mode queries now also run on an independent
   five-minute timer, so frequent MQTT push updates cannot postpone them by
-  continually resetting the general coordinator refresh.
+  continually resetting the general coordinator refresh. The persistence and
+  independent capability-refresh pattern can support other models once their
+  query contracts and timing have been verified; this release enables it only
+  for the hardware-validated S1 profile.
+- Fixed S1 path/mode capability refreshes briefly republishing stale cached
+  lifecycle values over newer MQTT state. Capability refreshes now update only
+  their path and mode fields, preserving current status, battery, water state,
+  and runtime.
+- Preserved a newly confirmed `Scuba_S1_2025` Cleaning start across delayed
+  redundant MQTT Idle/zero snapshots. A model-gated 15-second settling window
+  protects only coherent Cleaning reports with wet or positive-runtime
+  evidence; Parked and Charging still stop the cycle immediately, a later
+  uncorrelated Idle remains allowed, and explicitly older timestamped Idle
+  snapshots remain stale. Other Aiper models are unchanged.
+- Suppressed an observed Scuba S1 MQTT lifecycle replay where redundant cloud
+  topics briefly republished an older Cleaning snapshot immediately after a
+  Parked or Charging report. The narrow two-second guard is enabled only for
+  `Scuba_S1_2025`, preserves the newer terminal state and battery/runtime/water
+  fields, and does not block a later genuine cleaning start.
 
 ## [1.5.0] - 2026-09-06
 
@@ -42,19 +60,6 @@
   [ha-aiper-card](https://github.com/kmich/ha-aiper-card) Lovelace cards
   (cleaner status/controls and HydroComm water-quality gauges), installable as a
   HACS Dashboard custom repository.
-
-### Fixed
-- Preserved a newly confirmed `Scuba_S1_2025` Cleaning start across delayed
-  redundant MQTT Idle/zero snapshots. A model-gated 15-second settling window
-  protects only coherent Cleaning reports with wet or positive-runtime
-  evidence; Parked and Charging still stop the cycle immediately, a later
-  uncorrelated Idle remains allowed, and explicitly older timestamped Idle
-  snapshots remain stale. Other Aiper models are unchanged.
-- Suppressed an observed Scuba S1 MQTT lifecycle replay where redundant cloud
-  topics briefly republished an older Cleaning snapshot immediately after a
-  Parked or Charging report. The narrow two-second guard is enabled only for
-  `Scuba_S1_2025`, preserves the newer terminal state and battery/runtime/water
-  fields, and does not block a later genuine cleaning start.
 
 ## [1.4.0] - 2026-09-01
 
@@ -96,14 +101,6 @@
 
 ## [1.3.0] - 2026-08-30
 
-- Fixed S1 path/mode capability refreshes briefly republishing stale cached
-  lifecycle values over newer MQTT state. Capability refreshes now update only
-  their path and mode fields, preserving current status, battery, water state,
-  and runtime.
-- Fixed config-entry diagnostics reading the obsolete `hass.data` runtime
-  location. Diagnostics now use `ConfigEntry.runtime_data` while retaining a
-  compatibility fallback for older loaded entries.
-
 ### Added
 - Added hardware-verified `Scuba_S1_2025` clean-path support using the official
   app's `AT+AUTO?` query and `AT+AUTO=0/1` set contract. This model no longer
@@ -144,6 +141,7 @@
   now read the current config-entry runtime location, and a Cognito 4xx
   triggers one bounded OpenID refresh/retry for regions that omit an OpenID
   expiry duration.
+
 ## [1.2.4] - 2026-08-06
 
 ### Fixed

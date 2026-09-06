@@ -182,6 +182,31 @@ async def test_s1_capability_refresh_is_independent_from_rest_poll() -> None:
 
 
 @pytest.mark.asyncio
+async def test_capability_refresh_skips_models_without_verified_contracts() -> None:
+    """The reusable refresh path must not assume S1 commands for other models."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"].update({"model": "Scuba_X1", "name": "Scuba X1"})
+    coordinator._apply_device_profile("SN123")
+    coordinator.data = {"SN123": normalize_device_state(dict(coordinator._devices["SN123"]))}
+
+    class FakeApi:
+        def __init__(self) -> None:
+            self.query_clean_path_setting = AsyncMock(return_value=1)
+            self.query_cleaning_mode_setting = AsyncMock(return_value=2)
+
+        def is_mqtt_connected(self) -> bool:
+            return True
+
+    api = FakeApi()
+    coordinator.api = cast(Any, api)
+
+    await coordinator.async_refresh_s1_capability_settings()
+
+    api.query_clean_path_setting.assert_not_awaited()
+    api.query_cleaning_mode_setting.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_s1_capability_refresh_does_not_regress_live_state() -> None:
     """A capability response must not republish stale REST lifecycle fields."""
     coordinator = _bare_coordinator()
@@ -265,11 +290,7 @@ def test_scuba_s1_suppresses_immediate_terminal_to_cleaning_replay() -> None:
         "SN123",
         {
             "_topic": "$aws/things/SN123/shadow/get/accepted",
-            "state": {
-                "reported": {
-                    "Machine": {"status": 1, "cap": 71, "mode": 1, "run_time": 71, "in_water": 1}
-                }
-            },
+            "state": {"reported": {"Machine": {"status": 1, "cap": 71, "mode": 1, "run_time": 71, "in_water": 1}}},
         },
     )
 
