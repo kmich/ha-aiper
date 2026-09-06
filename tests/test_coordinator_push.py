@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, cast
 
 import pytest
@@ -253,6 +253,7 @@ async def test_rest_refresh_does_not_overwrite_mqtt_live_state(hass: HomeAssista
     coordinator._consumables_cache = {"SN123": []}
     coordinator._clean_path_cache = {}
     coordinator._command_state = {}
+    coordinator._live_field_sources = {}
     # Simulate live MQTT state: device is actively returning to base
     coordinator.data = {
         "SN123": {
@@ -260,6 +261,9 @@ async def test_rest_refresh_does_not_overwrite_mqtt_live_state(hass: HomeAssista
             **normalize_device_state({"sn": "SN123", "model": "Scuba_X1", "machineStatus": 2}),
         }
     }
+    # A real MQTT report just set these fields; the source map reflects that,
+    # exactly as _on_shadow_update would have recorded it in production.
+    coordinator._record_live_field_sources("SN123", "mqtt", ("running", "status", "charging", "mode"), observed_at=now)
 
     data = await coordinator._async_update_data()
 
@@ -421,14 +425,144 @@ async def test_scuba_s1_rest_charging_defers_to_recent_mqtt_cleaning_report(hass
     assert data["SN123"]["charging"].value is False
 
 
-@pytest.mark.parametrize(("machine_status", "reported_water"), [(1, 0), (10, None)])
+def _live_state_coordinator(hass: HomeAssistant, api: Any, now: datetime) -> AiperDataUpdateCoordinator:
+    coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
+    coordinator.hass = hass
+    coordinator.api = cast(Any, api)
+    coordinator._devices = {
+        "SN123": {
+            "sn": "SN123",
+            "name": "Scuba S1",
+            "model": "Scuba_S1_2025",
+            "online": True,
+        }
+    }
+    coordinator._last_online = {"SN123": True}
+    coordinator.update_interval = timedelta(hours=1)
+    coordinator._metadata_refresh = timedelta(hours=24)
+    coordinator._last_metadata_fetch = {"SN123": now}
+    coordinator._history_cache = {}
+    coordinator._consumables_cache = {"SN123": []}
+    coordinator._clean_path_cache = {}
+    coordinator._selected_mode_cache = {}
+    coordinator._command_state = {}
+    coordinator._s1_battery_samples = {}
+    coordinator._last_s1_mqtt_machine_report = {}
+    coordinator._state_reconciliation = {}
+    coordinator._live_field_sources = {}
+    return coordinator
+
+
+@pytest.mark.asyncio
+async def test_stale_mqtt_state_yields_to_fresh_rest_after_ttl(hass: HomeAssistant) -> None:
+    """Once an MQTT field ages past the TTL, a fresh REST value takes over.
+
+    Regression: a stale MQTT "Idle" shadow could mask a fresh REST
+    "Cleaning" status indefinitely.
+    """
+
+    class FakeApi:
+        async def get_devices(self):
+            return [
+                {
+                    "sn": "SN123",
+                    "name": "Scuba S1",
+                    "model": "Scuba_S1_2025",
+                    "online": True,
+                    "battLevel": 80,
+                    "machineStatus": 1,  # fresh REST: Cleaning
+                    "runTime": 6,
+                }
+            ]
+
+        async def get_device_info(self, sn):
+            raise AssertionError("metadata info should not be polled before refresh interval")
+
+        def is_mqtt_connected(self) -> bool:
+            return False
+
+    now = dt_util.utcnow()
+    coordinator = _live_state_coordinator(hass, FakeApi(), now)
+    coordinator.data = {"SN123": normalize_device_state({"sn": "SN123", "model": "Scuba_S1_2025", "machineStatus": 0})}
+    # MQTT last set the live fields well beyond MQTT_LIVE_STATE_TTL ago.
+    coordinator._record_live_field_sources(
+        "SN123", "mqtt", ("running", "status", "charging", "mode"), observed_at=now - timedelta(minutes=20)
+    )
+
+    data = await coordinator._async_update_data()
+
+    assert data["SN123"]["status"].value == "Cleaning"
+    assert data["SN123"]["running"].value is True
+    assert data["SN123"]["charging"].value is False
+    assert coordinator.diagnostic_field_sources["SN123"]["status"]["source"] == "rest"
+
+
+@pytest.mark.asyncio
+async def test_rest_charging_applies_immediately_after_mqtt_dropout(hass: HomeAssistant) -> None:
+    """An explicit REST charging correction is not held back by the MQTT TTL.
+
+    If MQTT last reported Cleaning a few minutes ago and then went silent,
+    a REST device-list snapshot of Charging (status 2) is a physical-state
+    correction and must apply on the next poll, not wait out the full
+    MQTT_LIVE_STATE_TTL.
+    """
+
+    class FakeApi:
+        async def get_devices(self):
+            return [
+                {
+                    "sn": "SN123",
+                    "name": "Scuba S1",
+                    "model": "Scuba_S1_2025",
+                    "online": True,
+                    "battLevel": 61,
+                    "machineStatus": 2,  # REST now: Charging
+                }
+            ]
+
+        async def get_device_info(self, sn):
+            raise AssertionError("metadata info should not be polled before refresh interval")
+
+        def is_mqtt_connected(self) -> bool:
+            return False
+
+    now = dt_util.utcnow()
+    coordinator = _live_state_coordinator(hass, FakeApi(), now)
+    coordinator._devices["SN123"].update({"in_water": 1, "mode": 1, "runTime": 180})
+    coordinator.data = {"SN123": normalize_device_state({**coordinator._devices["SN123"], "machineStatus": 1})}
+    # MQTT reported Cleaning 3 minutes ago (inside the TTL) then dropped.
+    mqtt_seen = now - timedelta(minutes=3)
+    coordinator._last_s1_mqtt_machine_report = {"SN123": {"observed_at": mqtt_seen, "status": 1}}
+    coordinator._record_live_field_sources(
+        "SN123", "mqtt", ("running", "status", "charging", "mode"), observed_at=mqtt_seen
+    )
+
+    data = await coordinator._async_update_data()
+
+    assert data["SN123"]["status"].value == "Charging"
+    assert data["SN123"]["charging"].value is True
+    assert data["SN123"]["running"].value is False
+    assert data["SN123"]["in_water"].value is False
+    assert coordinator._state_reconciliation["SN123"]["trigger"] == "rest_machine_status"
+
+
+@pytest.mark.parametrize(
+    ("machine_status", "reported_water", "expected_status"),
+    [(1, 0, "Cleaning"), (10, None, "Offline")],
+)
 @pytest.mark.asyncio
 async def test_scuba_s1_rest_cleaning_or_parked_implies_wet(
     hass: HomeAssistant,
     machine_status: int,
     reported_water: int | None,
+    expected_status: str,
 ) -> None:
-    """S1 Cleaning overrides stale Dry; Parked stays Wet without a newer report."""
+    """S1 Cleaning overrides stale Dry; Parked stays Wet without a newer report.
+
+    A device physically Cleaning keeps that status even while the cloud
+    online flag reads false. Parked (status 10) is not running, so it still
+    resolves to Offline when the cloud flag is false.
+    """
 
     class FakeApi:
         async def get_devices(self):
@@ -488,7 +622,7 @@ async def test_scuba_s1_rest_cleaning_or_parked_implies_wet(
     data = await coordinator._async_update_data()
 
     assert data["SN123"]["battery"].value == 89
-    assert data["SN123"]["status"].value == "Offline"
+    assert data["SN123"]["status"].value == expected_status
     assert data["SN123"]["in_water"].value is True
     assert coordinator._devices["SN123"]["in_water"] == 1
 

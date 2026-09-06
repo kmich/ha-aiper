@@ -10,6 +10,25 @@
   the generic Scuba mode map pending hardware verification. Seeded fixture and
   profile regression test included.
 
+### Fixed
+- Live state reconciliation now tracks per field which source (MQTT shadow or
+  REST device list) last set `running`, `status`, `charging`, and `mode`. A
+  fresh REST value takes over once the MQTT evidence for that field is older
+  than two polling intervals, so a stale shadow can no longer mask a newer REST
+  status indefinitely (observed on Scuba S1: a real "Cleaning" hidden for hours
+  behind an older MQTT "Idle"). An explicit REST charging correction still
+  applies on the next poll rather than waiting out that window.
+- A cleaner that is still reporting a live cleaning status now keeps that status
+  while its cloud "online" flag is false, instead of showing "Offline";
+  a non-running offline cleaner is unchanged.
+- Scuba S1: a charging report that omits `in_water` or replays the stale
+  submerged value from the finished run is now treated as dry.
+
+### Diagnostics
+- Config-entry diagnostics gain a `field_sources` block: the source and age of
+  the last `running` / `status` / `charging` / `mode` update per device, with
+  no values, for debugging state reconciliation.
+
 ### Documentation
 - The README and HACS info page now point to the companion
   [ha-aiper-card](https://github.com/kmich/ha-aiper-card) Lovelace cards

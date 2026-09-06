@@ -100,6 +100,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
         # Device snapshot (already reasonably bounded). Redact any sensitive keys.
         try:
             diag["devices"] = redact(coordinator.data or {})
+            diag["field_sources"] = redact(getattr(coordinator, "diagnostic_field_sources", {}) or {})
             diag["state_reconciliation"] = redact(getattr(coordinator, "_state_reconciliation", {}) or {})
             image_urls = {}
             for sn, device in (coordinator.data or {}).items():

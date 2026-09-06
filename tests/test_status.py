@@ -53,6 +53,17 @@ def test_running_status_is_normalized_to_base_status() -> None:
     assert state["mode"].value == "Manual"
 
 
+def test_offline_flag_does_not_mask_a_running_cleaner() -> None:
+    """A cleaner still reporting a live cleaning status keeps it while the
+    cloud online flag reads false; a non-running one still shows Offline."""
+    running = normalize_device_state({"model": "Scuba_X1", "machineStatus": 1, "online": False})
+    assert running["running"].value is True
+    assert running["status"].value == "Cleaning"
+
+    idle = normalize_device_state({"model": "Scuba_X1", "machineStatus": 0, "online": False})
+    assert idle["status"].value == "Offline"
+
+
 def test_scuba_charging_status_is_reported_from_base_status() -> None:
     """Scuba X1 status 3/131 is charging, not running or returning."""
     state = normalize_device_state({"model": "Scuba_X1", "machineStatus": 131})
@@ -134,6 +145,39 @@ def test_scuba_s1_status_semantics_apply_to_mqtt_updates() -> None:
     assert updates["charging"].value is True
     assert updates["running"].value is False
     assert updates["in_water"].value is False
+
+
+def test_scuba_s1_charging_forces_dry_over_replayed_wet() -> None:
+    """An S1 charging report that replays the stale submerged value is dry."""
+    updates = normalize_machine_update(
+        {"model": "Scuba_S1_2025"},
+        {"status": 2, "cap": 40, "run_time": 0, "in_water": 1},
+    )
+
+    assert updates["charging"].value is True
+    assert updates["in_water"].value is False
+
+
+def test_scuba_s1_charging_forces_dry_when_in_water_omitted() -> None:
+    """An S1 charging report that omits in_water still resolves to dry."""
+    updates = normalize_machine_update(
+        {"model": "Scuba_S1_2025"},
+        {"status": 2, "cap": 40, "run_time": 0},
+    )
+
+    assert updates["charging"].value is True
+    assert updates["in_water"].value is False
+
+
+def test_non_s1_charging_keeps_reported_in_water() -> None:
+    """The dry-on-charging override is scoped to the validated S1 model."""
+    updates = normalize_machine_update(
+        {"model": "Scuba_S3"},
+        {"status": 2, "cap": 40, "in_water": 1},
+    )
+
+    assert updates["charging"].value is True
+    assert updates["in_water"].value is True
 
 
 def test_scuba_s3_semantics_resolve_from_device_list_model() -> None:
