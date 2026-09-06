@@ -127,6 +127,25 @@ means the S1 has parked underwater, so Parked remains Wet when REST omits a newe
 water-state report. Explicit water state remains authoritative outside active
 Cleaning, and charging always implies Dry.
 
+### Scuba P1 Pro
+
+Identifies as `Scuba_P1_Pro` (X6 Pro hardware family). Support was onboarded
+from a community diagnostics bundle (issue #45, integration 1.4.0) and has not
+been verified on hardware by the maintainer.
+
+The capture shows an MQTT `Machine` shadow of `cap`, `in_water`, `mode`,
+`run_time`, `status`, `warn`, `warn_code` with no `temp` field, and a
+consumables list of exactly a Roller Brush and a MicroMesh Filter. The model
+profile therefore mirrors the conservative S1 base (no water temperature, charge
+type, caterpillar tread, or propeller) but keeps roller-brush maintenance
+because the device reports that consumable. The clean-path query succeeded
+(`0`), so clean path stays enabled.
+
+No charge or park cycle was captured, so the model uses the default status-code
+encoding (no `MODEL_STATUS_SEMANTICS` entry) and the generic Scuba mode map
+(`1` Smart, `2` Floor, `3` Wall, `4` Waterline, `5` Scheduled); there is no app
+evidence to narrow it. Both are `# TODO: verify on hardware`.
+
 ## Legacy Clean-Path Runtime Path
 
 Scuba models other than `Scuba_S1_2025` still use the legacy clean-path matrix

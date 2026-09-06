@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+- Scuba P1 Pro (`Scuba_P1_Pro`) capability profile, onboarded from a community
+  diagnostics bundle (issue #45): mode select, clean path, in-water, and
+  roller-brush plus MicroMesh maintenance, with no water-temperature entity
+  (the device shadow carries no `temp`). Uses the default status encoding and
+  the generic Scuba mode map pending hardware verification. Seeded fixture and
+  profile regression test included.
+
 ### Documentation
 - The README and HACS info page now point to the companion
   [ha-aiper-card](https://github.com/kmich/ha-aiper-card) Lovelace cards

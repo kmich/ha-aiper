@@ -1,0 +1,16 @@
+{
+  "_bundle_provenance": {
+    "bundle_schema_version": 1,
+    "captured_at": "2026-09-05T18:49:17+00:00",
+    "generated_by": "tools/fixture_from_probe.py",
+    "integration_version": "1.4.0",
+    "notes": "Onboarding bundle from issue #45 (@stsquad). deviceType added from the device-list entry; not hardware-verified by the maintainer."
+  },
+  "deviceModel": "Scuba_P1_Pro",
+  "deviceType": "3",
+  "fw_main": "V1.0.0",
+  "model": "Scuba_P1_Pro",
+  "name": "Scuba P1 Pro",
+  "online": 0,
+  "sn": "6PZ55201130"
+}
