@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.6.0] - 2026-09-07
 
 ### Added
 - Scuba V3 (`Scuba_V3`) capability profile, onboarded from community reports

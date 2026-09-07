@@ -1,6 +1,6 @@
 [project]
 name = "ha-aiper"
-version = "1.5.0"
+version = "1.6.0"
 description = "Development tooling for the Aiper Home Assistant custom integration."
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
