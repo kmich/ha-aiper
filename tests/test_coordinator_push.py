@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 from homeassistant.core import HomeAssistant
@@ -75,6 +76,23 @@ def test_apply_device_profile_reconciles_s1_mode_ids() -> None:
     assert coordinator._devices["SN123"]["supported_mode_ids"] == [1, 2, 3, 5]
 
 
+def _scuba_s1_coordinator() -> AiperDataUpdateCoordinator:
+    """Return a bare coordinator configured as the physically validated S1."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"].update(
+        {
+            "model": "Scuba_S1_2025",
+            "battLevel": 100,
+            "machineStatus": 0,
+            "mode": 0,
+            "runTime": 0,
+            "in_water": 0,
+        }
+    )
+    coordinator.data["SN123"] = normalize_device_state(dict(coordinator._devices["SN123"]))
+    return coordinator
+
+
 def test_shadow_update_promotes_live_state() -> None:
     """MQTT reported data should update normalized entity state."""
     coordinator = _bare_coordinator()
@@ -106,6 +124,381 @@ def test_shadow_update_promotes_live_state() -> None:
     assert device["wifi_signal"].value == -79
     assert device["main_version"].value == "V7.1.0"
     assert device["mcu_version"].value == "V1.0.7.1,V1.0.6.0"
+
+
+@pytest.mark.asyncio
+async def test_clean_path_cache_restores_and_persists(hass: HomeAssistant) -> None:
+    """The last confirmed path should survive an integration restart."""
+    coordinator = _bare_coordinator()
+
+    class FakeStore:
+        def __init__(self) -> None:
+            self.saved: list[dict[str, int]] = []
+
+        async def async_load(self) -> dict[str, int]:
+            return {"SN123": 1, "INVALID": 9}
+
+        async def async_save(self, data: dict[str, int]) -> None:
+            self.saved.append(data)
+
+    store = FakeStore()
+    coordinator._clean_path_store = cast(Any, store)
+    coordinator.hass = hass
+
+    await coordinator.async_restore_clean_path_cache()
+    assert coordinator._clean_path_cache == {"SN123": 1}
+
+    coordinator.set_clean_path_cache("SN123", 0)
+    await hass.async_block_till_done()
+    assert store.saved == [{"SN123": 0}]
+
+
+@pytest.mark.asyncio
+async def test_s1_capability_refresh_is_independent_from_rest_poll() -> None:
+    """A direct capability tick should publish path/mode without a REST refresh."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"].update({"model": "Scuba_S1_2025", "name": "Scuba S1"})
+    coordinator._apply_device_profile("SN123")
+    coordinator.data = {"SN123": normalize_device_state(dict(coordinator._devices["SN123"]))}
+
+    class FakeApi:
+        def is_mqtt_connected(self) -> bool:
+            return True
+
+        async def query_clean_path_setting(self, sn: str) -> int:
+            assert sn == "SN123"
+            return 1
+
+        async def query_cleaning_mode_setting(self, sn: str) -> int:
+            assert sn == "SN123"
+            return 2
+
+    coordinator.api = cast(Any, FakeApi())
+
+    await coordinator.async_refresh_s1_capability_settings()
+
+    assert coordinator.data["SN123"]["clean_path"].value == "Adaptive"
+    assert coordinator.data["SN123"]["mode_options"].attributes["selected_mode"] == 2
+
+
+@pytest.mark.asyncio
+async def test_capability_refresh_skips_models_without_verified_contracts() -> None:
+    """The reusable refresh path must not assume S1 commands for other models."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"].update({"model": "Scuba_X1", "name": "Scuba X1"})
+    coordinator._apply_device_profile("SN123")
+    coordinator.data = {"SN123": normalize_device_state(dict(coordinator._devices["SN123"]))}
+
+    class FakeApi:
+        def __init__(self) -> None:
+            self.query_clean_path_setting = AsyncMock(return_value=1)
+            self.query_cleaning_mode_setting = AsyncMock(return_value=2)
+
+        def is_mqtt_connected(self) -> bool:
+            return True
+
+    api = FakeApi()
+    coordinator.api = cast(Any, api)
+
+    await coordinator.async_refresh_s1_capability_settings()
+
+    api.query_clean_path_setting.assert_not_awaited()
+    api.query_cleaning_mode_setting.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_s1_capability_refresh_does_not_regress_live_state() -> None:
+    """A capability response must not republish stale REST lifecycle fields."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"].update(
+        {
+            "model": "Scuba_S1_2025",
+            "name": "Scuba S1",
+            "battLevel": 100,
+            "machineStatus": 0,
+            "mode": 0,
+            "online": False,
+            "in_water": 0,
+            "runTime": 0,
+        }
+    )
+    coordinator._apply_device_profile("SN123")
+    coordinator.data = {
+        "SN123": normalize_device_state(
+            {
+                **coordinator._devices["SN123"],
+                "battLevel": 83,
+                "machineStatus": 1,
+                "mode": 1,
+                "online": True,
+                "in_water": 1,
+                "runTime": 44,
+            }
+        )
+    }
+
+    class FakeApi:
+        def is_mqtt_connected(self) -> bool:
+            return True
+
+        async def query_clean_path_setting(self, sn: str) -> int:
+            assert sn == "SN123"
+            return 1
+
+        async def query_cleaning_mode_setting(self, sn: str) -> int:
+            assert sn == "SN123"
+            return 1
+
+    coordinator.api = cast(Any, FakeApi())
+
+    await coordinator.async_refresh_s1_capability_settings()
+
+    device = coordinator.data["SN123"]
+    assert device["status"].value == "Cleaning"
+    assert device["battery"].value == 83
+    assert device["running"].value is True
+    assert device["in_water"].value is True
+    assert device["runtime"].value == 0.73
+    assert device["clean_path"].value == "Adaptive"
+    assert device["mode_options"].attributes["selected_mode"] == 1
+
+
+def test_scuba_s1_suppresses_immediate_terminal_to_cleaning_replay() -> None:
+    """A redundant stale topic cannot undo a just-reported S1 completion."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"].update(
+        {
+            "model": "Scuba_S1_2025",
+            "battLevel": 71,
+            "machineStatus": 1,
+            "mode": 1,
+            "runTime": 71,
+            "in_water": 1,
+        }
+    )
+    coordinator.data["SN123"] = normalize_device_state(dict(coordinator._devices["SN123"]))
+
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "_topic": "aiper/things/SN123/shadow/report",
+            "type": "Machine",
+            "data": {"status": 10, "cap": 9, "mode": 0, "run_time": 0, "in_water": 1},
+        },
+    )
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "_topic": "$aws/things/SN123/shadow/get/accepted",
+            "state": {"reported": {"Machine": {"status": 1, "cap": 71, "mode": 1, "run_time": 71, "in_water": 1}}},
+        },
+    )
+
+    state = coordinator.data["SN123"]
+    assert state["status"].value == "Parked"
+    assert state["running"].value is False
+    assert state["charging"].value is False
+    assert state["battery"].value == 9
+    assert state["runtime"].value == 0.0
+    assert state["in_water"].value is True
+    suppression = coordinator._s1_mqtt_replay_suppressions["SN123"]
+    assert suppression["count"] == 1
+    assert suppression["source"] == "shadow_get"
+    assert suppression["status"] == 1
+    assert suppression["guard_seconds"] == 2.0
+    assert suppression["terminal_age_seconds"] <= 2.0
+    assert suppression["last_suppressed_at"]
+
+
+def test_scuba_s1_allows_cleaning_after_replay_guard_expires() -> None:
+    """The guard must not block a later genuine S1 cleaning transition."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"].update(
+        {
+            "model": "Scuba_S1_2025",
+            "battLevel": 9,
+            "machineStatus": 10,
+            "mode": 0,
+            "runTime": 0,
+            "in_water": 1,
+        }
+    )
+    coordinator.data["SN123"] = normalize_device_state(dict(coordinator._devices["SN123"]))
+    coordinator._last_s1_terminal_report_at = {
+        "SN123": dt_util.utcnow() - timedelta(seconds=3),
+    }
+
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "_topic": "aiper/things/SN123/shadow/report",
+            "type": "Machine",
+            "data": {"status": 1, "cap": 100, "mode": 1, "run_time": 1, "in_water": 1},
+        },
+    )
+
+    state = coordinator.data["SN123"]
+    assert state["status"].value == "Cleaning"
+    assert state["running"].value is True
+    assert state["battery"].value == 100
+    assert state["runtime"].value == 0.02
+    assert state["in_water"].value is True
+    assert not getattr(coordinator, "_s1_mqtt_replay_suppressions", {})
+
+
+def test_scuba_s1_preserves_confirmed_start_across_delayed_idle_replays() -> None:
+    """Redundant Idle topics cannot erase a coherent newly confirmed start."""
+    coordinator = _scuba_s1_coordinator()
+
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "_topic": "aiper/things/SN123/shadow/report",
+            "type": "Machine",
+            "data": {"status": 1, "cap": 98, "mode": 1, "run_time": 1, "in_water": 1},
+        },
+    )
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "_topic": "$aws/things/SN123/shadow/get/accepted",
+            "state": {"reported": {"Machine": {"status": 0, "cap": 100, "mode": 0, "run_time": 0, "in_water": 0}}},
+        },
+    )
+    coordinator._last_s1_confirmed_running_report["SN123"]["received_at"] = dt_util.utcnow() - timedelta(seconds=9)
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "_topic": "$aws/things/SN123/shadow/update/documents",
+            "current": {
+                "state": {"reported": {"Machine": {"status": 0, "cap": 100, "mode": 0, "run_time": 0, "in_water": 0}}}
+            },
+        },
+    )
+
+    state = coordinator.data["SN123"]
+    assert state["status"].value == "Cleaning"
+    assert state["running"].value is True
+    assert state["charging"].value is False
+    assert state["battery"].value == 98
+    assert state["runtime"].value == 0.02
+    assert state["in_water"].value is True
+    suppression = coordinator._s1_mqtt_replay_suppressions["SN123"]
+    assert suppression["count"] == 2
+    assert suppression["kind"] == "running_to_idle"
+    assert suppression["status"] == 0
+    assert suppression["guard_seconds"] == 15.0
+    assert 8 <= suppression["age_seconds"] <= 10
+
+
+def test_scuba_s1_allows_new_idle_after_start_guard_expires() -> None:
+    """A later uncorrelated Idle report must not be blocked indefinitely."""
+    coordinator = _scuba_s1_coordinator()
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "type": "Machine",
+            "data": {"status": 1, "cap": 98, "mode": 1, "run_time": 1, "in_water": 1},
+        },
+    )
+    coordinator._last_s1_confirmed_running_report["SN123"]["received_at"] = dt_util.utcnow() - timedelta(seconds=16)
+
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "type": "Machine",
+            "data": {"status": 0, "cap": 98, "mode": 0, "run_time": 0, "in_water": 0},
+        },
+    )
+
+    state = coordinator.data["SN123"]
+    assert state["status"].value == "Idle"
+    assert state["running"].value is False
+    assert state["runtime"].value == 0.0
+    assert state["in_water"].value is False
+    assert "SN123" not in coordinator._last_s1_confirmed_running_report
+
+
+def test_scuba_s1_suppresses_explicitly_older_idle_after_start_guard() -> None:
+    """An explicitly older snapshot stays stale beyond the settling window."""
+    coordinator = _scuba_s1_coordinator()
+    now = dt_util.utcnow().replace(microsecond=0)
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "timestamp": int(now.timestamp()),
+            "type": "Machine",
+            "data": {"status": 1, "cap": 98, "mode": 1, "run_time": 1, "in_water": 1},
+        },
+    )
+    coordinator._last_s1_confirmed_running_report["SN123"]["received_at"] = now - timedelta(minutes=1)
+
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "timestamp": int((now - timedelta(minutes=2)).timestamp()),
+            "type": "Machine",
+            "data": {"status": 0, "cap": 100, "mode": 0, "run_time": 0, "in_water": 0},
+        },
+    )
+
+    state = coordinator.data["SN123"]
+    assert state["status"].value == "Cleaning"
+    assert state["battery"].value == 98
+    assert coordinator._s1_mqtt_replay_suppressions["SN123"]["kind"] == "running_to_idle"
+
+
+def test_scuba_s1_terminal_status_ends_confirmed_start_immediately() -> None:
+    """Parked remains authoritative even inside the start settling window."""
+    coordinator = _scuba_s1_coordinator()
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "type": "Machine",
+            "data": {"status": 1, "cap": 98, "mode": 1, "run_time": 1, "in_water": 1},
+        },
+    )
+
+    coordinator._on_shadow_update(
+        "SN123",
+        {
+            "type": "Machine",
+            "data": {"status": 10, "cap": 9, "mode": 0, "run_time": 0, "in_water": 1},
+        },
+    )
+
+    state = coordinator.data["SN123"]
+    assert state["status"].value == "Parked"
+    assert state["running"].value is False
+    assert state["runtime"].value == 0.0
+    assert "SN123" not in coordinator._last_s1_confirmed_running_report
+
+
+def test_scuba_s1_status_only_cleaning_does_not_guard_idle() -> None:
+    """A status-only report is not enough evidence to protect a start."""
+    coordinator = _scuba_s1_coordinator()
+    coordinator._on_shadow_update("SN123", {"type": "Machine", "data": {"status": 1}})
+    coordinator._on_shadow_update("SN123", {"type": "Machine", "data": {"status": 0}})
+
+    assert coordinator.data["SN123"]["status"].value == "Idle"
+    assert not getattr(coordinator, "_s1_mqtt_replay_suppressions", {})
+
+
+def test_non_s1_start_state_is_not_guarded() -> None:
+    """Unvalidated models keep their existing lifecycle semantics."""
+    coordinator = _bare_coordinator()
+    coordinator._devices["SN123"]["model"] = "Scuba_X1"
+    coordinator._on_shadow_update(
+        "SN123",
+        {"type": "Machine", "data": {"status": 1, "run_time": 1, "in_water": 1}},
+    )
+    coordinator._on_shadow_update(
+        "SN123",
+        {"type": "Machine", "data": {"status": 0, "run_time": 0, "in_water": 0}},
+    )
+
+    assert coordinator.data["SN123"]["status"].value == "Idle"
+    assert not getattr(coordinator, "_s1_mqtt_replay_suppressions", {})
 
 
 def test_shadow_update_promotes_hydrocomm_w2_state() -> None:
@@ -488,9 +881,12 @@ async def test_stale_mqtt_state_yields_to_fresh_rest_after_ttl(hass: HomeAssista
     coordinator._record_live_field_sources(
         "SN123", "mqtt", ("running", "status", "charging", "mode"), observed_at=now - timedelta(minutes=20)
     )
+    capability_refresh = AsyncMock()
+    coordinator.async_refresh_s1_capability_settings = capability_refresh  # type: ignore[method-assign]
 
     data = await coordinator._async_update_data()
 
+    capability_refresh.assert_not_awaited()
     assert data["SN123"]["status"].value == "Cleaning"
     assert data["SN123"]["running"].value is True
     assert data["SN123"]["charging"].value is False

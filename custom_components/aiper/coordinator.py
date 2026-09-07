@@ -12,6 +12,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -21,6 +22,7 @@ from .const import (
     DOMAIN,
     Status,
     status_running,
+    status_value,
 )
 from .coordinator_parsing import (
     _clean_path_value,
@@ -28,6 +30,7 @@ from .coordinator_parsing import (
     _merge_discovery_metadata,
     _parse_cleaning_history,
     _parse_consumables,
+    _parse_dt,
 )
 from .profiles import SCUBA_S1_2025_MODEL, Capability, derive_device_profile, has_capability, model_key
 from .repairs import async_update_unknown_model_issues
@@ -57,6 +60,8 @@ _LOGGER = logging.getLogger(__name__)
 
 
 LIVE_REFRESH_INTERVAL = timedelta(minutes=5)
+S1_CAPABILITY_REFRESH_INTERVAL = timedelta(minutes=5)
+CLEAN_PATH_STORE_VERSION = 1
 
 # How long MQTT must stay down before we stop trusting the AWS CRT SDK's own
 # reconnect loop and rebuild the connection ourselves.
@@ -76,6 +81,23 @@ MQTT_LIVE_STATE_TTL = LIVE_REFRESH_INTERVAL * 2
 MQTT_PREFERRED_STATE_KEYS = frozenset({"running", "status", "charging", "mode"})
 # Which normalized live fields a given raw REST device-list key stands in for.
 # Used to record fresh REST evidence only for fields the poll actually carried.
+
+# The S1 publishes the same lifecycle through several MQTT topics. On two
+# consecutive physical cycles, a current Parked report was followed within
+# 250 ms by an older Cleaning snapshot and then another current Parked report.
+# A genuine physical restart cannot occur in this narrow interval, so terminal
+# evidence wins briefly while redundant topic snapshots settle.
+S1_MQTT_LIFECYCLE_REPLAY_GUARD = timedelta(seconds=2)
+# On 2026-08-27 a coherent S1 Cleaning/Wet/nonzero-runtime report was followed
+# by redundant Idle/zero snapshots at 137 ms and 8.7 seconds. The latter became
+# persistent for the entire submerged cycle. A verified S1 cycle ends with a
+# terminal Parked/Charging status, not an Idle snapshot, so preserve a newly
+# confirmed running sample while the redundant MQTT topics settle.
+S1_MQTT_START_REPLAY_GUARD = timedelta(seconds=15)
+S1_TERMINAL_STATUS_CODES = frozenset({2, 3, 10})
+S1_RUNNING_STATUS_CODES = frozenset({1})
+S1_IDLE_STATUS_CODES = frozenset({0})
+S1_REPLAY_LIFECYCLE_FIELDS = frozenset({"status", "mode", "cap", "run_time", "in_water"})
 REST_STATE_FIELDS: dict[str, frozenset[str]] = {
     "machineStatus": frozenset({"running", "status", "charging"}),
     "mode": frozenset({"mode"}),
@@ -109,9 +131,21 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         self._history_cache: dict[str, dict[str, Any]] = {}
         self._consumables_cache: dict[str, list[dict[str, Any]]] = {}
         self._clean_path_cache: dict[str, int] = {}
+        self._clean_path_store: Store[dict[str, int]] | None = (
+            Store(
+                hass,
+                CLEAN_PATH_STORE_VERSION,
+                f"{DOMAIN}.clean_path_cache.{config_entry.entry_id}",
+            )
+            if config_entry is not None
+            else None
+        )
         self._selected_mode_cache: dict[str, int] = {}
         self._s1_battery_samples: dict[str, list[dict[str, Any]]] = {}
         self._last_s1_mqtt_machine_report: dict[str, dict[str, Any]] = {}
+        self._last_s1_terminal_report_at: dict[str, datetime] = {}
+        self._last_s1_confirmed_running_report: dict[str, dict[str, Any]] = {}
+        self._s1_mqtt_replay_suppressions: dict[str, dict[str, Any]] = {}
         self._state_reconciliation: dict[str, dict[str, Any]] = {}
         # Per-device, per-field record of which source (mqtt/rest) last supplied
         # each MQTT_PREFERRED_STATE_KEYS value, with the observation time. Used
@@ -175,6 +209,20 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             return False
         age = (_ensure_utc_aware(now) or dt_util.utcnow()) - observed_at
         return -LIVE_REFRESH_INTERVAL <= age <= MQTT_LIVE_STATE_TTL
+
+    @staticmethod
+    def _mqtt_observation(data: dict[str, Any]) -> tuple[datetime, bool]:
+        """Return payload observation time and whether it was explicit."""
+        candidates: list[Any] = [data.get("timestamp"), data.get("ts")]
+        current = data.get("current")
+        if isinstance(current, dict):
+            candidates.extend((current.get("timestamp"), current.get("ts")))
+        now = dt_util.utcnow()
+        for candidate in candidates:
+            parsed = _parse_dt(candidate)
+            if parsed is not None and parsed <= now + LIVE_REFRESH_INTERVAL:
+                return parsed, True
+        return now, False
 
     def _record_s1_battery_sample(self, sn: str, value: Any, observed_at: datetime) -> None:
         """Retain a small, non-sensitive battery trend for S1 fallback logic."""
@@ -248,6 +296,130 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             events.append(deepcopy(event))
             del events[:-20]
         records[sn] = {**event, "events": events}
+
+    @staticmethod
+    def _mqtt_source_label(topic: Any) -> str:
+        """Return a stable, identifier-free MQTT source label."""
+        if not isinstance(topic, str):
+            return "unknown"
+        if "shadow/get/accepted" in topic:
+            return "shadow_get"
+        if "shadow/update/documents" in topic:
+            return "shadow_documents"
+        if "shadow/update/accepted" in topic:
+            return "shadow_update"
+        if "upChan" in topic:
+            return "up_channel"
+        if "app/report" in topic:
+            return "app_report"
+        if "shadow/report" in topic:
+            return "device_report"
+        return "other"
+
+    def _suppress_s1_lifecycle_replay(
+        self,
+        sn: str,
+        machine: dict[str, Any],
+        *,
+        observed_at: datetime,
+        observed_at_explicit: bool,
+        received_at: datetime,
+        topic: Any,
+    ) -> bool:
+        """Reject physically impossible S1 lifecycle replays."""
+        raw_status = _coerce_int(machine.get("status"))
+        base_status = status_value(raw_status)
+        terminal_reports = getattr(self, "_last_s1_terminal_report_at", None)
+        if terminal_reports is None:
+            terminal_reports = self._last_s1_terminal_report_at = {}
+        running_reports = getattr(self, "_last_s1_confirmed_running_report", None)
+        if running_reports is None:
+            running_reports = self._last_s1_confirmed_running_report = {}
+
+        if base_status in S1_TERMINAL_STATUS_CODES:
+            terminal_reports[sn] = received_at
+            running_reports.pop(sn, None)
+            return False
+        now = _ensure_utc_aware(received_at) or dt_util.utcnow()
+        suppression_kind: str | None = None
+        suppression_age: timedelta | None = None
+        suppression_guard: timedelta | None = None
+
+        if base_status in S1_RUNNING_STATUS_CODES:
+            terminal_at = _ensure_utc_aware(terminal_reports.get(sn))
+            if terminal_at is not None:
+                age = now - terminal_at
+                if timedelta(0) <= age <= S1_MQTT_LIFECYCLE_REPLAY_GUARD:
+                    suppression_kind = "terminal_to_running"
+                    suppression_age = age
+                    suppression_guard = S1_MQTT_LIFECYCLE_REPLAY_GUARD
+
+            if suppression_kind is None:
+                run_time = _coerce_int(machine.get("run_time"))
+                in_water = _coerce_bool(machine.get("in_water"))
+                if (run_time is not None and run_time > 0) or in_water is True:
+                    running_reports[sn] = {
+                        "observed_at": _ensure_utc_aware(observed_at) or now,
+                        "observed_at_explicit": observed_at_explicit,
+                        "received_at": now,
+                        "source": self._mqtt_source_label(topic),
+                    }
+                return False
+
+        elif base_status in S1_IDLE_STATUS_CODES:
+            running_report = running_reports.get(sn) or {}
+            running_received_at = _ensure_utc_aware(running_report.get("received_at"))
+            running_observed_at = _ensure_utc_aware(running_report.get("observed_at"))
+            idle_age = now - running_received_at if running_received_at is not None else None
+            explicitly_older = (
+                observed_at_explicit
+                and bool(running_report.get("observed_at_explicit"))
+                and running_observed_at is not None
+                and (_ensure_utc_aware(observed_at) or now) < running_observed_at
+            )
+            if explicitly_older or (idle_age is not None and timedelta(0) <= idle_age <= S1_MQTT_START_REPLAY_GUARD):
+                suppression_kind = "running_to_idle"
+                suppression_age = idle_age
+                suppression_guard = S1_MQTT_START_REPLAY_GUARD
+            elif idle_age is not None and idle_age > S1_MQTT_START_REPLAY_GUARD:
+                # A newer Idle outside the narrow settling window is allowed.
+                # Do not let the old start protect against later uncorrelated
+                # Idle samples unless their own timestamp proves they are old.
+                running_reports.pop(sn, None)
+                return False
+            else:
+                return False
+        else:
+            return False
+
+        if suppression_kind is None or suppression_age is None or suppression_guard is None:
+            return False
+
+        suppressions = getattr(self, "_s1_mqtt_replay_suppressions", None)
+        if suppressions is None:
+            suppressions = self._s1_mqtt_replay_suppressions = {}
+        previous = suppressions.get(sn) or {}
+        suppressions[sn] = {
+            "count": int(previous.get("count") or 0) + 1,
+            "last_suppressed_at": now.isoformat(),
+            "source": self._mqtt_source_label(topic),
+            "status": base_status,
+            "kind": suppression_kind,
+            "age_seconds": round(suppression_age.total_seconds(), 3),
+            "guard_seconds": suppression_guard.total_seconds(),
+        }
+        if suppression_kind == "terminal_to_running":
+            # Retain the established diagnostics key for compatibility with
+            # existing issue reports and tests.
+            suppressions[sn]["terminal_age_seconds"] = round(suppression_age.total_seconds(), 3)
+        _LOGGER.debug(
+            "Suppressed S1 MQTT lifecycle replay kind=%s source=%s status=%s age=%.3fs",
+            suppression_kind,
+            self._mqtt_source_label(topic),
+            base_status,
+            suppression_age.total_seconds(),
+        )
+        return True
 
     def _apply_device_profile(self, sn: str) -> None:
         """Derive and store family/capability metadata for a device."""
@@ -591,44 +763,10 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 self._devices[sn]["bluetooth_name"] = info_data.get("bleName")
                 self._devices[sn]["consumables"] = self._consumables_cache.get(sn) or []
                 self._apply_device_profile(sn)
-                mk = model_key(self._devices[sn])
-                # The S1's clean-path/mode settings are only observable through
-                # a blocking MQTT AT-command round trip (no push/shadow source
-                # exists for them). Querying them on every poll would add up to
-                # ~8s of sequential blocking I/O per S1 device to every
-                # coordinator refresh, delaying state publication for every
-                # other device on the account. Query only when metadata is due
-                # (the normal periodic resync) or we don't have a cached value
-                # yet (first sighting) — writes are separately kept in sync via
-                # the immediate confirm-and-cache path in async_select_option.
-                s1_query_due = metadata_due or sn not in self._clean_path_cache
-
                 if has_capability(self._devices[sn], Capability.CLEAN_PATH):
-                    # Clean-path is not present in the Scuba_S1_2025 REST or
-                    # shadow payloads. Its verified source is AT+AUTO?, queried
-                    # through the existing serialized MQTT command channel.
-                    if mk == SCUBA_S1_2025_MODEL and s1_query_due and self.api.is_mqtt_connected():
-                        try:
-                            clean_path = await self.api.query_clean_path_setting(sn)
-                            if clean_path in (0, 1):
-                                self._clean_path_cache[sn] = clean_path
-                        except Exception as err:
-                            _LOGGER.debug("Clean-path query failed for %s: %s", sn, err)
                     self._devices[sn]["clean_path"] = self._clean_path_cache.get(sn)
                 else:
                     self._devices[sn]["clean_path"] = None
-
-                selected_mode_due = metadata_due or sn not in getattr(self, "_selected_mode_cache", {})
-                if mk == SCUBA_S1_2025_MODEL and selected_mode_due and self.api.is_mqtt_connected():
-                    try:
-                        selected_mode = await self.api.query_cleaning_mode_setting(sn)
-                        if selected_mode in (1, 2, 3, 5):
-                            selected_mode_cache = getattr(self, "_selected_mode_cache", None)
-                            if selected_mode_cache is None:
-                                selected_mode_cache = self._selected_mode_cache = {}
-                            selected_mode_cache[sn] = selected_mode
-                    except Exception as err:
-                        _LOGGER.debug("Cleaning-mode query failed for %s: %s", sn, err)
                 self._devices[sn]["selected_mode"] = getattr(self, "_selected_mode_cache", {}).get(sn)
 
             # Expire pending commands (UI hints)
@@ -732,6 +870,8 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
     def _on_shadow_update(self, sn: str, data: dict) -> None:
         """Process shadow update from MQTT."""
         topic = data.get("_topic") if isinstance(data, dict) else None
+        mqtt_observed_at, mqtt_observed_at_explicit = self._mqtt_observation(data)
+        mqtt_received_at = dt_util.utcnow()
 
         def _publish_updates(updates: DeviceState) -> None:
             if not updates:
@@ -841,11 +981,20 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
 
         if machine:
             if model_key(raw_device) == SCUBA_S1_2025_MODEL:
+                if self._suppress_s1_lifecycle_replay(
+                    sn,
+                    machine,
+                    observed_at=mqtt_observed_at,
+                    observed_at_explicit=mqtt_observed_at_explicit,
+                    received_at=mqtt_received_at,
+                    topic=topic,
+                ):
+                    machine = {key: value for key, value in machine.items() if key not in S1_REPLAY_LIFECYCLE_FIELDS}
                 mqtt_status = _coerce_int(machine.get("status"))
                 reports = getattr(self, "_last_s1_mqtt_machine_report", None)
                 if reports is None:
                     reports = self._last_s1_mqtt_machine_report = {}
-                reports[sn] = {"observed_at": dt_util.utcnow(), "status": mqtt_status}
+                reports[sn] = {"observed_at": mqtt_received_at, "status": mqtt_status}
                 if mqtt_status in (2, 3):
                     self._record_s1_reconciliation(sn, trigger="mqtt_machine_status", rest_status=None)
             updates = merge_device_state(updates, normalize_machine_update(raw_device, machine, current_state))
@@ -1216,8 +1365,83 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         return None
 
     def set_clean_path_cache(self, sn: str, value: int) -> None:
-        """Update cached clean-path preference."""
-        self._clean_path_cache[sn] = int(value)
+        """Update and persist the last confirmed clean-path preference."""
+        normalized = int(value)
+        if self._clean_path_cache.get(sn) == normalized:
+            return
+        self._clean_path_cache[sn] = normalized
+        store = getattr(self, "_clean_path_store", None)
+        hass = getattr(self, "hass", None)
+        if store is not None and hass is not None:
+            hass.async_create_task(store.async_save(dict(self._clean_path_cache)))
+
+    async def async_restore_clean_path_cache(self) -> None:
+        """Restore last confirmed clean paths before the first refresh."""
+        store = getattr(self, "_clean_path_store", None)
+        if store is None:
+            return
+        try:
+            restored = await store.async_load()
+        except Exception as err:
+            _LOGGER.debug("Clean-path cache restore failed: %s", err)
+            return
+        if not isinstance(restored, dict):
+            return
+        for sn, value in restored.items():
+            normalized = _clean_path_value(value)
+            if isinstance(sn, str) and normalized in (0, 1):
+                self._clean_path_cache[sn] = normalized
+
+    async def async_refresh_s1_capability_settings(self, *, publish: bool = True) -> None:
+        """Refresh verified S1 capabilities outside push-resettable REST polls.
+
+        The persistence, scheduling, and capability-only publication pattern is
+        reusable. Query contracts remain profile-gated; only the S1 contracts
+        have been validated on hardware.
+        """
+        is_mqtt_connected = getattr(self.api, "is_mqtt_connected", None)
+        if is_mqtt_connected is None or not is_mqtt_connected():
+            return
+
+        changed = False
+        for sn, device in self._devices.items():
+            if model_key(device) != SCUBA_S1_2025_MODEL:
+                continue
+
+            if has_capability(device, Capability.CLEAN_PATH):
+                try:
+                    clean_path = await self.api.query_clean_path_setting(sn)
+                    if clean_path in (0, 1):
+                        previous = self._clean_path_cache.get(sn)
+                        self.set_clean_path_cache(sn, clean_path)
+                        device["clean_path"] = clean_path
+                        changed |= previous != clean_path
+                except Exception as err:
+                    _LOGGER.debug("Clean-path query failed for %s: %s", sn, err)
+
+            try:
+                selected_mode = await self.api.query_cleaning_mode_setting(sn)
+                if selected_mode in (1, 2, 3, 5):
+                    selected_mode_cache = getattr(self, "_selected_mode_cache", None)
+                    if selected_mode_cache is None:
+                        selected_mode_cache = self._selected_mode_cache = {}
+                    previous_mode = selected_mode_cache.get(sn)
+                    selected_mode_cache[sn] = selected_mode
+                    device["selected_mode"] = selected_mode
+                    changed |= previous_mode != selected_mode
+            except Exception as err:
+                _LOGGER.debug("Cleaning-mode query failed for %s: %s", sn, err)
+
+        if publish and changed and self.data:
+            data = dict(self.data)
+            for sn, device in self._devices.items():
+                if sn in data:
+                    normalized = normalize_device_state(device)
+                    capability_updates = {
+                        key: normalized[key] for key in ("clean_path", "mode_options") if key in normalized
+                    }
+                    data[sn] = merge_device_state(data[sn], capability_updates, ignore_none=True)
+            self.async_set_updated_data(data)
 
     async def async_confirm_clean_path_selection(
         self,

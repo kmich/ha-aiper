@@ -73,10 +73,24 @@ retains the observed MicroMesh consumable and suppresses water temperature,
 charge type, roller brush, caterpillar tread, and propeller entities for which
 this device provides no usable data.
 
+The S1 publishes lifecycle snapshots through redundant MQTT topics. Field
+testing found that an older Cleaning snapshot can arrive less than 250 ms after
+a current Parked report and then be corrected again. The integration gives a
+new Parked or Charging report a narrow two-second precedence window so this
+impossible terminal-to-running replay does not leak into Home Assistant history;
+a genuine later start remains accepted.
+
 The query and both writes were captured from the official app. A subsequent
 read-only AWS IoT query from the integration returned code `1` after Adaptive
 was selected. The REST clean-path endpoint returns `-1`, and the setting is not
 present in the device shadow, so neither is used for this model.
+
+The persistence and independently scheduled capability-refresh mechanism is
+not inherently S1-specific. It remains enabled only for `Scuba_S1_2025` because
+that is the profile for which the path/mode query contracts, returned values,
+and safe polling cadence have been verified on hardware. Other model profiles
+can reuse the mechanism after their corresponding capability contracts and
+timing are validated; this implementation does not assume that they match S1.
 
 This model-specific path deliberately bypasses the legacy Scuba endpoint and
 command matrix below. Other Scuba models retain their existing behavior.

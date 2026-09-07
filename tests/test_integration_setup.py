@@ -115,6 +115,7 @@ async def test_setup_entry_stores_runtime_data_and_unload_disconnects(
     assert coordinator.data["SN123"]["device_info"].value == "Pool Robot"
     assert coordinator.data["SN123"]["device_family"].value == "shark"
     assert coordinator.update_interval is not None
+    assert runtime.unsub_capability_refresh is not None
     assert forwarded == [(cast(ConfigEntry, entry), aiper.PLATFORMS)]
 
     assert await aiper.async_unload_entry(hass, cast(ConfigEntry, entry)) is True
