@@ -1,0 +1,16 @@
+{
+  "_bundle_provenance": {
+    "bundle_schema_version": 1,
+    "captured_at": "2026-09-07T00:35:29+00:00",
+    "generated_by": "tools/fixture_from_probe.py",
+    "integration_version": "1.5.0",
+    "notes": "Onboarding bundle from issue #49 (@stevelea); status-code deviation corroborated by issue #38 (@dusty-turner) power-meter data. deviceType added from the device-list entry."
+  },
+  "deviceModel": "Scuba_V3",
+  "deviceType": "3",
+  "fw_main": "V5.0.0",
+  "model": "Scuba_V3",
+  "name": "Scuba V3",
+  "online": 1,
+  "sn": "N3X62001472"
+}

@@ -197,6 +197,42 @@ def test_other_scuba_models_keep_default_status_encoding() -> None:
     assert state["running"].value is True
 
 
+def test_scuba_v3_reports_charging_on_status_2() -> None:
+    """Scuba V3 reports status 2 for the whole charge (issues #38/#49)."""
+    state = normalize_device_state({"model": "Scuba_V3", "machineStatus": 2})
+
+    assert state["status"].value == "Charging"
+    assert state["status"].attributes == {"code": 2}
+    assert state["charging"].value is True
+    assert state["running"].value is False
+
+
+def test_scuba_v3_reports_charged_on_status_3() -> None:
+    """Scuba V3 switches to status 3 once the battery reaches 100%."""
+    state = normalize_device_state({"model": "Scuba_V3", "machineStatus": 3})
+
+    assert state["status"].value == "Charged"
+    assert state["charging"].value is True
+    assert state["running"].value is False
+
+
+def test_scuba_v3_cleaning_status_is_unchanged() -> None:
+    """Only codes 2 and 3 differ on the V3; cleaning stays code 1."""
+    state = normalize_device_state({"model": "Scuba_V3", "machineStatus": 1})
+
+    assert state["status"].value == "Cleaning"
+    assert state["charging"].value is False
+    assert state["running"].value is True
+
+
+def test_scuba_v3_semantics_resolve_from_device_list_model() -> None:
+    """A failed device-info call must not revert the V3 to the default encoding."""
+    state = normalize_device_state({"deviceModel": "Scuba_V3", "machineStatus": 2})
+
+    assert state["status"].value == "Charging"
+    assert state["charging"].value is True
+
+
 def test_identity_metadata_is_normalized_at_boundary() -> None:
     """Platform entities should not need model/name/firmware fallback chains."""
     device = {

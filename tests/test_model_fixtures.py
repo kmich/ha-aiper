@@ -64,6 +64,26 @@ EXPECTED_PROFILES: dict[str, dict[str, Any]] = {
         },
         "mode_map": {1: "Smart", 2: "Floor", 3: "Wall", 4: "Waterline", 5: "Scheduled"},
     },
+    "scuba_v3": {
+        "family": "scuba",
+        "capabilities": {
+            "battery",
+            "bluetooth",
+            "charging",
+            "clean_path",
+            "device_link",
+            "firmware",
+            "in_water",
+            "micromesh_filter",
+            "mode_select",
+            "mqtt_shadow",
+            "online",
+            "status",
+            "warning",
+            "wifi",
+        },
+        "mode_map": {1: "Smart", 2: "Floor", 3: "Wall", 4: "Waterline", 5: "Scheduled"},
+    },
     "scuba_x1": {
         "family": "scuba",
         "capabilities": {
