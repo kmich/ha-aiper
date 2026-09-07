@@ -54,6 +54,7 @@ SURFER_MODEL_MARKERS = (DeviceFamily.SURFER.value,)
 SHARK_MODEL_MARKERS = (DeviceFamily.SHARK.value,)
 SCUBA_S1_2025_MODEL = "scuba_s1_2025"
 SCUBA_P1_PRO_MODEL = "scuba_p1_pro"
+SCUBA_V3_MODEL = "scuba_v3"
 
 COMMON_CAPABILITIES = frozenset(
     {
@@ -109,6 +110,21 @@ SCUBA_P1_PRO_CAPABILITIES = SCUBA_CAPABILITIES - frozenset(
     {
         Capability.WATER_TEMPERATURE,
         Capability.CHARGE_TYPE,
+        Capability.CATERPILLAR_TREAD,
+        Capability.PROPELLER,
+    }
+)
+
+# The Scuba V3 identifies itself as ``Scuba_V3``. Two independent field reports
+# (issues #38 and #49, integration 1.4.0/1.5.0) show an MQTT Machine shadow with
+# no ``temp`` field and a single consumable, a Replaceable MicroMesh Ultra-fine
+# Filter. Roller brush, charge type, caterpillar tread, and propeller data are
+# absent, so those entities stay off.
+SCUBA_V3_CAPABILITIES = SCUBA_CAPABILITIES - frozenset(
+    {
+        Capability.WATER_TEMPERATURE,
+        Capability.CHARGE_TYPE,
+        Capability.ROLLER_BRUSH,
         Capability.CATERPILLAR_TREAD,
         Capability.PROPELLER,
     }
@@ -217,8 +233,24 @@ SCUBA_S1_2025_STATUS_SEMANTICS = StatusSemantics(
     running=frozenset({int(Status.CLEANING)}),
 )
 
+# Scuba V3 (SOC firmware V1.0.4.0). Two independent field reports (issues #38 and
+# #49) show the same S3-style deviation: `status: 2` for the whole charge, then
+# `3` once the battery reaches 100%. Issue #38 cross-checks this against a
+# power-monitoring smart plug (~45 W at the wall while status is 2, a 1-3 W
+# trickle once it is 3), and the shared enum would otherwise read those as
+# "Returning" and "Charging". The default-encoding models remain unaffected.
+SCUBA_V3_STATUS_SEMANTICS = StatusSemantics(
+    labels={
+        int(Status.RETURNING): "Charging",
+        int(Status.CHARGING): "Charged",
+    },
+    charging=frozenset({int(Status.RETURNING), int(Status.CHARGING)}),
+    running=frozenset({int(Status.CLEANING)}),
+)
+
 MODEL_STATUS_SEMANTICS: dict[str, StatusSemantics] = {
     SCUBA_S1_2025_MODEL: SCUBA_S1_2025_STATUS_SEMANTICS,
+    SCUBA_V3_MODEL: SCUBA_V3_STATUS_SEMANTICS,
     "scuba_s3": SCUBA_S3_STATUS_SEMANTICS,
 }
 
@@ -323,6 +355,8 @@ def derive_device_profile(device: dict[str, Any]) -> DeviceProfile:
             capabilities = set(SCUBA_S1_2025_CAPABILITIES)
         elif key == SCUBA_P1_PRO_MODEL:
             capabilities = set(SCUBA_P1_PRO_CAPABILITIES)
+        elif key == SCUBA_V3_MODEL:
+            capabilities = set(SCUBA_V3_CAPABILITIES)
         else:
             capabilities = set(SCUBA_CAPABILITIES)
     elif family == DeviceFamily.SURFER:
@@ -342,7 +376,11 @@ def derive_device_profile(device: dict[str, Any]) -> DeviceProfile:
     else:
         capabilities = set(COMMON_CAPABILITIES)
 
-    if device.get("temp") is not None and key not in (SCUBA_S1_2025_MODEL, SCUBA_P1_PRO_MODEL):
+    if device.get("temp") is not None and key not in (
+        SCUBA_S1_2025_MODEL,
+        SCUBA_P1_PRO_MODEL,
+        SCUBA_V3_MODEL,
+    ):
         capabilities.add(Capability.WATER_TEMPERATURE)
     if device.get("in_water") is not None:
         capabilities.add(Capability.IN_WATER)

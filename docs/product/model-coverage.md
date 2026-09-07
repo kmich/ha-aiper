@@ -12,6 +12,7 @@
 | **Scuba X1** | **Verified** | Status, Battery, Charging, Warning, Mode, Clean Path, History, Consumables | Mode Select, Clean Path Select | Charging state occasionally flips depending on firmware | Low |
 | **Scuba X1 Pro** | Expected | Same as X1 | Same as X1 | Needs real-world verification | Medium |
 | **Scuba P1 Pro** | Experimental | Status, Battery, Charging, In Water, Mode, Clean Path, History, Roller Brush, MicroMesh | Mode Select, Clean Path Select | Onboarded from one community bundle; no water temperature; status encoding and mode map unverified | Medium |
+| **Scuba V3** | Experimental | Status, Battery, Charging, In Water, Mode, Clean Path, History, MicroMesh | Mode Select, Clean Path Select | `status` 2/3 = Charging/Charged (S3-style, corroborated by two reports); no water temperature; app only offers Auto / AI Patrol / Floor but the command IDs are uncaptured, so the mode map is still generic | Medium |
 | **Surfer S2** | Expected | Status, Battery, Solar Charging, Warning, Mode, Consumables | Start/Stop (Running) | Clean path preference via app may not sync perfectly with MQTT | Medium |
 | **Shark** | Verified | Status, Battery, Charging, Warning, Consumables | Mode Select (if explicit) | Profile is heavily guessed; controls may fail | High |
 | **HydroComm** | **Verified** | pH, ORP, EC, TDS, Chlorine, Score, Probes, Battery, Charging, Alarms | *None* (Read-only monitor) | None known | Low |

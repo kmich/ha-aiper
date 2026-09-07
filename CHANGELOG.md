@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+- Scuba V3 (`Scuba_V3`) capability profile, onboarded from community reports
+  (issues #38 and #49). `MODEL_STATUS_SEMANTICS["scuba_v3"]` maps
+  `machineStatus` 2 to Charging and 3 to Charged (the same deviation as the S3,
+  corroborated by power-meter measurements in #38), so the charging state is no
+  longer shown as "Returning". The water-temperature entity is dropped (no
+  `temp` in the shadow). The cleaning-mode options remain the generic Scuba set
+  pending a capture of the V3's real mode command IDs. Seeded fixture and
+  profile regression tests included.
+
 ### Fixed
 - Persisted the last confirmed `Scuba_S1_2025` clean-path preference across
   integration restarts. S1 path and mode queries now also run on an independent

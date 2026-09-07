@@ -164,6 +164,32 @@ encoding (no `MODEL_STATUS_SEMANTICS` entry) and the generic Scuba mode map
 (`1` Smart, `2` Floor, `3` Wall, `4` Waterline, `5` Scheduled); there is no app
 evidence to narrow it. Both are `# TODO: verify on hardware`.
 
+### Scuba V3
+
+Identifies as `Scuba_V3`. Onboarded from two independent field reports (issues
+#38 and #49) rather than a single bundle, and not verified on hardware by the
+maintainer.
+
+Both reports agree the V3 uses the same charge-status deviation as the S3:
+`machineStatus` stays `2` for the whole charge, then flips to `3` once the
+battery reaches 100%. Issue #38 cross-checks this against a power-monitoring
+smart plug (~45 W at the wall while the code is `2`, a 1-3 W trickle once it is
+`3`). Without a `MODEL_STATUS_SEMANTICS` entry the shared enum reads those as
+Returning and Charging, so `MODEL_STATUS_SEMANTICS["scuba_v3"]` maps `2` to
+Charging and `3` to Charged, both counted as charging and neither as running.
+
+The MQTT `Machine` shadow carries no `temp` field and the only consumable is a
+Replaceable MicroMesh Ultra-fine Filter, so the capability profile matches the
+conservative S1 base (no water temperature, charge type, roller brush,
+caterpillar tread, or propeller). The clean-path query succeeded (`0`).
+
+Known gap: the Aiper app for the V3 offers only Auto, AI Patrol, and Floor, and
+issue #38 reports the cleaning-mode select flapping to `unknown` under the
+generic five-mode map. The V3's real mode command IDs have not been captured, so
+the mode map is left at the Scuba default until an app-side capture is
+available. `# TODO: verify on hardware` -- V3 mode command IDs; whether a
+submerged cleaning cycle ever reports a status code other than the default `1`.
+
 ## Legacy Clean-Path Runtime Path
 
 Scuba models other than `Scuba_S1_2025` still use the legacy clean-path matrix

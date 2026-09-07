@@ -120,6 +120,32 @@ def test_scuba_p1_pro_recognized_via_device_model_fallback() -> None:
     assert Capability.WATER_TEMPERATURE not in profile.capabilities
 
 
+def test_scuba_v3_profile_drops_temperature_and_roller_brush() -> None:
+    """V3 (issues #38/#49): no shadow temp, only a MicroMesh filter consumable.
+
+    Same conservative capability base as the S1. Mode map stays the generic
+    Scuba default until the V3's real command IDs are captured.
+    """
+    profile = derive_device_profile({"model": "Scuba_V3"})
+
+    assert profile.family is DeviceFamily.SCUBA
+    assert Capability.CLEAN_PATH in profile.capabilities
+    assert Capability.CLEANING_MODE_SELECT in profile.capabilities
+    assert Capability.MICROMESH_FILTER in profile.capabilities
+    assert Capability.WATER_TEMPERATURE not in profile.capabilities
+    assert Capability.ROLLER_BRUSH not in profile.capabilities
+    assert Capability.CHARGE_TYPE not in profile.capabilities
+    assert Capability.CATERPILLAR_TREAD not in profile.capabilities
+    assert Capability.PROPELLER not in profile.capabilities
+
+
+def test_scuba_v3_ignores_stray_temp_evidence() -> None:
+    """A stray `temp` field must not re-add the water-temperature entity."""
+    profile = derive_device_profile({"model": "Scuba_V3", "temp": 26})
+
+    assert Capability.WATER_TEMPERATURE not in profile.capabilities
+
+
 def test_scuba_s1_recognized_via_device_model_fallback() -> None:
     """A device known only by `deviceModel` (before the first successful
     get_device_info() call populates `model`) must still resolve to the
