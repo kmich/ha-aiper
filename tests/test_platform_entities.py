@@ -16,7 +16,7 @@ from custom_components.aiper.api import AiperApi
 from custom_components.aiper.const import DOMAIN
 from custom_components.aiper.controller import AiperDeviceController
 from custom_components.aiper.coordinator import AiperDataUpdateCoordinator
-from custom_components.aiper.profiles import derive_device_profile
+from custom_components.aiper.profiles import Capability, derive_device_profile
 from custom_components.aiper.state import normalize_device_state
 
 
@@ -64,16 +64,28 @@ class FakeCoordinator:
         self.command_state_cleared.append(sn)
 
 
-def _profiled_device(device: dict[str, Any]) -> dict[str, Any]:
+def _profiled_device(
+    device: dict[str, Any],
+    *,
+    extra_capabilities: frozenset[Capability] = frozenset(),
+) -> dict[str, Any]:
     profile = derive_device_profile(device)
     out = dict(device)
-    out["capabilities"] = [cap.value for cap in profile.capabilities]
+    out["capabilities"] = [cap.value for cap in profile.capabilities | extra_capabilities]
     out["mode_map"] = profile.mode_map
     return normalize_device_state(out)
 
 
-def _hass_with_device(hass: HomeAssistant, device: dict[str, Any]) -> tuple[ConfigEntry, FakeCoordinator]:
-    coordinator = FakeCoordinator(data={"SN123": _profiled_device(device)}, api=FakeApi())
+def _hass_with_device(
+    hass: HomeAssistant,
+    device: dict[str, Any],
+    *,
+    extra_capabilities: frozenset[Capability] = frozenset(),
+) -> tuple[ConfigEntry, FakeCoordinator]:
+    coordinator = FakeCoordinator(
+        data={"SN123": _profiled_device(device, extra_capabilities=extra_capabilities)},
+        api=FakeApi(),
+    )
     entry = MockConfigEntry(domain=DOMAIN, entry_id="entry-1", options={})
     entry.runtime_data = AiperRuntimeData(
         api=cast(AiperApi, coordinator.api),
@@ -281,6 +293,7 @@ async def test_scuba_entity_publication_uses_scuba_capabilities(hass: HomeAssist
         if entity.entity_description.key != "last_cleaning_start"
     )
     assert "mode" in _keys(sensor_entities)
+    assert "estimated_cleaning_time" not in _keys(sensor_entities)
     assert _entity_by_key(sensor_entities, "mode").available is False
     assert "in_water" in _keys(binary_entities)
     assert "running" in _keys(binary_entities)
@@ -331,6 +344,8 @@ async def test_scuba_s1_only_publishes_observed_entities(hass: HomeAssistant) ->
         "propeller",
     }.isdisjoint(sensor_keys)
     assert "clean_path" in sensor_keys
+    assert "estimated_cleaning_time" in sensor_keys
+    assert _entity_by_key(sensor_entities, "estimated_cleaning_time").native_value == 242
     assert _select_keys(select_entities) == {"mode_selection", "clean_path"}
     mode_select = next(entity for entity in select_entities if entity._key == "mode_selection")
     clean_path_select = next(entity for entity in select_entities if entity._key == "clean_path")
@@ -340,6 +355,30 @@ async def test_scuba_s1_only_publishes_observed_entities(hass: HomeAssistant) ->
     assert clean_path_select.current_option == "S-shaped"
     assert _entity_by_key(sensor_entities, "last_cleaning_mode").native_value == "Auto"
     assert _entity_by_key(sensor_entities, "runtime").native_value == 4.03
+
+
+@pytest.mark.asyncio
+async def test_estimated_cleaning_time_factory_is_model_agnostic_when_capability_enabled(
+    hass: HomeAssistant,
+) -> None:
+    """A validated model can opt in through its profile without sensor changes."""
+    entry, _coordinator = _hass_with_device(
+        hass,
+        {
+            "sn": "SN123",
+            "name": "Future validated cleaner",
+            "model": "Scuba_X1",
+            "machineStatus": 1,
+            "runTime": 123,
+        },
+        extra_capabilities=frozenset({Capability.ESTIMATED_CLEANING_TIME}),
+    )
+
+    sensor_entities = await _setup_platform(sensor, hass, entry)
+    estimate = _entity_by_key(sensor_entities, "estimated_cleaning_time")
+
+    assert estimate.unique_id == "SN123_estimated_cleaning_time"
+    assert estimate.native_value == 74
 
 
 @pytest.mark.asyncio
@@ -456,6 +495,7 @@ async def test_hydrocomm_entity_publication_uses_monitor_capabilities(hass: Home
     }.issubset(sensor_keys)
     assert "mode" not in sensor_keys
     assert "runtime" not in sensor_keys
+    assert "estimated_cleaning_time" not in sensor_keys
     assert "total_cleanings" not in sensor_keys
     assert "roller_brush" not in sensor_keys
     assert _entity_by_key(sensor_entities, "status").native_value == "Charging"

@@ -70,9 +70,16 @@ def test_scuba_s1_exposes_verified_clean_path_without_temperature() -> None:
     assert Capability.CHARGE_TYPE not in profile.capabilities
     assert Capability.ROLLER_BRUSH not in profile.capabilities
     assert Capability.MICROMESH_FILTER in profile.capabilities
+    assert Capability.ESTIMATED_CLEANING_TIME in profile.capabilities
     assert Capability.CATERPILLAR_TREAD not in profile.capabilities
     assert Capability.PROPELLER not in profile.capabilities
     assert profile.mode_map == {1: "Auto", 2: "Floor", 3: "Wall", 5: "Scheduled"}
+
+
+def test_estimated_runtime_capability_is_not_enabled_for_unvalidated_models() -> None:
+    """Reusable estimation remains disabled until a model's semantics are verified."""
+    for model in ("Scuba_X1", "Surfer_S2", "Shark_X", "Mystery"):
+        assert Capability.ESTIMATED_CLEANING_TIME not in derive_device_profile({"model": model}).capabilities
 
 
 def test_scuba_s1_mode_profile_rejects_generic_waterline_evidence() -> None:

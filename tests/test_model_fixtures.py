@@ -31,6 +31,7 @@ EXPECTED_PROFILES: dict[str, dict[str, Any]] = {
             "charging",
             "clean_path",
             "device_link",
+            "estimated_cleaning_time",
             "firmware",
             "in_water",
             "micromesh_filter",
