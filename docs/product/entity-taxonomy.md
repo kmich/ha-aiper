@@ -14,6 +14,8 @@ This document classifies every entity exposed by `ha-aiper`. The goal is to prov
 | **Solar Charging** | Binary Sensor | Supported | **Enabled** | None | Solar charging state | No |
 | **Warning** | Sensor | All | **Enabled** | None | Decoded error text | Yes (Alert on warning) |
 | **Mode** | Sensor | Cleaners | **Enabled** | None | Current cleaning mode | Yes |
+| **Current Cleaning Time** | Sensor | Cleaners | **Enabled** | None | Raw cloud-reported cleaning runtime in hours | Yes |
+| **Estimated Cleaning Time** | Sensor | Scuba (S1) | **Enabled** | None | Locally progressed active cleaning duration in minutes, anchored to raw runtime | Yes |
 | **Cleaning Mode** | Select | Cleaners | **Enabled** | None | Change cleaning mode | Yes (Set before schedule) |
 | **Clean Path** | Select | Scuba | **Enabled** | None | Change pathing algorithm | No |
 | **Running** | Switch | Surfer | **Enabled** | None | Start/stop cleaning | Yes |

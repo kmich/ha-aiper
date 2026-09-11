@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-09-11
+
 ### Added
 - Added a reusable, capability-gated Estimated Cleaning Time duration sensor.
   It is enabled initially only for `Scuba_S1_2025`, whose runtime units,

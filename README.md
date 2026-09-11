@@ -60,7 +60,7 @@ generic Scuba set; the V3's real mode command IDs have not been captured yet.
 
 The integration uses "capability profiles" to automatically expose only the features your device supports.
 
-- **Pool Cleaners:** Live state, battery, cleaning mode controls, clean path preferences, Surfer S2 start/stop, and filter/brush consumable tracking.
+- **Pool Cleaners:** Live state, battery, estimated cleaning duration (Scuba S1), cleaning mode controls, clean path preferences, Surfer S2 start/stop, and filter/brush consumable tracking.
 - **Water Quality Monitors:** Live pH, ORP (mV), EC (µS/cm), TDS (ppm), Free Chlorine (mg/L), overall Water Quality Score, and bitmask-decoded alarm warnings.
 - **Cloud Connection Health:** A dedicated "Aiper Cloud" device with `binary_sensor.aiper_cloud_cloud_connected`, a `Connection State` sensor, and a `Last Cloud Update` timestamp — so an automation can alert you when the integration loses its cloud/MQTT link.
 - **Device Actions:** Safe buttons to force-refresh cloud metadata or re-sync the MQTT shadow state.
