@@ -8,7 +8,7 @@
 
 | Model / Family | Status | Entities | Controls | Known Gaps | Risk Level |
 |---|---|---|---|---|---|
-| **Scuba S1 (2025/2026)** | **Verified** | Status, Battery, Charging, In Water, Mode, Clean Path, History, MicroMesh | Mode Select, Clean Path Select | Wi-Fi and cloud updates are intermittent while submerged | Medium |
+| **Scuba S1 (2025/2026)** | **Verified** | Status, Battery, Charging, In Water, Mode, Clean Path, History, MicroMesh, Estimated Cleaning Time | Mode Select, Clean Path Select | Wi-Fi and cloud updates are intermittent while submerged | Medium |
 | **Scuba X1** | **Verified** | Status, Battery, Charging, Warning, Mode, Clean Path, History, Consumables | Mode Select, Clean Path Select | Charging state occasionally flips depending on firmware | Low |
 | **Scuba X1 Pro** | Expected | Same as X1 | Same as X1 | Needs real-world verification | Medium |
 | **Scuba P1 Pro** | Experimental | Status, Battery, Charging, In Water, Mode, Clean Path, History, Roller Brush, MicroMesh | Mode Select, Clean Path Select | Onboarded from one community bundle; no water temperature; status encoding and mode map unverified | Medium |

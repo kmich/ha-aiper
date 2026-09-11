@@ -371,6 +371,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
 
 ESTIMATED_CLEANING_TIME_DESCRIPTION = AiperSensorEntityDescription(
     key="estimated_cleaning_time",
+    translation_key="estimated_cleaning_time",
     name="Estimated Cleaning Time",
     icon="mdi:timer-sand",
     native_unit_of_measurement=UnitOfTime.MINUTES,

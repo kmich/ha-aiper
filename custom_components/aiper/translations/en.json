@@ -93,6 +93,9 @@
       },
       "last_cloud_update": {
         "name": "Last Cloud Update"
+      },
+      "estimated_cleaning_time": {
+        "name": "Estimated Cleaning Time"
       }
     },
     "binary_sensor": {

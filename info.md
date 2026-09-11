@@ -3,7 +3,7 @@
 Bring your Aiper pool cleaner and water quality monitor into Home Assistant. This integration automatically detects and connects to your Aiper cloud account to expose real-time telemetry and safe controls.
 
 ## Features
-- **Pool Cleaners (Scuba S1, Scuba X1, Surfer S2, Shark):** Live state, battery, cleaning mode controls, clean path preferences, Surfer S2 start/stop, and supported consumable tracking.
+- **Pool Cleaners (Scuba S1, Scuba X1, Surfer S2, Shark):** Live state, battery, estimated cleaning duration (Scuba S1), cleaning mode controls, clean path preferences, Surfer S2 start/stop, and supported consumable tracking.
 - **Water Quality Monitors (HydroComm, W2 Series):** Live pH, ORP (mV), EC (µS/cm), TDS (ppm), Free Chlorine (mg/L), overall Water Quality Score, and bitmask-decoded alarm warnings.
 - **Cloud connection health:** An "Aiper Cloud" device with Cloud Connected, Connection State, and Last Cloud Update entities so automations can react when the cloud link drops.
 - **Guided recovery:** A Repairs prompt for an unrecognized device model or rejected credentials, instead of the integration failing silently.
@@ -28,7 +28,14 @@ Alternatively, follow these manual steps:
 
 ## Recent Changes
 
-### v1.4.0
+### v1.7.0
+- Added a reusable, capability-gated Estimated Cleaning Time duration sensor for `Scuba_S1_2025` that advances once per minute while cleaning and anchors to raw cloud runtime.
+
+### v1.6.0
+- Added Scuba V3 (`Scuba_V3`) capability profile, mapped charging status semantics, and stabilized S1 clean-path persistence and capability refreshes.
+
+### v1.5.0
+- Added Scuba P1 Pro capability profile, per-field MQTT/REST source-freshness reconciliation, and field_sources diagnostics.
 - Added an "Aiper Cloud" device exposing connection health: Cloud Connected, Connection State, and Last Cloud Update.
 - Added Repairs issues for unrecognized device models (links the model onboarding guide) and for rejected credentials (triggers re-authentication).
 - Added an internal MQTT connection-status tracker so diagnostics report one authoritative connection state, plus a redacted one-command model-onboarding bundle for reporting new hardware.
