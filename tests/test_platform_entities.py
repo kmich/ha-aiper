@@ -345,7 +345,7 @@ async def test_scuba_s1_only_publishes_observed_entities(hass: HomeAssistant) ->
     }.isdisjoint(sensor_keys)
     assert "clean_path" in sensor_keys
     assert "estimated_cleaning_time" in sensor_keys
-    assert _entity_by_key(sensor_entities, "estimated_cleaning_time").native_value == pytest.approx(241.8)
+    assert _entity_by_key(sensor_entities, "estimated_cleaning_time").native_value == 242
     assert _select_keys(select_entities) == {"mode_selection", "clean_path"}
     mode_select = next(entity for entity in select_entities if entity._key == "mode_selection")
     clean_path_select = next(entity for entity in select_entities if entity._key == "clean_path")
@@ -378,7 +378,7 @@ async def test_estimated_cleaning_time_factory_is_model_agnostic_when_capability
     estimate = _entity_by_key(sensor_entities, "estimated_cleaning_time")
 
     assert estimate.unique_id == "SN123_estimated_cleaning_time"
-    assert estimate.native_value == pytest.approx(73.8)
+    assert estimate.native_value == 74
 
 
 @pytest.mark.asyncio

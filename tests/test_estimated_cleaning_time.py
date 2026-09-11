@@ -95,9 +95,16 @@ def test_changed_authoritative_runtime_corrects_and_reanchors() -> None:
     coordinator.data["SN123"] = _normalized_device(runtime_minutes=8)
 
     assert entity._sync_with_coordinator() is True
-    assert entity.native_value == pytest.approx(7.8)
+    assert entity.native_value == 8
     assert entity._advance_estimate_one_minute() is True
-    assert entity.native_value == pytest.approx(8.8)
+    assert entity.native_value == 9
+
+
+def test_large_integer_minute_anchor_survives_hour_normalization() -> None:
+    """Rounded normalized hours reconstruct the original whole-minute sample."""
+    entity, _coordinator = _entity(_normalized_device(runtime_minutes=242))
+
+    assert entity.native_value == 242
 
 
 def test_unchanged_stale_runtime_does_not_reanchor() -> None:
@@ -114,17 +121,16 @@ def test_unchanged_stale_runtime_does_not_reanchor() -> None:
     assert entity.native_value == 14
 
 
-def test_zero_runtime_resets_and_stops_progression() -> None:
-    """An authoritative current-cycle reset returns the estimate to zero."""
-    entity, coordinator = _entity(_normalized_device(runtime_minutes=12))
-    entity._advance_estimate_one_minute()
+def test_zero_runtime_starts_and_ticks_while_cleaning() -> None:
+    """An active lifecycle can begin estimating before runtime becomes nonzero."""
+    entity, _coordinator = _entity(_normalized_device(runtime_minutes=0))
 
-    coordinator.data["SN123"] = _normalized_device(runtime_minutes=0)
-
-    assert entity._sync_with_coordinator() is False
     assert entity.native_value == 0
-    assert entity._advance_estimate_one_minute() is False
-    assert entity.native_value == 0
+    assert entity._authoritative_runtime_hours == 0
+    assert entity._advance_estimate_one_minute() is True
+    assert entity.native_value == 1
+    assert entity._advance_estimate_one_minute() is True
+    assert entity.native_value == 2
 
 
 def test_stopped_lifecycle_resets_and_stops_progression() -> None:
@@ -179,8 +185,31 @@ async def test_restart_while_already_running_restores_and_resumes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_restart_restore_yields_to_changed_authoritative_sample() -> None:
-    """A newer raw sample wins over a restored estimate immediately."""
+async def test_restart_while_running_from_zero_anchor_restores_and_resumes() -> None:
+    """Restart restoration also supports an active zero-runtime anchor."""
+    entity, _coordinator = _entity(_normalized_device(runtime_minutes=0))
+    entity.async_get_last_state = AsyncMock(  # type: ignore[method-assign]
+        return_value=State(
+            "sensor.scuba_s1_estimated_cleaning_time",
+            "3",
+            {"authoritative_runtime_hours": 0.0},
+            last_changed=datetime.now(UTC),
+            last_reported=datetime.now(UTC),
+            last_updated=datetime.now(UTC),
+        )
+    )
+
+    await entity._async_restore_estimate()
+
+    assert entity._sync_with_coordinator() is False
+    assert entity.native_value == 3
+    assert entity._advance_estimate_one_minute() is True
+    assert entity.native_value == 4
+
+
+@pytest.mark.asyncio
+async def test_restart_restore_rejects_mismatched_authoritative_anchor() -> None:
+    """A saved estimate from another raw anchor is rejected immediately."""
     entity, _coordinator = _entity(_normalized_device(runtime_minutes=18))
     entity.async_get_last_state = AsyncMock(  # type: ignore[method-assign]
         return_value=State(
@@ -195,5 +224,5 @@ async def test_restart_restore_yields_to_changed_authoritative_sample() -> None:
 
     await entity._async_restore_estimate()
 
-    assert entity._sync_with_coordinator() is True
+    assert entity._sync_with_coordinator() is False
     assert entity.native_value == 18

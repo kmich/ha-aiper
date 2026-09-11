@@ -609,7 +609,7 @@ class AiperEstimatedCleaningTimeSensor(CoordinatorEntity[AiperDataUpdateCoordina
     async def _async_restore_estimate(self) -> None:
         """Restore only when current normalized lifecycle still permits estimating."""
         snapshot = self._current_snapshot()
-        if snapshot is None or not snapshot[0] or snapshot[1] is None or snapshot[1] <= 0:
+        if snapshot is None or not snapshot[0] or snapshot[1] is None or snapshot[1] < 0:
             return
         last_state = await self.async_get_last_state()
         if last_state is None:
@@ -620,6 +620,8 @@ class AiperEstimatedCleaningTimeSensor(CoordinatorEntity[AiperDataUpdateCoordina
         except (KeyError, TypeError, ValueError):
             return
         if not math.isfinite(restored_minutes) or not math.isfinite(restored_anchor):
+            return
+        if restored_anchor != snapshot[1]:
             return
         self._estimated_minutes = max(0.0, restored_minutes)
         self._authoritative_runtime_hours = max(0.0, restored_anchor)
@@ -668,12 +670,12 @@ class AiperEstimatedCleaningTimeSensor(CoordinatorEntity[AiperDataUpdateCoordina
             self._reset_estimate()
             return False
         active, runtime_hours = snapshot
-        if not active or runtime_hours is None or runtime_hours <= 0:
+        if not active or runtime_hours is None or runtime_hours < 0:
             self._reset_estimate()
             return False
         if runtime_hours != self._authoritative_runtime_hours:
             self._authoritative_runtime_hours = runtime_hours
-            self._estimated_minutes = runtime_hours * 60
+            self._estimated_minutes = float(round(runtime_hours * 60))
             self._restart_ticking()
             return True
         self._start_ticking()
@@ -684,7 +686,7 @@ class AiperEstimatedCleaningTimeSensor(CoordinatorEntity[AiperDataUpdateCoordina
         if self._sync_with_coordinator():
             return True
         snapshot = self._current_snapshot()
-        if snapshot is None or not snapshot[0] or snapshot[1] is None or snapshot[1] <= 0:
+        if snapshot is None or not snapshot[0] or snapshot[1] is None or snapshot[1] < 0:
             return False
         self._estimated_minutes += 1
         return True
