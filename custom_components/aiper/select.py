@@ -15,9 +15,8 @@ from typing import Any
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import AiperConfigEntry
 from .const import (
@@ -27,16 +26,21 @@ from .const import (
 )
 from .controller import AiperDeviceController
 from .coordinator import AiperDataUpdateCoordinator
-from .helpers import coerce_int, device_online, supports_clean_path, supports_mode_control
+from .entity import AiperControlEntity, device_online
+from .helpers import supports_clean_path, supports_mode_control
+from .state_common import _coerce_int as coerce_int
 
 _LOGGER = logging.getLogger(__name__)
 
+# Commands are serialized per device by the API; don't fan out in parallel.
+PARALLEL_UPDATES = 1
 
-class AiperSelectBase(CoordinatorEntity[AiperDataUpdateCoordinator], SelectEntity):
+
+class AiperSelectBase(AiperControlEntity, SelectEntity):
     """Base class for Aiper select entities."""
 
-    _requires_online: bool = True
-    _requires_mqtt: bool = False
+    # Precondition flags churn often and carry no history value.
+    _unrecorded_attributes = frozenset({"device_online", "mqtt_connected"})
 
     def __init__(
         self,
@@ -44,49 +48,16 @@ class AiperSelectBase(CoordinatorEntity[AiperDataUpdateCoordinator], SelectEntit
         controller: AiperDeviceController,
         sn: str,
         key: str,
-        name: str,
         *,
         icon: str | None = None,
         mqtt_required: bool = False,
         enabled_default: bool = True,
     ) -> None:
-        super().__init__(coordinator)
-        self.controller = controller
-        self._sn = sn
-        self._key = key
-        self._attr_name = name
-        self._attr_unique_id = f"{sn}_{key}"
+        super().__init__(coordinator, controller, sn, key)
+        self._attr_translation_key = key
         self._attr_icon = icon
         self._attr_entity_registry_enabled_default = enabled_default
         self._requires_mqtt = mqtt_required
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        dev = (self.coordinator.data or {})[self._sn]
-        device_info = dev["device_info"]
-        device_info_attrs = device_info.attributes
-        return {
-            "identifiers": {(DOMAIN, self._sn)},
-            "name": str(device_info.value or self._sn),
-            "manufacturer": "Aiper",
-            "model": device_info_attrs.get("model"),
-            "sw_version": device_info_attrs.get("sw_version"),
-        }
-
-    @property
-    def available(self) -> bool:
-        if not self.coordinator.last_update_success:
-            return False
-
-        # If MQTT is required for this control, it is only available when MQTT is connected.
-        if self._requires_mqtt and not self.coordinator.api.is_mqtt_connected():
-            return False
-
-        if not self._requires_online:
-            return True
-
-        online = device_online(self.coordinator, self._sn)
-        return online is not False
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -100,15 +71,6 @@ class AiperSelectBase(CoordinatorEntity[AiperDataUpdateCoordinator], SelectEntit
 
         return attrs
 
-    def _raise_if_control_blocked(self) -> None:
-        online = device_online(self.coordinator, self._sn)
-
-        if self._requires_mqtt and not self.coordinator.api.is_mqtt_connected():
-            raise HomeAssistantError("Aiper MQTT connection is not available; cannot send this command.")
-
-        if self._requires_online and online is False:
-            raise HomeAssistantError("Device is offline; controls are disabled.")
-
 
 class AiperCleaningModeSelect(AiperSelectBase):
     """Select for choosing cleaning mode."""
@@ -118,17 +80,14 @@ class AiperCleaningModeSelect(AiperSelectBase):
         coordinator: AiperDataUpdateCoordinator,
         controller: AiperDeviceController,
         sn: str,
-        name: str,
         supported_mode_ids: list[int],
         mode_map: dict[int, str],
     ) -> None:
-        # MQTT is required to change the mode.
         super().__init__(
             coordinator,
             controller,
             sn,
             "mode_selection",
-            f"{name} Cleaning mode",
             icon="mdi:robot-vacuum",
             mqtt_required=False,
             enabled_default=True,
@@ -164,12 +123,14 @@ class AiperCleaningModeSelect(AiperSelectBase):
         return None
 
     def _get_current_mode_id(self) -> int | None:
-        dev = (self.coordinator.data or {})[self._sn]
-        reported = coerce_int(dev["mode"].attributes.get("code"))
+        dev = self.device_data or {}
+        mode_state = dev.get("mode")
+        reported = coerce_int(mode_state.attributes.get("code")) if mode_state is not None else None
         if reported in self._mode_ids:
             return reported
 
-        selected = coerce_int(dev["mode_options"].attributes.get("selected_mode"))
+        mode_options = dev.get("mode_options")
+        selected = coerce_int(mode_options.attributes.get("selected_mode")) if mode_options is not None else None
         if selected in self._mode_ids:
             return selected
 
@@ -201,7 +162,11 @@ class AiperCleaningModeSelect(AiperSelectBase):
                 mode_id = int(mid)
                 break
         if mode_id is None:
-            raise HomeAssistantError(f"Invalid cleaning mode: {option}")
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="invalid_option",
+                translation_placeholders={"option": option},
+            )
 
         # No-op if already in that mode.
         cur = self._get_current_mode_id()
@@ -209,10 +174,7 @@ class AiperCleaningModeSelect(AiperSelectBase):
             return
 
         result = await self.controller.set_cleaning_mode(self._sn, mode_id)
-        if not result.ok:
-            if not self.coordinator.api.is_mqtt_connected():
-                raise HomeAssistantError("Failed to set cleaning mode: MQTT is not connected.")
-            raise HomeAssistantError(f"Failed to set cleaning mode: {result.reason or 'device rejected the command'}")
+        self._raise_for_failed_command(result)
 
         # Ask for a shadow refresh and a coordinator refresh.
         with suppress(Exception):
@@ -229,14 +191,12 @@ class AiperCleanPathSelect(AiperSelectBase):
         coordinator: AiperDataUpdateCoordinator,
         controller: AiperDeviceController,
         sn: str,
-        name: str,
     ) -> None:
         super().__init__(
             coordinator,
             controller,
             sn,
             "clean_path",
-            f"{name} Clean path",
             icon="mdi:routes",
             mqtt_required=False,
             enabled_default=True,
@@ -245,19 +205,16 @@ class AiperCleanPathSelect(AiperSelectBase):
 
     @property
     def current_option(self) -> str | None:
-        dev = (self.coordinator.data or {})[self._sn]
         pending = coerce_int(self.coordinator.get_pending_command_target(self._sn, "clean_path"))
         if pending in CLEAN_PATH_MAP:
             return CLEAN_PATH_MAP[pending]
-        label = dev["clean_path"].value
+        clean_path = self.entity_state("clean_path")
+        label = clean_path.value if clean_path is not None else None
         if label is not None and label not in CLEAN_PATH_MAP.values():
-            try:
-                opts = list(self._attr_options or [])
-                if label not in opts:
-                    opts.append(label)
-                    self._attr_options = opts
-            except Exception:
-                pass
+            # Surface firmware-specific paths (e.g. "Path 2") as selectable options.
+            opts = list(self._attr_options or [])
+            if label not in opts:
+                self._attr_options = [*opts, label]
         return str(label) if label is not None else None
 
     async def async_select_option(self, option: str) -> None:
@@ -278,20 +235,19 @@ class AiperCleanPathSelect(AiperSelectBase):
                 path_id = None
 
         if path_id is None:
-            raise HomeAssistantError(f"Invalid clean path: {option}")
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="invalid_option",
+                translation_placeholders={"option": option},
+            )
 
-        dev = (self.coordinator.data or {})[self._sn]
-        cur = coerce_int(dev["clean_path"].attributes.get("code"))
+        clean_path = self.entity_state("clean_path")
+        cur = coerce_int(clean_path.attributes.get("code")) if clean_path is not None else None
         if cur is not None and cur == path_id:
             return
 
         result = await self.controller.set_clean_path(self._sn, path_id)
-        if not result.ok:
-            if not self.coordinator.api.is_mqtt_connected():
-                raise HomeAssistantError(
-                    "Failed to set clean path: cloud control is unavailable because MQTT is not connected."
-                )
-            raise HomeAssistantError(f"Failed to set clean path: {result.reason or 'device rejected the command'}")
+        self._raise_for_failed_command(result)
 
         # Optimistically cache the selection. Some firmwares never report cleanPath
         # in reported shadow state, so without this the entity can remain Unknown.
@@ -315,7 +271,11 @@ class AiperCleanPathSelect(AiperSelectBase):
             await self.coordinator.async_request_refresh()
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry, async_add_entities) -> None:
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: AiperConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
     """Set up select entities from a config entry."""
     coordinator: AiperDataUpdateCoordinator = entry.runtime_data.coordinator
     controller: AiperDeviceController = entry.runtime_data.controller
@@ -323,8 +283,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry, async_
     entities: list[SelectEntity] = []
     if coordinator.data:
         for sn, dev in coordinator.data.items():
-            device_info = dev["device_info"]
-            name = str(device_info.value or sn)
             mode_options = dev["mode_options"]
             supported = mode_options.value
             if not isinstance(supported, list) or not supported:
@@ -335,8 +293,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry, async_
                 mode_map = {mode_id: mode_label(mode_id) for mode_id in supported_ids}
 
             if supports_clean_path(dev):
-                entities.append(AiperCleanPathSelect(coordinator, controller, sn, name))
+                entities.append(AiperCleanPathSelect(coordinator, controller, sn))
             if supports_mode_control(dev):
-                entities.append(AiperCleaningModeSelect(coordinator, controller, sn, name, supported_ids, mode_map))
+                entities.append(AiperCleaningModeSelect(coordinator, controller, sn, supported_ids, mode_map))
 
     async_add_entities(entities)

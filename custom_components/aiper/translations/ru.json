@@ -16,6 +16,14 @@
         "data": {
           "password": "Пароль"
         }
+      },
+      "reconfigure": {
+        "title": "Перенастройка Aiper",
+        "description": "Обновите регион или пароль для {username}.",
+        "data": {
+          "password": "Пароль",
+          "region": "Регион"
+        }
       }
     },
     "error": {
@@ -26,7 +34,9 @@
       "session_conflict": "Ваш аккаунт Aiper активен в другой сессии (например, в мобильном приложении). Подождите несколько минут и попробуйте снова."
     },
     "abort": {
-      "already_configured": "Эта учетная запись уже настроена"
+      "already_configured": "Эта учетная запись уже настроена",
+      "reauth_successful": "Повторная аутентификация выполнена успешно",
+      "reconfigure_successful": "Перенастройка выполнена успешно"
     }
   },
   "options": {
@@ -78,6 +88,120 @@
       },
       "charge_type": {
         "name": "Тип зарядки"
+      },
+      "connection_state": {
+        "name": "Состояние подключения",
+        "state": {
+          "initializing": "Инициализация",
+          "connecting": "Подключение",
+          "connected": "Подключено",
+          "disconnected": "Отключено",
+          "reconnecting": "Переподключение",
+          "credentials_stale": "Учётные данные устарели",
+          "fatal": "Требуется внимание"
+        }
+      },
+      "last_cloud_update": {
+        "name": "Последнее обновление из облака"
+      },
+      "estimated_cleaning_time": {
+        "name": "Расчётное время уборки"
+      },
+      "mode": {
+        "name": "Режим"
+      },
+      "wifi_signal": {
+        "name": "Сигнал WiFi"
+      },
+      "runtime": {
+        "name": "Текущее время уборки"
+      },
+      "total_cleanings": {
+        "name": "Всего уборок"
+      },
+      "total_cleaning_time": {
+        "name": "Общее время уборки"
+      },
+      "total_cleaning_time_minutes": {
+        "name": "Общее время уборки (минуты)"
+      },
+      "last_cleaning_mode": {
+        "name": "Последний режим уборки"
+      },
+      "last_cleaning_start": {
+        "name": "Начало последней уборки"
+      },
+      "last_cleaning_duration": {
+        "name": "Длительность последней уборки"
+      },
+      "wqs_sample_time": {
+        "name": "Время пробы воды"
+      },
+      "supply_voltage": {
+        "name": "Напряжение питания"
+      },
+      "solar_voltage": {
+        "name": "Напряжение солнечной панели"
+      },
+      "light_level": {
+        "name": "Уровень освещённости"
+      },
+      "work_current": {
+        "name": "Рабочий ток"
+      },
+      "charge_current": {
+        "name": "Ток зарядки"
+      },
+      "calibration_status": {
+        "name": "Состояние калибровки"
+      },
+      "probe_1_status": {
+        "name": "Состояние датчика 1"
+      },
+      "probe_2_status": {
+        "name": "Состояние датчика 2"
+      },
+      "probe_3_status": {
+        "name": "Состояние датчика 3"
+      },
+      "ultrasonic_status": {
+        "name": "Состояние ультразвукового датчика"
+      },
+      "device_family": {
+        "name": "Семейство устройства"
+      },
+      "main_version": {
+        "name": "Основная версия"
+      },
+      "mcu_version": {
+        "name": "Версия MCU"
+      },
+      "ip_address": {
+        "name": "IP-адрес"
+      },
+      "ap_hotspot": {
+        "name": "Точка доступа AP"
+      },
+      "bluetooth_name": {
+        "name": "Имя Bluetooth"
+      },
+      "clean_path": {
+        "name": "Траектория уборки"
+      },
+      "ota_state": {
+        "name": "Состояние OTA"
+      },
+      "roller_brush": {
+        "name": "Роликовая щётка"
+      },
+      "micromesh_filter": {
+        "name": "Фильтр MicroMesh"
+      },
+      "caterpillar_tread": {
+        "name": "Гусеница"
+      },
+      "propeller": {
+        "name": "Пропеллер"
       }
     },
     "binary_sensor": {
@@ -104,6 +228,12 @@
       },
       "linked": {
         "name": "Устройство связано"
+      },
+      "cloud_connected": {
+        "name": "Облако подключено"
+      },
+      "running": {
+        "name": "Работает"
       }
     },
     "button": {
@@ -116,6 +246,42 @@
       "clear_command_state": {
         "name": "Очистить статус команды"
       }
+    },
+    "switch": {
+      "running": {
+        "name": "Работает"
+      }
+    },
+    "select": {
+      "mode_selection": {
+        "name": "Режим уборки"
+      },
+      "clean_path": {
+        "name": "Траектория уборки"
+      }
+    }
+  },
+  "issues": {
+    "unknown_model": {
+      "title": "Неизвестная модель Aiper",
+      "description": "Home Assistant не смог определить устройство Aiper \"{model}\" (серийный номер `{serial}`), поэтому оно работает с минимальным общим профилем, и некоторые объекты могут отсутствовать.\n\nВы можете помочь добавить полную поддержку, следуя руководству по добавлению моделей по ссылке ниже и создав issue на GitHub с полученным пакетом."
+    }
+  },
+  "exceptions": {
+    "mqtt_unavailable": {
+      "message": "MQTT-подключение Aiper недоступно, поэтому команду нельзя отправить."
+    },
+    "device_offline": {
+      "message": "Устройство Aiper не в сети; управление отключено."
+    },
+    "command_failed": {
+      "message": "Aiper не принял команду {command}: {reason}"
+    },
+    "invalid_option": {
+      "message": "«{option}» не является допустимым вариантом для этого устройства Aiper."
+    },
+    "shadow_refresh_failed": {
+      "message": "Не удалось запросить обновление shadow Aiper."
     }
   }
 }

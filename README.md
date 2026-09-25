@@ -1,6 +1,6 @@
 # Aiper Pool Cleaner & Water Quality Monitor
 
-[![HACS][hacs-badge]][hacs-url] [![GitHub Release][release-badge]][release-url] [![Validate][validate-badge]][validate-url]
+[![HACS][hacs-badge]][hacs-url] [![GitHub Release][release-badge]][release-url] [![CI][ci-badge]][ci-url]
 
 **Bring your Aiper pool cleaner and water quality monitor into Home Assistant.**  
 View live status, battery, charging state, cleaning modes, consumables, and water chemistry (pH, ORP, Chlorine) alongside safe controls, directly in your smart home dashboard.
@@ -38,6 +38,8 @@ generic Scuba set; the V3's real mode command IDs have not been captured yet.
 
 ## 🚀 Installation
 
+Requires Home Assistant **2024.12** or newer.
+
 ### HACS (Recommended)
 
 1. In HACS, open **Integrations**.
@@ -52,7 +54,41 @@ generic Scuba set; the V3's real mode command IDs have not been captured yet.
 1. Open **Settings -> Devices & Services**.
 2. Select **Add Integration**.
 3. Search for **Aiper Pool Cleaner**.
-4. Sign in with the Aiper account used by the mobile app.
+4. Enter the details of the Aiper account used by the mobile app:
+   - **Email / Phone** — the account login. Letter case and surrounding spaces
+     are ignored when checking whether the account is already added.
+   - **Password** — the Aiper account password.
+   - **Region** — the Aiper cloud your account lives in: *Americas*, *Europe*
+     or *Asia/Pacific* (the same region the mobile app uses).
+
+Aiper allows one active session per account, so Home Assistant and the
+mobile app can briefly log each other out. If setup reports a session
+conflict, close the app, wait a few minutes and try again.
+
+### Options
+
+Open the integration's **Configure** menu to change:
+
+| Option | Default | What it does |
+|---|---|---|
+| **Cloud metadata refresh interval (hours)** | 24 | How often slow-changing data (firmware, consumables, cleaning history) is fetched. 1–168 hours. |
+| **MQTT debug logging** | Off | Logs raw MQTT topics and payloads at debug level and refreshes AWS credentials every 5 minutes, for troubleshooting only. |
+
+### Reconfigure and re-authenticate
+
+- To change the **region** or **password**, choose **Reconfigure** from the
+  integration's menu in **Settings -> Devices & Services**.
+- If Aiper rejects the stored password (at startup or later), Home Assistant
+  shows a **re-authentication** prompt. Enter the new password there.
+
+### Removing the integration
+
+1. Open **Settings -> Devices & Services** and select **Aiper Pool Cleaner**.
+2. Open the three-dot menu of the account entry and choose **Delete**.
+3. Optionally remove the repository from HACS and restart Home Assistant.
+
+Removing the integration does not change anything on your Aiper account or
+devices.
 
 ---
 
@@ -64,9 +100,51 @@ The integration uses "capability profiles" to automatically expose only the feat
 - **Water Quality Monitors:** Live pH, ORP (mV), EC (µS/cm), TDS (ppm), Free Chlorine (mg/L), overall Water Quality Score, and bitmask-decoded alarm warnings.
 - **Cloud Connection Health:** A dedicated "Aiper Cloud" device with `binary_sensor.aiper_cloud_cloud_connected`, a `Connection State` sensor, and a `Last Cloud Update` timestamp — so an automation can alert you when the integration loses its cloud/MQTT link.
 - **Device Actions:** Safe buttons to force-refresh cloud metadata or re-sync the MQTT shadow state.
-- **Guided Recovery:** Home Assistant **Repairs** entries appear when a device model is not recognized (with a link to the onboarding guide) or when your stored credentials stop working (starts re-authentication).
+- **Guided Recovery:** Home Assistant **Repairs** entries appear when a device model is not recognized (with a link to the onboarding guide) or when your stored credentials stop working (starts re-authentication, also after setup).
 
 *(Note: Diagnostic telemetry like raw voltages, currents, and lifetime cleaning hours are hidden by default to keep your dashboard clean. You can enable them manually in the entity registry.)*
+
+Entity names are translated into English, German, Spanish, French, Italian,
+Dutch, Portuguese, Russian and Simplified Chinese.
+
+### How data updates
+
+- **MQTT push (live):** status, mode, battery, charging, water chemistry and
+  other telemetry arrive over AWS IoT MQTT as soon as the device reports them.
+- **REST poll (every 5 minutes):** the device list and online state are
+  refreshed from Aiper's REST API, and act as a backstop when MQTT is quiet.
+  Recent MQTT values win over REST for live fields; a REST value takes over
+  once the MQTT value is more than 10 minutes old.
+- **Metadata (every 24 hours by default):** firmware versions, consumables and
+  cleaning history. Use the **Refresh Metadata** button to fetch it now.
+- If REST fails for about 15 minutes while MQTT is also down, device entities
+  become unavailable instead of showing stale data as current.
+
+### Known limitations
+
+- **Cloud only.** Nothing works without internet access and Aiper's cloud.
+- **One session per account.** Using the mobile app at the same time can
+  interrupt Home Assistant (and vice versa) for a few minutes.
+- **Controls need the cloud link.** Start/stop is sent over MQTT and is
+  unavailable while the MQTT link is down. Mode and clean-path changes prefer
+  MQTT and fall back to REST where the model supports it. All controls are
+  disabled while the robot reports offline, and sleeping or docked robots may
+  ignore commands.
+- **Unverified models.** Command formats are verified on hardware for the
+  Scuba S1 and Surfer S2. Other models try the variants seen across Aiper
+  firmware and remember the one that works.
+- **New devices** added to your Aiper account after setup appear after
+  reloading the integration.
+
+### Use cases
+
+- Get notified when the cleaner finishes, gets stuck, or its battery is low.
+- Start a Surfer skim or set the Scuba cleaning mode from an automation.
+- Alert when pH, free chlorine or ORP from a HydroComm monitor leaves a safe
+  range.
+- Track brush and filter wear and remind yourself to replace them.
+
+See [Automation Examples](docs/examples/automations.md) for ready-made YAML.
 
 ---
 
@@ -109,5 +187,5 @@ To use the device headers, place an image (like `docs/assets/scuba_x1.png`) into
 [hacs-url]: https://github.com/hacs/integration
 [release-badge]: https://img.shields.io/github/v/release/kmich/ha-aiper
 [release-url]: https://github.com/kmich/ha-aiper/releases
-[validate-badge]: https://img.shields.io/github/actions/workflow/status/kmich/ha-aiper/validate.yml?label=validate
-[validate-url]: https://github.com/kmich/ha-aiper/actions/workflows/validate.yml
+[ci-badge]: https://img.shields.io/github/actions/workflow/status/kmich/ha-aiper/ci.yml?label=CI
+[ci-url]: https://github.com/kmich/ha-aiper/actions/workflows/ci.yml

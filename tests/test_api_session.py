@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import Any, cast
@@ -9,7 +10,7 @@ from typing import Any, cast
 import aiohttp
 import pytest
 
-from custom_components.aiper import api as api_module
+from custom_components.aiper import api_rest as api_module
 from custom_components.aiper.api import AiperApi, AiperConnectionError, AiperResponseError, AiperSessionConflict
 
 
@@ -173,3 +174,102 @@ async def test_get_devices_rejects_malformed_device_lists(monkeypatch: pytest.Mo
 
     with pytest.raises(AiperResponseError, match="Unexpected device list"):
         await api.get_devices()
+
+
+@pytest.mark.asyncio
+async def test_login_rejection_with_401_code_does_not_recurse(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 401/403 body on /login means bad credentials, not an expired token.
+
+    Regression test: the expired-token branch used to call login() again from
+    inside login(), recursing until RecursionError while hammering /login.
+    """
+    api = _api()
+    paths: list[str] = []
+
+    monkeypatch.setattr(api_module, "AiperEncryption", FakeEncryption)
+
+    async def fake_request(method: str, url: str, *, headers: dict, data: Any = None, timeout: int = 30, **kwargs):
+        paths.append(url.rsplit("/", 1)[-1])
+        return 200, json.dumps({"code": "401", "successful": False, "msg": "bad password"})
+
+    monkeypatch.setattr(api, "_request_with_backoff", fake_request)
+
+    with pytest.raises(api_module.AiperAuthenticationError):
+        await api.login()
+
+    assert paths == ["login"]
+
+
+@pytest.mark.asyncio
+async def test_openid_fetch_during_login_does_not_reenter_login(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 401/402 on the OpenID fetch that login() makes must not call login() again."""
+    api = _api()
+    paths: list[str] = []
+
+    monkeypatch.setattr(api_module, "AiperEncryption", FakeEncryption)
+
+    async def fake_request(method: str, url: str, *, headers: dict, data: Any = None, timeout: int = 30, **kwargs):
+        path = url.rsplit("/", 1)[-1]
+        paths.append(path)
+        if path == "login":
+            return 200, json.dumps({"code": "200", "successful": True, "data": {"token": "tok"}})
+        return 200, json.dumps({"code": "401", "successful": False, "msg": "expired"})
+
+    monkeypatch.setattr(api, "_request_with_backoff", fake_request)
+
+    assert await api.login() is True
+    assert paths == ["login", "getOpenIdToken"]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_zone_id_overrides_do_not_leak(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Per-device zoneId overrides must stay scoped to their own request.
+
+    Regression test: the override used to mutate the shared header dict, so
+    overlapping calls left the session stuck on another device's time zone.
+    """
+    api = AiperApi("user@example.com", "secret", "eu", async_session=cast(Any, object()), time_zone="Europe/Berlin")
+    api._device_zone_id_by_sn = {"SN_A": "America/New_York", "SN_B": "Asia/Tokyo"}
+    seen: dict[str, str] = {}
+
+    async def request(sn: str, delay: float) -> None:
+        await asyncio.sleep(delay)
+        seen[sn] = api._request_headers(None)["zoneId"]
+        await asyncio.sleep(delay)
+
+    await asyncio.gather(
+        api._call_with_zoneid("SN_A", lambda: request("SN_A", 0.01)),
+        api._call_with_zoneid("SN_B", lambda: request("SN_B", 0.02)),
+    )
+
+    assert seen == {"SN_A": "America/New_York", "SN_B": "Asia/Tokyo"}
+    assert api._headers["zoneId"] == "Europe/Berlin"
+    assert api._request_headers(None)["zoneId"] == "Europe/Berlin"
+
+
+def test_default_zone_id_uses_supplied_time_zone() -> None:
+    """The session zoneId comes from Home Assistant, not a hardcoded city."""
+    assert AiperApi("u", "p", "eu", async_session=cast(Any, object()), time_zone="Pacific/Auckland")._headers[
+        "zoneId"
+    ] == ("Pacific/Auckland")
+    assert _api()._headers["zoneId"] == api_module.DEFAULT_ZONE_ID
+
+
+@pytest.mark.asyncio
+async def test_device_info_is_not_logged_at_info(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Device payloads and serials must not be written to INFO logs."""
+    api = _api()
+
+    async def fake_call(*args, **kwargs) -> dict[str, Any]:
+        return {"code": "0", "data": {"sn": "SERIAL-XYZ-123456", "ip": "10.0.0.5"}}
+
+    monkeypatch.setattr(api, "_call_encrypted", fake_call)
+    caplog.set_level("INFO", logger=api_module.__name__)
+
+    await api.get_device_info("SERIAL-XYZ-123456")
+    await api.get_device_status("SERIAL-XYZ-123456")
+
+    assert "SERIAL-XYZ-123456" not in caplog.text
+    assert "10.0.0.5" not in caplog.text

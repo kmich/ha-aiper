@@ -2,5 +2,6 @@
   "name": "Aiper Pool Cleaner & Water Quality Monitor",
   "render_readme": false,
   "zip_release": true,
-  "filename": "aiper.zip"
+  "filename": "aiper.zip",
+  "homeassistant": "2024.12.0"
 }

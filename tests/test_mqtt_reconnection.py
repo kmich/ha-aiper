@@ -23,11 +23,11 @@ from custom_components.aiper.coordinator import (
     MQTT_RECONNECT_GRACE_SECONDS,
     AiperDataUpdateCoordinator,
 )
+from tests.coordinator_factory import make_coordinator
 
 
 def _bare_coordinator(api: Any) -> AiperDataUpdateCoordinator:
-    coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
-    coordinator.api = api
+    coordinator = make_coordinator(api)
     coordinator.data = {"SN123": {}}
     coordinator._mqtt_maintenance_task = None
     return coordinator
@@ -164,7 +164,7 @@ async def test_maintain_mqtt_subscribes_devices_missing_from_a_prior_failed_setu
     api.subscribed = set()  # SN123 was never subscribed
     coordinator = _bare_coordinator(api)
     coordinator.data = {"SN123": {}}
-    coordinator.make_shadow_callback = lambda sn: lambda data: None  # type: ignore[method-assign]
+    coordinator.make_shadow_callback = lambda sn: lambda _sn, data: None  # type: ignore[method-assign]
 
     await coordinator._async_maintain_mqtt()
 
@@ -181,7 +181,7 @@ async def test_maintain_mqtt_skips_subscribe_for_already_subscribed_devices() ->
     api.subscribed = {"SN123"}
     coordinator = _bare_coordinator(api)
     coordinator.data = {"SN123": {}}
-    coordinator.make_shadow_callback = lambda sn: lambda data: None  # type: ignore[method-assign]
+    coordinator.make_shadow_callback = lambda sn: lambda _sn, data: None  # type: ignore[method-assign]
 
     await coordinator._async_maintain_mqtt()
 
@@ -197,7 +197,7 @@ async def test_maintain_mqtt_resubscribes_missing_devices_after_a_successful_reb
     api.subscribed = set()
     coordinator = _bare_coordinator(api)
     coordinator.data = {"SN123": {}}
-    coordinator.make_shadow_callback = lambda sn: lambda data: None  # type: ignore[method-assign]
+    coordinator.make_shadow_callback = lambda sn: lambda _sn, data: None  # type: ignore[method-assign]
 
     await coordinator._async_maintain_mqtt()
 
@@ -212,7 +212,7 @@ async def test_async_subscribe_all_devices_is_a_noop_when_mqtt_is_disconnected()
     api = _FakeApi(down_seconds=5.0, connected=False)
     coordinator = _bare_coordinator(api)
     coordinator.data = {"SN123": {}}
-    coordinator.make_shadow_callback = lambda sn: lambda data: None  # type: ignore[method-assign]
+    coordinator.make_shadow_callback = lambda sn: lambda _sn, data: None  # type: ignore[method-assign]
 
     await coordinator.async_subscribe_all_devices()
 
@@ -283,7 +283,7 @@ def test_register_shadow_callback_is_idempotent_for_the_same_callback() -> None:
     every shadow update to be processed twice."""
     api = AiperApi("user@example.com", "secret", "asia", async_session=cast(Any, object()))
 
-    def cb(data: dict) -> None:
+    def cb(sn: str, data: dict) -> None:
         pass
 
     api._register_shadow_callback("SN123", cb)

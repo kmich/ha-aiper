@@ -251,8 +251,10 @@ def test_build_bundle_redacts_secrets_and_stamps_versions() -> None:
     assert bundle["integration_version"] == aiper_probe.integration_version()
     assert bundle["integration_version"] != "unknown"
     # Serial numbers are intentionally preserved for correlation.
-    assert bundle["sn"] == "SEEDSN123456"
-    assert "SEEDSN123456" in blob
+    # Serials are pseudonymized for public issues, including inside topics.
+    assert bundle["sn"] == "SEE...456"
+    assert "SEEDSN123456" not in blob
+    assert "$aws/things/SEE...456/shadow/get/accepted" in blob
 
 
 def test_fixture_from_probe_roundtrips_bundle_into_profile_stub() -> None:

@@ -9,19 +9,22 @@ from homeassistant.components.button import ButtonEntity, ButtonEntityDescriptio
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import AiperConfigEntry
 from .const import DOMAIN
 from .controller import AiperDeviceController
 from .coordinator import AiperDataUpdateCoordinator
+from .entity import AiperEntity
 from .state import DeviceState
 
 
 async def _noop_press(entity: AiperButton) -> None:
     """Default button press handler."""
+
+
+# Button presses hit the cloud; don't fan out in parallel.
+PARALLEL_UPDATES = 1
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -35,7 +38,7 @@ class AiperButtonEntityDescription(ButtonEntityDescription):
 
 async def _press_refresh_shadow(entity: AiperButton) -> None:
     if not await entity.controller.refresh_shadow(entity.sn):
-        raise HomeAssistantError("Failed to request Aiper shadow refresh.")
+        raise HomeAssistantError(translation_domain=DOMAIN, translation_key="shadow_refresh_failed")
 
 
 async def _press_refresh_metadata(entity: AiperButton) -> None:
@@ -49,20 +52,20 @@ async def _press_clear_command_state(entity: AiperButton) -> None:
 BUTTON_DESCRIPTIONS: tuple[AiperButtonEntityDescription, ...] = (
     AiperButtonEntityDescription(
         key="refresh_shadow",
-        name="Refresh Shadow",
+        translation_key="refresh_shadow",
         icon="mdi:cloud-refresh",
         press_fn=_press_refresh_shadow,
         requires_mqtt=True,
     ),
     AiperButtonEntityDescription(
         key="refresh_metadata",
-        name="Refresh Metadata",
+        translation_key="refresh_metadata",
         icon="mdi:database-refresh",
         press_fn=_press_refresh_metadata,
     ),
     AiperButtonEntityDescription(
         key="clear_command_state",
-        name="Clear Command State",
+        translation_key="clear_command_state",
         icon="mdi:playlist-remove",
         entity_category=EntityCategory.DIAGNOSTIC,
         enabled_default=False,
@@ -97,11 +100,10 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class AiperButton(CoordinatorEntity[AiperDataUpdateCoordinator], ButtonEntity):
+class AiperButton(AiperEntity, ButtonEntity):
     """Representation of an Aiper button."""
 
     entity_description: AiperButtonEntityDescription
-    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -112,32 +114,17 @@ class AiperButton(CoordinatorEntity[AiperDataUpdateCoordinator], ButtonEntity):
         device_data: DeviceState,
     ) -> None:
         """Initialize the button."""
-        super().__init__(coordinator)
+        super().__init__(coordinator, sn, description.key, device_data)
         self.controller = controller
         self.entity_description = description
-        self.sn = sn
-        self._attr_unique_id = f"{sn}_{description.key}"
         self._attr_entity_registry_enabled_default = description.enabled_default
-        device_info = device_data["device_info"]
-        device_info_attrs = device_info.attributes
-
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, sn)},
-            name=str(device_info.value or f"Aiper {sn}"),
-            manufacturer="Aiper",
-            model=device_info_attrs.get("model"),
-            serial_number=sn,
-            sw_version=device_info_attrs.get("sw_version"),
-        )
 
     @property
     def available(self) -> bool:
         """Return True if the button can be pressed."""
         if not super().available:
             return False
-        if self.entity_description.requires_mqtt and not self.coordinator.api.is_mqtt_connected():
-            return False
-        return self.coordinator.data is not None and self.sn in self.coordinator.data
+        return not (self.entity_description.requires_mqtt and not self.coordinator.api.is_mqtt_connected())
 
     async def async_press(self) -> None:
         """Handle the button press."""

@@ -7,34 +7,105 @@ on:
   pull_request:
     branches: [main]
 
-jobs:
-  test:
-    name: Tests & Linting
-    runs-on: ubuntu-latest
+permissions:
+  contents: read
 
+# hassfest and the HACS action only publish branches, so they are pinned to a
+# reviewed commit (bump deliberately). Python comes from pyproject.toml.
+jobs:
+  lint:
+    name: Lint (Ruff)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          python-version: "3.12"
+      - run: uv sync --locked --group dev
+      - run: uv run --frozen ruff check custom_components/ tests/ tools/ .github/scripts/
+      - run: uv run --frozen ruff format --check custom_components/ tests/ tools/ .github/scripts/
 
-      - name: Install dependencies
-        run: uv sync --locked --group dev
+  typecheck:
+    name: Type check (mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --locked --group dev
+      - run: uv run --frozen mypy custom_components/ tests/ tools/ .github/scripts/
 
-      - name: Lint with Ruff
-        run: |
-          uv run --frozen ruff check custom_components/aiper/
-          uv run --frozen ruff format --check custom_components/aiper/
+  test:
+    name: Tests (current Home Assistant)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --locked --group dev
+      # Total floor in pyproject.toml ([tool.coverage.report]); per-module floor below.
+      - run: uv run --frozen pytest tests/ --tb=short --cov --cov-report=term --cov-report=json
+      - run: uv run --frozen .github/scripts/check_coverage.py coverage.json
 
-      - name: Run unit tests
-        run: uv run --frozen pytest tests/ -v --tb=short
+  test-min-ha:
+    name: Tests (minimum supported Home Assistant)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      # Keep in sync with the "homeassistant" minimum in hacs.json.
+      - run: uv venv --python 3.12 .venv-min
+      - run: >-
+          uv pip install --python .venv-min
+          "homeassistant==2024.12.5"
+          "pytest-homeassistant-custom-component==0.13.195"
+          "awsiotsdk>=1.29.0"
+          pyyaml
+      - run: .venv-min/bin/python -m pytest tests/ -q --tb=short -p no:cacheprovider
 
   hassfest:
     name: hassfest
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: home-assistant/actions/hassfest@master
+      - uses: home-assistant/actions/hassfest@58bff37c8947f690ace498be413a9b78d6f30f93 # master
+
+  hacs:
+    name: HACS validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa # main
+        with:
+          category: integration
+
+  no-bytecode:
+    name: No bytecode in repo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Fail if bytecode files are tracked by git
+        run: |
+          if git ls-files | grep -E '(__pycache__|\.pyc$|\.pyo$)'; then
+            echo "ERROR: Bytecode files are tracked by git."
+            echo "Fix: git rm -r --cached custom_components/aiper/__pycache__"
+            exit 1
+          fi
+          echo "OK: No bytecode files tracked."
+
+  version-consistency:
+    name: Version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --locked --group dev
+      - run: uv run --frozen .github/scripts/check_version_state.py

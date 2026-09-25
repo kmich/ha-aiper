@@ -16,6 +16,14 @@
         "data": {
           "password": "密码"
         }
+      },
+      "reconfigure": {
+        "title": "重新配置 Aiper",
+        "description": "更新 {username} 的区域或密码。",
+        "data": {
+          "password": "密码",
+          "region": "区域"
+        }
       }
     },
     "error": {
@@ -26,7 +34,9 @@
       "session_conflict": "您的 Aiper 账户在其他会话（如手机 App）中处于活动状态。请稍候几分钟再试。"
     },
     "abort": {
-      "already_configured": "该账户已配置"
+      "already_configured": "该账户已配置",
+      "reauth_successful": "重新认证成功",
+      "reconfigure_successful": "重新配置成功"
     }
   },
   "options": {
@@ -78,6 +88,120 @@
       },
       "charge_type": {
         "name": "充电类型"
+      },
+      "connection_state": {
+        "name": "连接状态",
+        "state": {
+          "initializing": "正在初始化",
+          "connecting": "正在连接",
+          "connected": "已连接",
+          "disconnected": "已断开",
+          "reconnecting": "正在重新连接",
+          "credentials_stale": "凭据已过期",
+          "fatal": "需要处理"
+        }
+      },
+      "last_cloud_update": {
+        "name": "上次云端更新"
+      },
+      "estimated_cleaning_time": {
+        "name": "预计清洁时间"
+      },
+      "mode": {
+        "name": "模式"
+      },
+      "wifi_signal": {
+        "name": "WiFi 信号"
+      },
+      "runtime": {
+        "name": "当前清洁时间"
+      },
+      "total_cleanings": {
+        "name": "清洁总次数"
+      },
+      "total_cleaning_time": {
+        "name": "清洁总时长"
+      },
+      "total_cleaning_time_minutes": {
+        "name": "清洁总时长（分钟）"
+      },
+      "last_cleaning_mode": {
+        "name": "上次清洁模式"
+      },
+      "last_cleaning_start": {
+        "name": "上次清洁开始时间"
+      },
+      "last_cleaning_duration": {
+        "name": "上次清洁时长"
+      },
+      "wqs_sample_time": {
+        "name": "水样采集时间"
+      },
+      "supply_voltage": {
+        "name": "供电电压"
+      },
+      "solar_voltage": {
+        "name": "太阳能电压"
+      },
+      "light_level": {
+        "name": "光照强度"
+      },
+      "work_current": {
+        "name": "工作电流"
+      },
+      "charge_current": {
+        "name": "充电电流"
+      },
+      "calibration_status": {
+        "name": "校准状态"
+      },
+      "probe_1_status": {
+        "name": "探头 1 状态"
+      },
+      "probe_2_status": {
+        "name": "探头 2 状态"
+      },
+      "probe_3_status": {
+        "name": "探头 3 状态"
+      },
+      "ultrasonic_status": {
+        "name": "超声波传感器状态"
+      },
+      "device_family": {
+        "name": "设备系列"
+      },
+      "main_version": {
+        "name": "主版本"
+      },
+      "mcu_version": {
+        "name": "MCU 版本"
+      },
+      "ip_address": {
+        "name": "IP 地址"
+      },
+      "ap_hotspot": {
+        "name": "AP 热点"
+      },
+      "bluetooth_name": {
+        "name": "蓝牙名称"
+      },
+      "clean_path": {
+        "name": "清洁路径"
+      },
+      "ota_state": {
+        "name": "OTA 状态"
+      },
+      "roller_brush": {
+        "name": "滚刷"
+      },
+      "micromesh_filter": {
+        "name": "MicroMesh 滤网"
+      },
+      "caterpillar_tread": {
+        "name": "履带"
+      },
+      "propeller": {
+        "name": "螺旋桨"
       }
     },
     "binary_sensor": {
@@ -104,6 +228,12 @@
       },
       "linked": {
         "name": "设备已链接"
+      },
+      "cloud_connected": {
+        "name": "云端已连接"
+      },
+      "running": {
+        "name": "运行中"
       }
     },
     "button": {
@@ -116,6 +246,42 @@
       "clear_command_state": {
         "name": "清除命令状态"
       }
+    },
+    "switch": {
+      "running": {
+        "name": "运行中"
+      }
+    },
+    "select": {
+      "mode_selection": {
+        "name": "清洁模式"
+      },
+      "clean_path": {
+        "name": "清洁路径"
+      }
+    }
+  },
+  "issues": {
+    "unknown_model": {
+      "title": "无法识别的 Aiper 型号",
+      "description": "Home Assistant 无法识别 Aiper 设备“{model}”（序列号 `{serial}`），因此它以最小通用配置运行，部分实体可能缺失。\n\n您可以按照下方链接的型号接入指南操作，并使用生成的数据包在 GitHub 上提交 issue，帮助添加完整支持。"
+    }
+  },
+  "exceptions": {
+    "mqtt_unavailable": {
+      "message": "Aiper MQTT 连接不可用，无法发送此命令。"
+    },
+    "device_offline": {
+      "message": "Aiper 设备离线，控制已禁用。"
+    },
+    "command_failed": {
+      "message": "Aiper 未接受 {command} 命令：{reason}"
+    },
+    "invalid_option": {
+      "message": "“{option}”不是此 Aiper 设备的有效选项。"
+    },
+    "shadow_refresh_failed": {
+      "message": "无法请求刷新 Aiper shadow。"
     }
   }
 }

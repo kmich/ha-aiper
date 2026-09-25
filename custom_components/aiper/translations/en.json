@@ -16,6 +16,14 @@
         "data": {
           "password": "Password"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Aiper",
+        "description": "Update the region or password for {username}.",
+        "data": {
+          "password": "Password",
+          "region": "Region"
+        }
       }
     },
     "error": {
@@ -26,7 +34,9 @@
       "session_conflict": "Your Aiper account is active in another session (e.g., the mobile app). Please wait a few minutes and try again."
     },
     "abort": {
-      "already_configured": "This account is already configured"
+      "already_configured": "This account is already configured",
+      "reauth_successful": "Re-authentication was successful",
+      "reconfigure_successful": "Re-configuration was successful"
     }
   },
   "options": {
@@ -96,6 +106,102 @@
       },
       "estimated_cleaning_time": {
         "name": "Estimated Cleaning Time"
+      },
+      "mode": {
+        "name": "Mode"
+      },
+      "wifi_signal": {
+        "name": "WiFi Signal"
+      },
+      "runtime": {
+        "name": "Current Cleaning Time"
+      },
+      "total_cleanings": {
+        "name": "Total Cleanings"
+      },
+      "total_cleaning_time": {
+        "name": "Total Cleaning Time"
+      },
+      "total_cleaning_time_minutes": {
+        "name": "Total Cleaning Time Minutes"
+      },
+      "last_cleaning_mode": {
+        "name": "Last Cleaning Mode"
+      },
+      "last_cleaning_start": {
+        "name": "Last Cleaning Start"
+      },
+      "last_cleaning_duration": {
+        "name": "Last Cleaning Duration"
+      },
+      "wqs_sample_time": {
+        "name": "Water Sample Time"
+      },
+      "supply_voltage": {
+        "name": "Supply Voltage"
+      },
+      "solar_voltage": {
+        "name": "Solar Voltage"
+      },
+      "light_level": {
+        "name": "Light Level"
+      },
+      "work_current": {
+        "name": "Work Current"
+      },
+      "charge_current": {
+        "name": "Charge Current"
+      },
+      "calibration_status": {
+        "name": "Calibration Status"
+      },
+      "probe_1_status": {
+        "name": "Probe 1 Status"
+      },
+      "probe_2_status": {
+        "name": "Probe 2 Status"
+      },
+      "probe_3_status": {
+        "name": "Probe 3 Status"
+      },
+      "ultrasonic_status": {
+        "name": "Ultrasonic Sensor Status"
+      },
+      "device_family": {
+        "name": "Device Family"
+      },
+      "main_version": {
+        "name": "Main Version"
+      },
+      "mcu_version": {
+        "name": "MCU Version"
+      },
+      "ip_address": {
+        "name": "IP Address"
+      },
+      "ap_hotspot": {
+        "name": "AP Hotspot"
+      },
+      "bluetooth_name": {
+        "name": "Bluetooth Name"
+      },
+      "clean_path": {
+        "name": "Clean Path Preference"
+      },
+      "ota_state": {
+        "name": "OTA State"
+      },
+      "roller_brush": {
+        "name": "Roller Brush"
+      },
+      "micromesh_filter": {
+        "name": "MicroMesh Filter"
+      },
+      "caterpillar_tread": {
+        "name": "Caterpillar Tread"
+      },
+      "propeller": {
+        "name": "Propeller"
       }
     },
     "binary_sensor": {
@@ -125,6 +231,9 @@
       },
       "cloud_connected": {
         "name": "Cloud Connected"
+      },
+      "running": {
+        "name": "Running"
       }
     },
     "button": {
@@ -137,12 +246,42 @@
       "clear_command_state": {
         "name": "Clear Command State"
       }
+    },
+    "switch": {
+      "running": {
+        "name": "Running"
+      }
+    },
+    "select": {
+      "mode_selection": {
+        "name": "Cleaning mode"
+      },
+      "clean_path": {
+        "name": "Clean path"
+      }
     }
   },
   "issues": {
     "unknown_model": {
       "title": "Unrecognized Aiper model",
       "description": "Home Assistant could not identify the Aiper device \"{model}\" (serial `{serial}`), so it is running on a minimal generic profile and some entities may be missing.\n\nYou can help add full support by following the model onboarding guide linked below and opening a GitHub issue with the generated bundle."
+    }
+  },
+  "exceptions": {
+    "mqtt_unavailable": {
+      "message": "The Aiper MQTT connection is not available, so this command cannot be sent."
+    },
+    "device_offline": {
+      "message": "The Aiper device is offline; controls are disabled."
+    },
+    "command_failed": {
+      "message": "Aiper did not accept the {command} command: {reason}"
+    },
+    "invalid_option": {
+      "message": "\"{option}\" is not a valid option for this Aiper device."
+    },
+    "shadow_refresh_failed": {
+      "message": "Failed to request an Aiper shadow refresh."
     }
   }
 }

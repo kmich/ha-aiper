@@ -10,6 +10,8 @@ Aiper only allows one active session per account. If you open the official Aiper
 ### Stale Data / "Online" but not updating
 Make sure your pool cleaner has a strong WiFi connection. The integration relies on AWS IoT MQTT. If the robot drops off WiFi, Home Assistant will only show the last known state.
 
+If Aiper's REST API fails for three polls in a row (about 15 minutes) while MQTT is also down, device entities become unavailable instead of showing old data as current. They recover automatically on the next successful poll.
+
 Check the **Aiper Cloud** device: the `Cloud Connected` binary sensor and `Connection State` sensor show whether the integration currently holds its cloud/MQTT link, and `Last Cloud Update` shows when data last refreshed. `Connection State` attributes (`reconnect_count`, `credential_reject_count`, `last_error`) are useful to include in a bug report.
 
 ### Commands Failing
@@ -19,7 +21,9 @@ Ensure the robot is not docked, charging, or asleep. The Aiper cloud will often 
 The integration raises **Settings > System > Repairs** entries in two cases:
 
 - **"Unrecognized Aiper model"** — your device family could not be identified, so it runs on a minimal generic profile. Follow the [discovery guide](../discovery.md) and attach the onboarding bundle to a GitHub issue so support can be added.
-- **Re-authentication required** — the stored credentials were rejected by Aiper. Click the repair and re-enter your password. This usually means the account password changed or the session was invalidated elsewhere.
+- **Re-authentication required** — the stored credentials were rejected by Aiper, either at startup or later during polling. Click the repair and re-enter your password. This usually means the account password changed.
+
+To change the account region or password without waiting for a failure, open the integration's menu in **Settings > Devices & Services** and choose **Reconfigure**.
 
 ## 2. Enabling Debug Logging
 
@@ -56,7 +60,7 @@ While the integration attempts to sanitize data, you must manually ensure the fo
 - AWS `AccessKeyId` or `SecretAccessKey`
 - Your exact latitude/longitude.
 
-*(Note: Device Serial Numbers (`sn`) are generally safe to share for debugging, but you may replace them with `SN_REDACTED` if you prefer).*
+*(Note: the diagnostics download, the probe bundle, and the integration's logs already shorten device serial numbers (and, in diagnostics, your account email) to a form like `SN1...890`, and diagnostics remove passwords, tokens and AWS keys. Logs can still contain other personal details such as your Wi-Fi network name, so check them before posting.)*
 
 ## 5. What to Include in a Bug Report
 

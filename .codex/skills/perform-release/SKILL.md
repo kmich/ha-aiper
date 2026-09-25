@@ -6,7 +6,7 @@ description: Perform a release for this repository. Use when the user asks to cr
 # Perform Release
 
 Release this HACS integration by committing a version bump to `main`, waiting
-for the `CI` and `Validate` workflows, and then pushing a matching version tag.
+for the `CI` workflow, and then pushing a matching version tag.
 The tag-triggered `Release` workflow re-runs preflight checks and creates the
 GitHub release archive.
 
@@ -82,8 +82,9 @@ git commit -m "Release X.Y.Z"
 git push origin main
 ```
 
-The push triggers `.github/workflows/ci.yml` and
-`.github/workflows/validate.yml`. Wait for both before tagging the release:
+The push triggers `.github/workflows/ci.yml` (lint, types, tests on current and
+minimum Home Assistant, hassfest, HACS, version checks). Wait for it before
+tagging the release:
 
 ```bash
 gh run list -R kmich/ha-aiper --branch main --limit 10 --json databaseId,name,displayTitle,headSha,status,conclusion,createdAt,url

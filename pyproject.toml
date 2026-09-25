@@ -1,9 +1,9 @@
 [project]
 name = "ha-aiper"
-version = "1.7.0"
+version = "1.8.0"
 description = "Development tooling for the Aiper Home Assistant custom integration."
 readme = "README.md"
-requires-python = ">=3.12,<3.15"
+requires-python = ">=3.14.2,<3.15"
 dependencies = [
     "awsiotsdk>=1.29.0",
 ]
@@ -14,6 +14,7 @@ dev = [
     "mypy",
     "pyright>=1.1.409",
     "pytest",
+    "pytest-cov",
     "pytest-homeassistant-custom-component",
     "pyyaml",
     "ruff",
@@ -30,6 +31,18 @@ addopts = "-ra"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
+[tool.coverage.run]
+source = ["custom_components/aiper"]
+# Line coverage, matching how Home Assistant measures the test-coverage rule.
+branch = false
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+# Home Assistant's Silver quality scale needs > 95% line coverage in every
+# module; .github/scripts/check_coverage.py enforces the per-module floor.
+fail_under = 95
+
 [tool.ruff]
 line-length = 120
 target-version = "py312"
@@ -43,7 +56,7 @@ known-first-party = ["custom_components.aiper"]
 known-third-party = ["aiohttp", "awsiot", "homeassistant"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 strict = false
 ignore_missing_imports = true
 explicit_package_bases = true
