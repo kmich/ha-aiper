@@ -66,6 +66,7 @@ S1_CAPABILITY_REFRESH_INTERVAL = timedelta(minutes=5)
 # cached state is no longer presented as current (entities go unavailable).
 MAX_CACHED_REST_FAILURES = 3
 CLEAN_PATH_STORE_VERSION = 1
+LEARNED_ROUTES_STORE_VERSION = 1
 # Coalesce clean-path cache writes (seconds).
 CLEAN_PATH_SAVE_DELAY = 5
 
@@ -142,6 +143,15 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 hass,
                 CLEAN_PATH_STORE_VERSION,
                 f"{DOMAIN}.clean_path_cache.{config_entry.entry_id}",
+            )
+            if config_entry is not None
+            else None
+        )
+        self._routes_store: Store[dict[str, Any]] | None = (
+            Store(
+                hass,
+                LEARNED_ROUTES_STORE_VERSION,
+                f"{DOMAIN}.learned_routes.{config_entry.entry_id}",
             )
             if config_entry is not None
             else None
@@ -1395,6 +1405,27 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             normalized = _clean_path_value(value)
             if isinstance(sn, str) and normalized in (0, 1):
                 self._clean_path_cache[sn] = normalized
+
+    async def async_restore_learned_routes(self) -> None:
+        """Restore learned per-model command routes and persist future changes.
+
+        The API remembers which REST/AT variant worked for a model so it does
+        not repeat discovery sweeps; persisting that survives restarts.
+        """
+        store = self._routes_store
+        if store is None:
+            return
+        try:
+            restored = await store.async_load()
+        except Exception as err:
+            _LOGGER.debug("Learned-route restore failed: %s", err)
+            restored = None
+        self.api.restore_learned_routes(restored)
+
+        def _save() -> None:
+            store.async_delay_save(lambda: self.api.learned_routes, CLEAN_PATH_SAVE_DELAY)
+
+        self.api.on_learned_routes_changed = _save
 
     async def async_refresh_s1_capability_settings(self, *, publish: bool = True) -> None:
         """Refresh verified S1 capabilities outside push-resettable REST polls.

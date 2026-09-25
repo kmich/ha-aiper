@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from homeassistant.core import HomeAssistant
@@ -111,3 +111,31 @@ async def test_push_updates_do_not_reschedule_rest_poll(hass: HomeAssistant) -> 
     assert coordinator.data == {"SN1": {}}
     assert calls == [None]
     unsub()
+
+
+@pytest.mark.asyncio
+async def test_learned_routes_are_restored_and_persisted(hass: HomeAssistant) -> None:
+    """Learned command routes survive restarts via the coordinator's Store."""
+    from custom_components.aiper.api import AiperApi
+
+    api = AiperApi("u@example.com", "p", "eu", async_session=cast(Any, object()))
+    coordinator = AiperDataUpdateCoordinator(hass, api)
+
+    class FakeStore:
+        def __init__(self) -> None:
+            self.saved: list[Any] = []
+
+        async def async_load(self) -> dict[str, Any]:
+            return {"clean_path_at:scuba_x1": {"command": "AT+CPATH={value}"}}
+
+        def async_delay_save(self, data_func: Any, delay: float = 0) -> None:
+            self.saved.append(data_func())
+
+    store = FakeStore()
+    coordinator._routes_store = cast(Any, store)
+
+    await coordinator.async_restore_learned_routes()
+    assert api.learned_routes == {"clean_path_at:scuba_x1": {"command": "AT+CPATH={value}"}}
+
+    api._learn_route("clean_path_update:scuba_x1", {"path": "/p", "body_keys": ["sn"], "encrypted": True})
+    assert store.saved[-1]["clean_path_update:scuba_x1"]["path"] == "/p"

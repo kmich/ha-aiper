@@ -35,7 +35,7 @@ from typing import Any, cast
 import aiohttp
 import pytest
 
-from custom_components.aiper import api as api_module
+from custom_components.aiper import api_rest as api_module
 from custom_components.aiper.api import AiperApi
 
 CASSETTE_DIR = Path(__file__).parent / "cassettes"

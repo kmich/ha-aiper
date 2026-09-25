@@ -37,6 +37,13 @@ class FakeApi:
     subscribed: list[str] = field(default_factory=list)
     shadow_requested: list[str] = field(default_factory=list)
 
+    learned_routes: dict[str, Any] = field(default_factory=dict)
+    on_learned_routes_changed: Any = None
+
+    def restore_learned_routes(self, routes: Any) -> None:
+        if isinstance(routes, dict):
+            self.learned_routes.update(routes)
+
     async def login(self) -> bool:
         self.login_called = True
         return True

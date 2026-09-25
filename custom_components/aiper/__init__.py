@@ -399,6 +399,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> boo
     )
 
     await coordinator.async_restore_clean_path_cache()
+    await coordinator.async_restore_learned_routes()
 
     _LOGGER.debug("Performing first data refresh...")
     await coordinator.async_config_entry_first_refresh()
