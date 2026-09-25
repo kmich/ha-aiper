@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-09-25
+
 ### Security
 - Diagnostics no longer expose the account email through the entry title, and
   now partially redact the username, device serial numbers (keys, values and

@@ -31,6 +31,13 @@ Alternatively, follow these manual steps:
 
 ## Recent Changes
 
+### v1.8.0
+- Meets Home Assistant's **Silver** quality scale, with translated entity names and errors in 9 languages and a new **Reconfigure** option for region and password.
+- Security: diagnostics, logs and the model-onboarding bundle no longer expose your email or full device serial numbers.
+- Fixed a login retry loop on rejected credentials, re-authentication after a password change, MQTT pushes postponing cloud polling, and stale data showing as current during outages.
+- For models without a verified command format, the integration now remembers the variant that works instead of retrying up to 144 requests per change.
+- Requires Home Assistant 2024.12 or newer.
+
 ### v1.7.0
 - Added a reusable, capability-gated Estimated Cleaning Time duration sensor for `Scuba_S1_2025` that advances once per minute while cleaning and anchors to raw cloud runtime.
 
