@@ -595,9 +595,11 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         """Handle a normalized MQTT payload for one device.
 
         The AWS IoT SDK invokes subscription callbacks on a background thread,
-        so the update is handed to the Home Assistant event loop.
+        so the update is handed to the Home Assistant event loop. During
+        shutdown the loop may already be closed; late messages are dropped.
         """
-        self.hass.loop.call_soon_threadsafe(self._apply_shadow_update, str(sn), data)
+        with suppress(RuntimeError):
+            self.hass.loop.call_soon_threadsafe(self._apply_shadow_update, str(sn), data)
 
     def make_shadow_callback(self, sn: str) -> Callable[[str, dict[str, Any]], None]:
         """Return the MQTT shadow callback for a device (signature: ``(sn, data)``)."""

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Iterable
 from typing import Any
 
@@ -58,9 +59,13 @@ def redact_topic(topic: str) -> str:
 def redact(obj: Any, *, truncate_strings: bool = True) -> Any:
     """Recursively redact sensitive values from an arbitrary structure.
 
-    Serial numbers are intentionally not redacted. They are needed to correlate
-    device data, MQTT topics, and support reports.
+    Serial numbers are intentionally not redacted here (probe bundles keep
+    them to correlate topics and payloads); the diagnostics platform
+    pseudonymizes them with ``redact_known_values``. Dataclass instances
+    (e.g. normalized ``EntityState`` values) are walked as dicts.
     """
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        obj = {field.name: getattr(obj, field.name) for field in dataclasses.fields(obj)}
     if isinstance(obj, dict):
         out: dict[Any, Any] = {}
         for key, value in obj.items():
@@ -102,6 +107,8 @@ def redact_known_values(obj: Any, values: Iterable[str]) -> Any:
         return text
 
     def _walk(item: Any) -> Any:
+        if dataclasses.is_dataclass(item) and not isinstance(item, type):
+            item = {field.name: getattr(item, field.name) for field in dataclasses.fields(item)}
         if isinstance(item, dict):
             return {(_redact_text(k) if isinstance(k, str) else k): _walk(v) for k, v in item.items()}
         if isinstance(item, list):
