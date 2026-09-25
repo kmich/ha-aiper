@@ -303,7 +303,7 @@ def test_scuba_s1_suppresses_immediate_terminal_to_cleaning_replay() -> None:
     assert state["battery"].value == 9
     assert state["runtime"].value == 0.0
     assert state["in_water"].value is True
-    suppression = coordinator._s1_mqtt_replay_suppressions["SN123"]
+    suppression = coordinator._s1.replay_suppressions["SN123"]
     assert suppression["count"] == 1
     assert suppression["source"] == "shadow_get"
     assert suppression["status"] == 1
@@ -326,7 +326,7 @@ def test_scuba_s1_allows_cleaning_after_replay_guard_expires() -> None:
         }
     )
     coordinator.data["SN123"] = normalize_device_state(dict(coordinator._devices["SN123"]))
-    coordinator._last_s1_terminal_report_at = {
+    coordinator._s1.terminal_report_at = {
         "SN123": dt_util.utcnow() - timedelta(seconds=3),
     }
 
@@ -367,7 +367,7 @@ def test_scuba_s1_preserves_confirmed_start_across_delayed_idle_replays() -> Non
             "state": {"reported": {"Machine": {"status": 0, "cap": 100, "mode": 0, "run_time": 0, "in_water": 0}}},
         },
     )
-    coordinator._last_s1_confirmed_running_report["SN123"]["received_at"] = dt_util.utcnow() - timedelta(seconds=9)
+    coordinator._s1.confirmed_running_report["SN123"]["received_at"] = dt_util.utcnow() - timedelta(seconds=9)
     coordinator._on_shadow_update(
         "SN123",
         {
@@ -385,7 +385,7 @@ def test_scuba_s1_preserves_confirmed_start_across_delayed_idle_replays() -> Non
     assert state["battery"].value == 98
     assert state["runtime"].value == 0.02
     assert state["in_water"].value is True
-    suppression = coordinator._s1_mqtt_replay_suppressions["SN123"]
+    suppression = coordinator._s1.replay_suppressions["SN123"]
     assert suppression["count"] == 2
     assert suppression["kind"] == "running_to_idle"
     assert suppression["status"] == 0
@@ -403,7 +403,7 @@ def test_scuba_s1_allows_new_idle_after_start_guard_expires() -> None:
             "data": {"status": 1, "cap": 98, "mode": 1, "run_time": 1, "in_water": 1},
         },
     )
-    coordinator._last_s1_confirmed_running_report["SN123"]["received_at"] = dt_util.utcnow() - timedelta(seconds=16)
+    coordinator._s1.confirmed_running_report["SN123"]["received_at"] = dt_util.utcnow() - timedelta(seconds=16)
 
     coordinator._on_shadow_update(
         "SN123",
@@ -418,7 +418,7 @@ def test_scuba_s1_allows_new_idle_after_start_guard_expires() -> None:
     assert state["running"].value is False
     assert state["runtime"].value == 0.0
     assert state["in_water"].value is False
-    assert "SN123" not in coordinator._last_s1_confirmed_running_report
+    assert "SN123" not in coordinator._s1.confirmed_running_report
 
 
 def test_scuba_s1_suppresses_explicitly_older_idle_after_start_guard() -> None:
@@ -433,7 +433,7 @@ def test_scuba_s1_suppresses_explicitly_older_idle_after_start_guard() -> None:
             "data": {"status": 1, "cap": 98, "mode": 1, "run_time": 1, "in_water": 1},
         },
     )
-    coordinator._last_s1_confirmed_running_report["SN123"]["received_at"] = now - timedelta(minutes=1)
+    coordinator._s1.confirmed_running_report["SN123"]["received_at"] = now - timedelta(minutes=1)
 
     coordinator._on_shadow_update(
         "SN123",
@@ -447,7 +447,7 @@ def test_scuba_s1_suppresses_explicitly_older_idle_after_start_guard() -> None:
     state = coordinator.data["SN123"]
     assert state["status"].value == "Cleaning"
     assert state["battery"].value == 98
-    assert coordinator._s1_mqtt_replay_suppressions["SN123"]["kind"] == "running_to_idle"
+    assert coordinator._s1.replay_suppressions["SN123"]["kind"] == "running_to_idle"
 
 
 def test_scuba_s1_terminal_status_ends_confirmed_start_immediately() -> None:
@@ -473,7 +473,7 @@ def test_scuba_s1_terminal_status_ends_confirmed_start_immediately() -> None:
     assert state["status"].value == "Parked"
     assert state["running"].value is False
     assert state["runtime"].value == 0.0
-    assert "SN123" not in coordinator._last_s1_confirmed_running_report
+    assert "SN123" not in coordinator._s1.confirmed_running_report
 
 
 def test_scuba_s1_status_only_cleaning_does_not_guard_idle() -> None:
@@ -731,10 +731,10 @@ async def test_scuba_s1_fresh_rest_charging_replaces_stale_mqtt_state(hass: Home
     assert data["SN123"]["in_water"].value is False
     assert data["SN123"]["mode"].attributes == {"code": 0}
     assert data["SN123"]["runtime"].value == 0.0
-    assert coordinator._state_reconciliation["SN123"]["trigger"] == "rest_machine_status"
-    assert coordinator._state_reconciliation["SN123"]["events"] == [
+    assert coordinator._s1.reconciliation["SN123"]["trigger"] == "rest_machine_status"
+    assert coordinator._s1.reconciliation["SN123"]["events"] == [
         {
-            key: coordinator._state_reconciliation["SN123"][key]
+            key: coordinator._s1.reconciliation["SN123"][key]
             for key in ("trigger", "observed_at", "rest_status", "battery_samples", "applied")
         }
     ]
@@ -793,7 +793,7 @@ async def test_scuba_s1_rest_charging_defers_to_recent_mqtt_cleaning_report(hass
     coordinator._selected_mode_cache = {}
     coordinator._command_state = {}
     # A very recent MQTT report still shows the device actively Cleaning.
-    coordinator._last_s1_mqtt_machine_report = {"SN123": {"observed_at": now - timedelta(seconds=5), "status": 1}}
+    coordinator._s1.last_mqtt_machine_report = {"SN123": {"observed_at": now - timedelta(seconds=5), "status": 1}}
     coordinator.data = {
         "SN123": normalize_device_state(
             {
@@ -831,9 +831,9 @@ def _live_state_coordinator(hass: HomeAssistant, api: Any, now: datetime) -> Aip
     coordinator._clean_path_cache = {}
     coordinator._selected_mode_cache = {}
     coordinator._command_state = {}
-    coordinator._s1_battery_samples = {}
-    coordinator._last_s1_mqtt_machine_report = {}
-    coordinator._state_reconciliation = {}
+    coordinator._s1.battery_samples = {}
+    coordinator._s1.last_mqtt_machine_report = {}
+    coordinator._s1.reconciliation = {}
     coordinator._live_field_sources = {}
     return coordinator
 
@@ -920,7 +920,7 @@ async def test_rest_charging_applies_immediately_after_mqtt_dropout(hass: HomeAs
     coordinator.data = {"SN123": normalize_device_state({**coordinator._devices["SN123"], "machineStatus": 1})}
     # MQTT reported Cleaning 3 minutes ago (inside the TTL) then dropped.
     mqtt_seen = now - timedelta(minutes=3)
-    coordinator._last_s1_mqtt_machine_report = {"SN123": {"observed_at": mqtt_seen, "status": 1}}
+    coordinator._s1.last_mqtt_machine_report = {"SN123": {"observed_at": mqtt_seen, "status": 1}}
     coordinator._record_live_field_sources(
         "SN123", "mqtt", ("running", "status", "charging", "mode"), observed_at=mqtt_seen
     )
@@ -931,7 +931,7 @@ async def test_rest_charging_applies_immediately_after_mqtt_dropout(hass: HomeAs
     assert data["SN123"]["charging"].value is True
     assert data["SN123"]["running"].value is False
     assert data["SN123"]["in_water"].value is False
-    assert coordinator._state_reconciliation["SN123"]["trigger"] == "rest_machine_status"
+    assert coordinator._s1.reconciliation["SN123"]["trigger"] == "rest_machine_status"
 
 
 @pytest.mark.parametrize(
@@ -992,9 +992,9 @@ async def test_scuba_s1_rest_cleaning_or_parked_implies_wet(
     coordinator._clean_path_cache = {}
     coordinator._selected_mode_cache = {}
     coordinator._command_state = {}
-    coordinator._s1_battery_samples = {}
-    coordinator._last_s1_mqtt_machine_report = {}
-    coordinator._state_reconciliation = {}
+    coordinator._s1.battery_samples = {}
+    coordinator._s1.last_mqtt_machine_report = {}
+    coordinator._s1.reconciliation = {}
     coordinator.data = {
         "SN123": normalize_device_state(
             {
@@ -1060,13 +1060,13 @@ async def test_scuba_s1_sustained_battery_rise_is_conservative_charging_fallback
     coordinator._clean_path_cache = {}
     coordinator._selected_mode_cache = {}
     coordinator._command_state = {}
-    coordinator._s1_battery_samples = {
+    coordinator._s1.battery_samples = {
         "SN123": [
             {"observed_at": now - timedelta(minutes=5), "battery": 20},
             {"observed_at": now - timedelta(minutes=3), "battery": 22},
         ]
     }
-    coordinator._last_s1_mqtt_machine_report = {}
+    coordinator._s1.last_mqtt_machine_report = {}
     coordinator.data = {
         "SN123": normalize_device_state(
             {
@@ -1082,36 +1082,36 @@ async def test_scuba_s1_sustained_battery_rise_is_conservative_charging_fallback
     assert data["SN123"]["charging"].value is True
     assert data["SN123"]["running"].value is False
     assert data["SN123"]["in_water"].value is False
-    assert coordinator._state_reconciliation["SN123"]["trigger"] == "battery_rise_fallback"
+    assert coordinator._s1.reconciliation["SN123"]["trigger"] == "battery_rise_fallback"
 
 
 def test_scuba_s1_battery_rise_fallback_rejects_recent_mqtt_report() -> None:
     """A newer MQTT machine report remains authoritative over battery trend."""
     coordinator = _bare_coordinator()
     now = dt_util.utcnow()
-    coordinator._s1_battery_samples = {
+    coordinator._s1.battery_samples = {
         "SN123": [
             {"observed_at": now - timedelta(minutes=5), "battery": 20},
             {"observed_at": now - timedelta(minutes=3), "battery": 22},
             {"observed_at": now, "battery": 24},
         ]
     }
-    coordinator._last_s1_mqtt_machine_report = {"SN123": {"observed_at": now - timedelta(minutes=1), "status": 1}}
+    coordinator._s1.last_mqtt_machine_report = {"SN123": {"observed_at": now - timedelta(minutes=1), "status": 1}}
 
-    assert coordinator._s1_battery_rise_indicates_charging("SN123") is False
+    assert coordinator._s1.battery_rise_indicates_charging("SN123") is False
 
 
 def test_s1_reconciliation_timeline_deduplicates_repeated_source() -> None:
     """Diagnostics retain source order without flooding on repeated REST polls."""
     coordinator = _bare_coordinator()
-    coordinator._state_reconciliation = {}
-    coordinator._s1_battery_samples = {}
+    coordinator._s1.reconciliation = {}
+    coordinator._s1.battery_samples = {}
 
-    coordinator._record_s1_reconciliation("SN123", trigger="mqtt_machine_status")
-    coordinator._record_s1_reconciliation("SN123", trigger="rest_machine_status", rest_status=2)
-    coordinator._record_s1_reconciliation("SN123", trigger="rest_machine_status", rest_status=2)
+    coordinator._s1.record_reconciliation("SN123", trigger="mqtt_machine_status")
+    coordinator._s1.record_reconciliation("SN123", trigger="rest_machine_status", rest_status=2)
+    coordinator._s1.record_reconciliation("SN123", trigger="rest_machine_status", rest_status=2)
 
-    events = coordinator._state_reconciliation["SN123"]["events"]
+    events = coordinator._s1.reconciliation["SN123"]["events"]
     assert [(event["trigger"], event["rest_status"]) for event in events] == [
         ("mqtt_machine_status", None),
         ("rest_machine_status", 2),

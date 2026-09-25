@@ -67,7 +67,7 @@ async def test_diagnostics_redacts_sensitive_runtime_data(hass: HomeAssistant) -
             }
         }
     }
-    coordinator._state_reconciliation = {
+    coordinator._s1.reconciliation = {
         "SN1234567890": {
             "trigger": "rest_machine_status",
             "rest_status": 2,
