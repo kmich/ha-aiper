@@ -52,6 +52,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         password=data[CONF_PASSWORD],
         region=data[CONF_REGION],
         async_session=async_get_clientsession(hass),
+        time_zone=hass.config.time_zone,
     )
 
     try:

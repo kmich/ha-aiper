@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from .redaction import redact_topic
+
 _LOGGER = logging.getLogger(__name__)
 
 MessageCallback = Callable[[str, bytes], None]
@@ -83,7 +85,7 @@ class AwsIotMqttTransport:
             self._connected = True
             self.last_error = None
             self.last_connected_at = datetime.now(UTC)
-            _LOGGER.info("Connected to AWS IoT MQTT endpoint %s", self.endpoint)
+            _LOGGER.info("Connected to AWS IoT MQTT")
             return True
         except Exception as err:
             self._connected = False
@@ -99,7 +101,7 @@ class AwsIotMqttTransport:
             self._connected = True
             self.last_error = None
             self.last_connected_at = datetime.now(UTC)
-            _LOGGER.info("Connected to AWS IoT MQTT endpoint %s", self.endpoint)
+            _LOGGER.info("Connected to AWS IoT MQTT")
             return True
         except Exception as err:
             self._connected = False
@@ -226,7 +228,7 @@ class AwsIotMqttTransport:
                 try:
                     callback(topic, bytes(payload))
                 except Exception as err:
-                    _LOGGER.error("MQTT callback failed for topic %s: %s", topic, err)
+                    _LOGGER.error("MQTT callback failed for topic %s: %s", redact_topic(topic), err)
 
             _wait_crt_operation(
                 self._connection.subscribe(topic=topic, qos=mqtt_qos, callback=_callback),
@@ -235,7 +237,7 @@ class AwsIotMqttTransport:
             return True
         except Exception as err:
             self.last_error = f"{type(err).__name__}: {err}"
-            _LOGGER.error("AWS IoT MQTT subscribe failed for %s: %s", topic, err)
+            _LOGGER.error("AWS IoT MQTT subscribe failed for %s: %s", redact_topic(topic), err)
             return False
 
     async def async_subscribe(self, topic: str, callback: MessageCallback, qos: int = 1) -> bool:
@@ -253,7 +255,7 @@ class AwsIotMqttTransport:
                 try:
                     callback(topic, bytes(payload))
                 except Exception as err:
-                    _LOGGER.error("MQTT callback failed for topic %s: %s", topic, err)
+                    _LOGGER.error("MQTT callback failed for topic %s: %s", redact_topic(topic), err)
 
             await _async_wait_crt_operation(
                 self._connection.subscribe(topic=topic, qos=mqtt_qos, callback=_callback),
@@ -262,7 +264,7 @@ class AwsIotMqttTransport:
             return True
         except Exception as err:
             self.last_error = f"{type(err).__name__}: {err}"
-            _LOGGER.error("AWS IoT MQTT subscribe failed for %s: %s", topic, err)
+            _LOGGER.error("AWS IoT MQTT subscribe failed for %s: %s", redact_topic(topic), err)
             return False
 
     def publish(self, topic: str, payload: str | bytes, qos: int = 1) -> bool:
@@ -283,7 +285,7 @@ class AwsIotMqttTransport:
             return True
         except Exception as err:
             self.last_error = f"{type(err).__name__}: {err}"
-            _LOGGER.error("AWS IoT MQTT publish failed for %s: %s", topic, err)
+            _LOGGER.error("AWS IoT MQTT publish failed for %s: %s", redact_topic(topic), err)
             return False
 
     async def async_publish(self, topic: str, payload: str | bytes, qos: int = 1) -> bool:
@@ -304,7 +306,7 @@ class AwsIotMqttTransport:
             return True
         except Exception as err:
             self.last_error = f"{type(err).__name__}: {err}"
-            _LOGGER.error("AWS IoT MQTT publish failed for %s: %s", topic, err)
+            _LOGGER.error("AWS IoT MQTT publish failed for %s: %s", redact_topic(topic), err)
             return False
 
     def _on_connection_interrupted(self, connection: Any, error: Exception, **kwargs: Any) -> None:

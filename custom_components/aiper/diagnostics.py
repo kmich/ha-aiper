@@ -13,7 +13,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .redaction import redact, redact_str
+from .redaction import redact, redact_known_values, redact_str
 
 
 async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
@@ -124,4 +124,15 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
         except Exception:
             pass
 
-    return redact(diag)
+    # Pseudonymize identifiers that are not caught by key-name redaction:
+    # device serial numbers (keys and values, including MQTT topics) and the
+    # account username, which is also embedded in the entry title.
+    identifiers: set[str] = set()
+    if coordinator is not None and isinstance(getattr(coordinator, "data", None), dict):
+        identifiers.update(str(sn) for sn in coordinator.data)
+    if api is not None and isinstance(getattr(api, "_devices", None), dict):
+        identifiers.update(str(sn) for sn in api._devices)
+    username = entry.data.get("username")
+    if isinstance(username, str) and username:
+        identifiers.add(username)
+    return redact_known_values(redact(diag), identifiers)

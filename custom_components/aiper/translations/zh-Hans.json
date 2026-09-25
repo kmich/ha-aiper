@@ -26,7 +26,8 @@
       "session_conflict": "您的 Aiper 账户在其他会话（如手机 App）中处于活动状态。请稍候几分钟再试。"
     },
     "abort": {
-      "already_configured": "该账户已配置"
+      "already_configured": "该账户已配置",
+      "reauth_successful": "重新认证成功"
     }
   },
   "options": {

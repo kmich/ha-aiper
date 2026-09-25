@@ -30,6 +30,7 @@ class FakeApi:
     password: str
     region: str
     async_session: object | None = None
+    time_zone: str | None = None
     login_called: bool = False
     connect_called: bool = False
     disconnected: bool = False

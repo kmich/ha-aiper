@@ -12,11 +12,12 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .api import AiperApi
+from .api import AiperApi, AiperAuthenticationError
 from .const import (
     DEFAULT_METADATA_REFRESH_HOURS,
     DOMAIN,
@@ -636,6 +637,8 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                             fresh_s1_rest_charging.add(serial)
                             self._record_s1_reconciliation(serial, trigger="battery_rise_fallback")
                         self._devices[serial] = merged_device
+            except AiperAuthenticationError:
+                raise
             except Exception as err:
                 if not self._devices:
                     raise
@@ -697,7 +700,6 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     except Exception as err:
                         _LOGGER.debug("Cleaning history fetch failed for %s: %s", sn, err)
                     if raw_hist is not None:
-                        _LOGGER.debug("Cleaning history raw for %s: %s", sn, raw_hist)
                         try:
                             total_count, total_hours, records = _parse_cleaning_history(raw_hist)
                         except Exception as err:
@@ -809,8 +811,13 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 async_update_unknown_model_issues(self.hass, self._devices)
             return result
 
+        except AiperAuthenticationError as err:
+            # Stored credentials stopped working after setup (e.g. the
+            # password was changed in the app): start Home Assistant's
+            # reauth flow instead of failing every poll forever.
+            raise ConfigEntryAuthFailed("Aiper rejected the stored credentials") from err
         except Exception as err:
-            _LOGGER.error("Error fetching data: %s", err)
+            # DataUpdateCoordinator logs UpdateFailed itself (once per outage).
             raise UpdateFailed(f"Error communicating with API: {err}") from err
 
     def handle_shadow_update(self, sn: str | dict, data: dict | None = None) -> None:

@@ -328,6 +328,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> boo
         password=entry.data["password"],
         region=entry.data.get("region", "eu"),
         async_session=async_get_clientsession(hass),
+        time_zone=hass.config.time_zone,
     )
 
     try:
@@ -372,7 +373,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> boo
 
     _LOGGER.debug("Performing first data refresh...")
     await coordinator.async_config_entry_first_refresh()
-    _LOGGER.info("First refresh complete, data: %s", list(coordinator.data.keys()) if coordinator.data else "None")
+    _LOGGER.debug("First refresh complete, %d device(s)", len(coordinator.data or {}))
 
     # Keep slow metadata refresh scheduled even if HA delays entity listener
     # registration.

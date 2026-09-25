@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 SENSITIVE_KEY_FRAGMENTS = (
@@ -35,6 +36,25 @@ def redact_str(value: str) -> str:
     return value[:3] + "..." + value[-3:]
 
 
+def redact_serial(serial: object) -> str:
+    """Return a log-safe form of a device serial number.
+
+    Keeps enough of the serial to tell devices apart in multi-device logs
+    without writing the full identifier to INFO/WARNING/ERROR log lines.
+    """
+    return redact_str(str(serial)) if serial else ""
+
+
+def redact_topic(topic: str) -> str:
+    """Redact the serial-number segment of an Aiper/AWS IoT thing topic."""
+    parts = topic.split("/")
+    for index, part in enumerate(parts[:-1]):
+        if part == "things":
+            parts[index + 1] = redact_serial(parts[index + 1])
+            break
+    return "/".join(parts)
+
+
 def redact(obj: Any, *, truncate_strings: bool = True) -> Any:
     """Recursively redact sensitive values from an arbitrary structure.
 
@@ -60,3 +80,36 @@ def redact(obj: Any, *, truncate_strings: bool = True) -> Any:
     if isinstance(obj, str) and truncate_strings and len(obj) > 512:
         return obj[:256] + "..." + obj[-64:]
     return obj
+
+
+def redact_known_values(obj: Any, values: Iterable[str]) -> Any:
+    """Partially redact every occurrence of known identifiers in a structure.
+
+    Used to pseudonymize device serial numbers (and similar account-linked
+    identifiers) in dict keys and string values, while keeping enough of each
+    value (`abc...xyz`) to correlate entries within one report.
+    """
+    replacements = {value: redact_str(value) for value in values if isinstance(value, str) and value}
+    if not replacements:
+        return obj
+    # Longest first so a value that contains another is replaced whole.
+    ordered = sorted(replacements, key=len, reverse=True)
+
+    def _redact_text(text: str) -> str:
+        for value in ordered:
+            if value in text:
+                text = text.replace(value, replacements[value])
+        return text
+
+    def _walk(item: Any) -> Any:
+        if isinstance(item, dict):
+            return {(_redact_text(k) if isinstance(k, str) else k): _walk(v) for k, v in item.items()}
+        if isinstance(item, list):
+            return [_walk(v) for v in item]
+        if isinstance(item, tuple):
+            return tuple(_walk(v) for v in item)
+        if isinstance(item, str):
+            return _redact_text(item)
+        return item
+
+    return _walk(obj)

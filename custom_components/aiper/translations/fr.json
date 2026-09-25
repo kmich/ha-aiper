@@ -26,7 +26,8 @@
       "session_conflict": "Votre compte Aiper est actif dans une autre session (ex: l'application mobile). Veuillez patienter quelques minutes et réessayer."
     },
     "abort": {
-      "already_configured": "Ce compte est déjà configuré"
+      "already_configured": "Ce compte est déjà configuré",
+      "reauth_successful": "La réauthentification a réussi"
     }
   },
   "options": {

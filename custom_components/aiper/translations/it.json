@@ -26,7 +26,8 @@
       "session_conflict": "Il tuo account Aiper è attivo in un'altra sessione (es. l'app mobile). Attendi qualche minuto e riprova."
     },
     "abort": {
-      "already_configured": "Questo account è già configurato"
+      "already_configured": "Questo account è già configurato",
+      "reauth_successful": "La riautenticazione è stata completata"
     }
   },
   "options": {

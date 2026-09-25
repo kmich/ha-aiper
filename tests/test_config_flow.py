@@ -48,11 +48,14 @@ class FakeAiperApi:
     login_error: Exception | None = None
     devices = [{"sn": "SN1"}, {"sn": "SN2"}]
 
-    def __init__(self, username: str, password: str, region: str, async_session=None) -> None:
+    def __init__(
+        self, username: str, password: str, region: str, async_session=None, time_zone: str | None = None
+    ) -> None:
         self.username = username
         self.password = password
         self.region = region
         self.async_session = async_session
+        self.time_zone = time_zone
         self.disconnected = False
         self.__class__.instances.append(self)
 

@@ -26,7 +26,8 @@
       "session_conflict": "Uw Aiper-account is actief in een andere sessie (bijv. de mobiele app). Wacht een paar minuten en probeer het opnieuw."
     },
     "abort": {
-      "already_configured": "Dit account is al geconfigureerd"
+      "already_configured": "Dit account is al geconfigureerd",
+      "reauth_successful": "Opnieuw verifiëren is gelukt"
     }
   },
   "options": {

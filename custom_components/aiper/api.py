@@ -13,6 +13,7 @@ import time
 from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
@@ -34,6 +35,7 @@ from .const import (
 from .crypto import AiperEncryption
 from .mqtt import AwsIotCredentials, AwsIotMqttTransport
 from .profiles import SCUBA_S1_2025_MODEL, DeviceFamily, device_family, model_key
+from .redaction import redact_serial
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,6 +58,15 @@ AWS_CREDENTIALS_TTL_SECONDS = 3300
 # expire-refresh-resign cycle happens every few minutes and can actually be
 # observed in a log rather than waiting out the real ~55 minute lifetime.
 AWS_CREDENTIALS_TTL_DEBUG_SECONDS = 300
+
+# Default `zoneId` header when Home Assistant does not supply a time zone.
+DEFAULT_ZONE_ID = "UTC"
+
+# Per-request `zoneId` override. A ContextVar (rather than mutating the shared
+# header dict) keeps concurrent requests for devices in different time zones
+# from overwriting each other's header or leaving it stuck on another device's
+# zone after they finish.
+_REQUEST_ZONE_ID: ContextVar[str | None] = ContextVar("aiper_request_zone_id", default=None)
 
 # Refresh the MQTT signing snapshot once the credentials are within this
 # window of expiring. Comfortably larger than the coordinator poll interval
@@ -93,6 +104,7 @@ class AiperApi:
         region: str = ApiEndpoint.eu,
         *,
         async_session: aiohttp.ClientSession,
+        time_zone: str | None = None,
     ) -> None:
         """Initialize the API client."""
         self.username = username
@@ -159,7 +171,7 @@ class AiperApi:
             "os": "android",
             "charset": "UTF-8",
             "Accept-Language": "en",
-            "zoneId": "Europe/Athens",
+            "zoneId": time_zone or DEFAULT_ZONE_ID,
             "token": "",  # Will be set after login
         }
 
@@ -250,9 +262,8 @@ class AiperApi:
         self._raise_if_session_conflict_active(path)
         enc = AiperEncryption()
 
-        headers = dict(self._headers)
+        headers = self._request_headers(token)
         headers["encryptKey"] = enc.encrypt_key_header
-        headers["token"] = token or (self._token or "")
 
         url_base = (base_url or self.base_url).rstrip("/")
         url = f"{url_base}{path}"
@@ -292,7 +303,10 @@ class AiperApi:
                 _LOGGER.debug("Session-conflict re-authentication failed: %s", err)
             self._mark_session_conflict(payload)
 
-        if retry_login and str(payload.get("code")) in ("401", "403"):
+        # Never re-login from the login request itself: a 401/403 there means
+        # the credentials are bad, and re-entering login() would recurse until
+        # RecursionError while hammering the login endpoint.
+        if retry_login and path != "/login" and str(payload.get("code")) in ("401", "403"):
             _LOGGER.info("Token appears expired; attempting refresh")
             try:
                 if await self.refresh_token():
@@ -321,6 +335,15 @@ class AiperApi:
                 )
 
         return payload
+
+    def _request_headers(self, token: str | None) -> dict[str, str]:
+        """Return a per-request copy of the session headers."""
+        headers = dict(self._headers)
+        headers["token"] = token or (self._token or "")
+        zone_id = _REQUEST_ZONE_ID.get()
+        if zone_id:
+            headers["zoneId"] = zone_id
+        return headers
 
     async def _rest_wait(self) -> None:
         """Throttle REST calls to reduce cloud load and avoid rate limits."""
@@ -399,8 +422,7 @@ class AiperApi:
         timeout: int = 30,
     ) -> dict[str, Any]:
         """Call an Aiper REST endpoint without the AES/RSA envelope."""
-        headers = dict(self._headers)
-        headers["token"] = token or (self._token or "")
+        headers = self._request_headers(token)
 
         url_base = (base_url or self.base_url).rstrip("/")
         url = f"{url_base}{path}"
@@ -442,7 +464,6 @@ class AiperApi:
         login_data = {"email": self.username, "password": self.password}
 
         try:
-            _LOGGER.debug("Logging in with email: %s", self.username)
             payload = await self._call_encrypted(
                 "POST",
                 "/login",
@@ -470,7 +491,8 @@ class AiperApi:
             self._headers["token"] = self._token
             _LOGGER.info("Successfully logged in to Aiper API (base_url=%s)", self.base_url)
 
-            await self.get_openid_token()
+            # retry_login=False: a 401/402 here must not re-enter login().
+            await self.get_openid_token(retry_login=False)
             return True
 
         except (aiohttp.ClientError, TimeoutError) as err:
@@ -495,19 +517,16 @@ class AiperApi:
         return header_zid if isinstance(header_zid, str) and header_zid else None
 
     async def _call_with_zoneid(self, sn: str, fn: Callable[[], Awaitable[Any]]) -> Any:
-        """Invoke async `fn` while temporarily setting the zoneId header for `sn`."""
-        zid = self._zone_id_for_sn(sn)
-        prev_value = self._headers.get("zoneId")
-        prev = prev_value if isinstance(prev_value, str) else None
-        if zid:
-            self._headers["zoneId"] = zid
+        """Invoke async `fn` with the zoneId header set for `sn`.
+
+        The override lives in a ContextVar, so it applies only to requests made
+        by this task and never touches the shared session headers.
+        """
+        reset_token = _REQUEST_ZONE_ID.set(self._zone_id_for_sn(sn))
         try:
             return await fn()
         finally:
-            if prev is not None:
-                self._headers["zoneId"] = prev
-            else:
-                self._headers.pop("zoneId", None)
+            _REQUEST_ZONE_ID.reset(reset_token)
 
     async def refresh_token(self) -> bool:
         """Refresh the authentication token."""
@@ -539,10 +558,10 @@ class AiperApi:
             _LOGGER.error("Token refresh error: %s", err)
             return False
 
-    async def get_openid_token(self) -> None:
+    async def get_openid_token(self, *, retry_login: bool = True) -> None:
         """Fetch Cognito Identity/OpenID data used for AWS IoT MQTT."""
         try:
-            payload = await self._call_encrypted("POST", "/users/getOpenIdToken", {})
+            payload = await self._call_encrypted("POST", "/users/getOpenIdToken", {}, retry_login=retry_login)
             if not self._is_success(payload):
                 try:
                     code = payload.get("code") if isinstance(payload, dict) else None
@@ -680,7 +699,10 @@ class AiperApi:
 
         creds = out.get("Credentials") or {}
         if not creds.get("AccessKeyId"):
-            _LOGGER.warning("Unexpected Cognito credentials response: %s", out)
+            _LOGGER.warning(
+                "Unexpected Cognito credentials response (keys=%s)",
+                sorted(out) if isinstance(out, dict) else type(out).__name__,
+            )
             return None
 
         self._aws_credentials = creds
@@ -692,10 +714,12 @@ class AiperApi:
         """Get list of devices from API without blocking the event loop."""
         try:
             payload = await self._call_encrypted("POST", "/equipment/getEquipment", {})
-            _LOGGER.debug("Get devices response: %s", payload)
+            _LOGGER.debug("Get devices response code=%s", payload.get("code"))
 
             if not self._is_success(payload):
-                _LOGGER.warning("Get devices failed: %s", payload)
+                _LOGGER.warning(
+                    "Get devices failed (code=%s, message=%s)", payload.get("code"), self._payload_message(payload)
+                )
                 return []
 
             devices = payload.get("data", [])
@@ -723,7 +747,7 @@ class AiperApi:
         """Get detailed info for a specific device without blocking the event loop."""
         try:
             payload = await self._call_encrypted("POST", "/equipment/getEquipmentInfo", {"sn": sn})
-            _LOGGER.info("Device info for %s: %s", sn, payload)
+            _LOGGER.debug("Device info response code=%s keys=%s", payload.get("code"), sorted(payload))
 
             if not self._is_success(payload):
                 return None
@@ -736,21 +760,21 @@ class AiperApi:
             return {"data": data, "payload": payload}
 
         except aiohttp.ClientError as err:
-            _LOGGER.error("Failed to get device info for %s: %s", sn, err)
+            _LOGGER.error("Failed to get device info for %s: %s", redact_serial(sn), err)
             return None
 
     async def get_device_status(self, sn: str) -> dict | None:
         """Get online status for a device without blocking the event loop."""
         try:
             payload = await self._call_encrypted("POST", "/equipment/checkEquipmentOnlineStatus", {"sn": sn})
-            _LOGGER.info("Device status for %s: %s", sn, payload)
+            _LOGGER.debug("Device status response code=%s", payload.get("code"))
 
             if self._is_success(payload):
                 return payload.get("data")
             return None
 
         except aiohttp.ClientError as err:
-            _LOGGER.error("Failed to get status for %s: %s", sn, err)
+            _LOGGER.error("Failed to get status for %s: %s", redact_serial(sn), err)
             return None
 
     async def get_consumables(self, sn: str) -> Any:
@@ -1299,7 +1323,7 @@ class AiperApi:
         with self._lock:
             sns = list(self._shadow_callbacks.keys())
         for sn in sns:
-            _LOGGER.info("Re-subscribing MQTT topics for %s after reconnect", sn)
+            _LOGGER.debug("Re-subscribing MQTT topics for %s after reconnect", redact_serial(sn))
 
             def on_message(topic: str, payload_bytes: bytes, _sn: str = sn) -> None:
                 self._handle_device_message(_sn, topic, payload_bytes)
@@ -1452,7 +1476,7 @@ class AiperApi:
             return all(results)
 
         except Exception as err:
-            _LOGGER.error("Failed to subscribe to %s: %s", sn, err)
+            _LOGGER.error("Failed to subscribe to %s: %s", redact_serial(sn), err)
             return False
 
     def _timezone_string_for_sn(self, sn: str) -> str:
@@ -1650,7 +1674,7 @@ class AiperApi:
     async def set_cleaning_mode(self, sn: str, mode: int | CleaningMode) -> bool:
         """Set a selectable cleaning mode."""
         mode_id = int(mode)
-        _LOGGER.info("Setting cleaning mode for %s: %s", sn, mode_id)
+        _LOGGER.debug("Setting cleaning mode for %s: %s", redact_serial(sn), mode_id)
 
         if self._is_scuba_s1_2025(sn):
             # Verified from Aiper Android 3.5.0's X5ProMax implementation.
@@ -1753,7 +1777,7 @@ class AiperApi:
     async def set_running(self, sn: str, running: bool) -> bool:
         """Start or stop running."""
         mode = 1 if running else 0
-        _LOGGER.info("Setting running mode for %s: %s", sn, mode)
+        _LOGGER.debug("Setting running mode for %s: %s", redact_serial(sn), mode)
 
         cmd_result = await self.send_machine_at(sn, f"AT+MODE={mode}")
 
