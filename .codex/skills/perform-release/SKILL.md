@@ -6,7 +6,7 @@ description: Perform a release for this repository. Use when the user asks to cr
 # Perform Release
 
 Release this HACS integration by committing a version bump to `main`, waiting
-for the `CI` and `Validate` workflows, and then pushing a matching version tag.
+for the `CI` workflow, and then pushing a matching version tag.
 The tag-triggered `Release` workflow re-runs preflight checks and creates the
 GitHub release archive.
 

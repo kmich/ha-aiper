@@ -335,3 +335,108 @@ async def test_remove_config_entry_device_allows_stale_device(hass: HomeAssistan
     )
 
     assert await aiper.async_remove_config_entry_device(hass, cast(ConfigEntry, entry), device) is True
+
+
+@pytest.mark.asyncio
+async def test_setup_retries_on_unexpected_login_error(hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) -> None:
+    from homeassistant.exceptions import ConfigEntryNotReady
+
+    class BrokenLoginApi(FakeApi):
+        async def login(self) -> bool:
+            raise RuntimeError("DNS failure")
+
+    monkeypatch.setattr(aiper, "AiperApi", BrokenLoginApi)
+    monkeypatch.setattr(aiper, "async_get_clientsession", lambda hass: "session")
+    entry = MockConfigEntry(domain=DOMAIN, data={"username": "u@example.com", "password": "p", "region": "eu"})
+    entry.add_to_hass(hass)
+
+    with pytest.raises(ConfigEntryNotReady):
+        await aiper.async_setup_entry(hass, cast(ConfigEntry, entry))
+
+
+@pytest.mark.asyncio
+async def test_setup_with_mqtt_debug_and_s1_capability_refresh(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MQTT debug shortens the AWS credential TTL; S1 capabilities refresh after MQTT and on a timer."""
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    from custom_components.aiper.api import AWS_CREDENTIALS_TTL_DEBUG_SECONDS
+
+    class S1Api(FakeApi):
+        mqtt_debug = False
+        aws_credentials_ttl = 3300
+
+        async def get_devices(self) -> list[dict[str, Any]]:
+            return [{"sn": "SN123", "model": "Scuba_S1_2025", "name": "Pool Robot", "online": True}]
+
+        def is_mqtt_connected(self) -> bool:
+            return True
+
+        def subscribed_serials(self) -> set[str]:
+            return set(self.subscribed)
+
+        async def async_refresh_mqtt_credentials(self) -> None:
+            return None
+
+        def mqtt_disconnected_seconds(self) -> float | None:
+            return None
+
+    refreshes: list[None] = []
+
+    async def fake_s1_refresh(self: AiperDataUpdateCoordinator, *, publish: bool = True) -> None:
+        refreshes.append(None)
+
+    async def fake_forward(entry: ConfigEntry, platforms: list[Platform]) -> None:
+        return None
+
+    async def fake_unload(entry: ConfigEntry, platforms: list[Platform]) -> bool:
+        return True
+
+    monkeypatch.setattr(aiper, "AiperApi", S1Api)
+    monkeypatch.setattr(aiper, "async_get_clientsession", lambda hass: "session")
+    monkeypatch.setattr(AiperDataUpdateCoordinator, "async_refresh_s1_capability_settings", fake_s1_refresh)
+    monkeypatch.setattr(hass.config_entries, "async_forward_entry_setups", fake_forward)
+    monkeypatch.setattr(hass.config_entries, "async_unload_platforms", fake_unload)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry-s1",
+        data={"username": "u@example.com", "password": "p", "region": "eu"},
+        options={"mqtt_debug": True},
+        state=ConfigEntryState.SETUP_IN_PROGRESS,
+    )
+    entry.add_to_hass(hass)
+
+    assert await aiper.async_setup_entry(hass, cast(ConfigEntry, entry)) is True
+    await hass.async_block_till_done()
+
+    api = entry.runtime_data.api
+    assert api.mqtt_debug is True
+    assert api.aws_credentials_ttl == AWS_CREDENTIALS_TTL_DEBUG_SECONDS
+    assert refreshes == [None]
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=6))
+    await hass.async_block_till_done()
+    assert len(refreshes) >= 2
+
+    assert await aiper.async_unload_entry(hass, cast(ConfigEntry, entry)) is True
+    await entry._async_process_on_unload(hass)
+
+
+@pytest.mark.asyncio
+async def test_options_update_reloads_entry(hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) -> None:
+    reloaded: list[str] = []
+
+    async def fake_reload(entry_id: str) -> bool:
+        reloaded.append(entry_id)
+        return True
+
+    monkeypatch.setattr(hass.config_entries, "async_reload", fake_reload)
+    entry = MockConfigEntry(domain=DOMAIN, entry_id="entry-opts")
+
+    await aiper._options_update_listener(hass, cast(ConfigEntry, entry))
+
+    assert reloaded == ["entry-opts"]

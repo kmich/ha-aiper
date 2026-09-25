@@ -60,9 +60,10 @@ The integration is functional but carries reverse-engineering complexity. Tests
 run against current Home Assistant (dev lock, Python 3.14) and the declared
 minimum (Home Assistant 2024.12 on Python 3.12, see `hacs.json` and the
 `test-min-ha` CI job). Keep tests anchored to captured or representative
-payload shapes. `quality_scale.yaml` tracks the quality-scale rules; the
-manifest claims `bronze`, and test coverage (CI floor in `pyproject.toml`) is
-the remaining Silver requirement.
+payload shapes. The integration meets the **Silver** quality scale;
+`quality_scale.yaml` tracks every rule. CI enforces at least 95% line
+coverage in total (`pyproject.toml`) and per module
+(`.github/scripts/check_coverage.py`), so new code needs tests.
 
 The code intentionally contains compatibility paths for regional API and
 firmware variance. Preserve that behavior unless a test or live payload proves
@@ -102,10 +103,7 @@ a branch is obsolete.
 
 ## Modernization Priorities
 
-1. Raise test coverage past 95% (Silver): payload-driven tests for
-   `api_mqtt.py`, `api_rest.py`, `coordinator.py`, and
-   `coordinator_parsing.py`, then ratchet `fail_under` up.
-2. Pick up devices added to the account after setup without a reload
+1. Gold: pick up devices added to the account after setup without a reload
    (dynamic-devices).
-3. Move entity icons into `icons.json` (icon-translations).
-4. Tighten typing toward mypy strict mode.
+2. Gold: move entity icons into `icons.json` (icon-translations).
+3. Platinum: tighten typing toward mypy strict mode.

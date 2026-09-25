@@ -292,3 +292,161 @@ def test_restore_learned_routes_ignores_malformed_data() -> None:
     api.restore_learned_routes(None)
 
     assert api.learned_routes == {"ok:Model": {"path": "/x"}}
+
+
+@pytest.mark.asyncio
+async def test_unverified_query_sweep_learns_and_reads_top_level_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Query discovery skips successes without a value and refreshes the equipment ID once."""
+    api = _api()
+    api._devices["SN123"] = {"model": "Scuba_X1"}
+    refreshed: list[None] = []
+
+    async def fake_get_devices() -> list[dict[str, Any]]:
+        refreshed.append(None)
+        api._devices["SN123"] = {"model": "Scuba_X1", "deviceId": 7}
+        return []
+
+    responses = iter(
+        [
+            RuntimeError("timeout"),  # encrypted, first body: error -> plain
+            {"code": "0", "data": {}},  # plain, first body: success but no value -> next body
+            {"code": "0", "cleanPathSetting": "1"},  # encrypted, second body: value at top level
+        ]
+    )
+
+    async def fake_call(method: str, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        item = next(responses)
+        if isinstance(item, Exception):
+            raise item
+        return cast(dict[str, Any], item)
+
+    async def no_zone(sn: str, fn):
+        return await fn()
+
+    monkeypatch.setattr(api, "get_devices", fake_get_devices)
+    monkeypatch.setattr(api, "_call_encrypted", fake_call)
+    monkeypatch.setattr(api, "_call_plain", fake_call)
+    monkeypatch.setattr(api, "_call_with_zoneid", no_zone)
+
+    assert await api.query_clean_path_setting("SN123") == 1
+    assert refreshed == [None]
+    assert api.learned_routes["clean_path_query:scuba_x1"]["body_keys"] == ["equipmentId", "sn"]
+
+
+@pytest.mark.asyncio
+async def test_learned_route_is_retried_during_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Within the miss cooldown only the learned variant is tried."""
+    working = ("/network/cleanPathSetting", frozenset({"sn", "cleanPathSetting", "deviceId"}), False)
+    api, calls = _scuba_x1_api(monkeypatch, working)
+    api.restore_learned_routes(
+        {
+            "clean_path_update:scuba_x1": {
+                "path": "/network/cleanPathSetting",
+                "body_keys": ["cleanPathSetting", "deviceId", "sn"],
+                "encrypted": False,
+            }
+        }
+    )
+    api._route_miss_until["clean_path_update:scuba_x1"] = float("inf")
+
+    assert await api.update_clean_path_setting("SN123", 1) is True
+    assert calls == [working]
+
+
+@pytest.mark.asyncio
+async def test_s1_and_surfer_query_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = _api()
+    api._devices["S1"] = {"model": "Scuba_S1_2025"}
+    api._devices["SURF"] = {"model": "Surfer_S2"}
+    monkeypatch.setattr(api, "is_mqtt_connected", lambda: False)
+    assert await api.query_clean_path_setting("S1") is None
+
+    results: list[Any] = [RuntimeError("down"), {"code": "500"}]
+
+    async def fake_call(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        item = results.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    monkeypatch.setattr(api, "_call_encrypted", fake_call)
+    assert await api.query_clean_path_setting("SURF") is None
+    assert await api.query_clean_path_setting("SURF") is None
+
+
+@pytest.mark.asyncio
+async def test_surfer_update_survives_rest_and_at_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = _api()
+    api._devices["SURF"] = {"model": "Surfer_S2"}
+    monkeypatch.setattr(api, "is_mqtt_connected", lambda: True)
+
+    async def boom(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(api, "_call_encrypted", boom)
+    monkeypatch.setattr(api, "send_machine_at", boom)
+    monkeypatch.setattr(api, "request_shadow", boom)
+
+    assert await api.update_clean_path_setting("SURF", 1) is False
+
+
+@pytest.mark.asyncio
+async def test_unverified_update_tolerates_mqtt_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every MQTT variant failing must not raise; the command just reports failure."""
+    api, _calls = _scuba_x1_api(monkeypatch, working=None)
+    monkeypatch.setattr(api, "is_mqtt_connected", lambda: True)
+    api.restore_learned_routes({"clean_path_at:scuba_x1": {"command": "AT+CPATH={value}"}})
+
+    async def boom(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("closed")
+
+    monkeypatch.setattr(api, "send_command", boom)
+    monkeypatch.setattr(api, "send_machine_at", boom)
+    monkeypatch.setattr(api, "publish_shadow_update", boom)
+    monkeypatch.setattr(api, "request_shadow", boom)
+
+    assert await api.update_clean_path_setting("SN123", 1) is False
+
+
+@pytest.mark.asyncio
+async def test_mode_rest_fallback_and_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When AT mode commands are rejected, the REST sweep is used; running uses AT+MODE."""
+    api = _api()
+    api._devices["SN123"] = {"model": "Scuba_X1", "equipmentId": 1}
+    monkeypatch.setattr(api, "is_mqtt_connected", lambda: True)
+    sent: list[str] = []
+    at_results: list[Any] = [False, False, True]
+
+    async def fake_at(sn: str, cmd: str) -> Any:
+        sent.append(cmd)
+        return at_results.pop(0)
+
+    async def ok_call(method: str, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        return {"code": "0"}
+
+    async def no_zone(sn: str, fn):
+        return await fn()
+
+    async def shadow(sn: str) -> bool:
+        return True
+
+    monkeypatch.setattr(api, "send_machine_at", fake_at)
+    monkeypatch.setattr(api, "_call_encrypted", ok_call)
+    monkeypatch.setattr(api, "_call_with_zoneid", no_zone)
+    monkeypatch.setattr(api, "request_shadow", shadow)
+
+    assert await api.set_cleaning_mode("SN123", 2) is True
+    assert sent == ["AT+MODE=2", "AT+WORKMODE=2"]
+    assert "cleaning_mode_update:scuba_x1" in api.learned_routes
+
+    assert await api.set_running("SN123", True) is True
+    assert sent[-1] == "AT+MODE=1"
+
+
+@pytest.mark.asyncio
+async def test_s1_rejects_unsupported_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = _api()
+    api._devices["SN123"] = {"model": "Scuba_S1_2025"}
+    monkeypatch.setattr(api, "is_mqtt_connected", lambda: True)
+
+    assert await api.set_cleaning_mode("SN123", 4) is False

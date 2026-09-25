@@ -35,12 +35,7 @@ rules:
   log-when-unavailable: done
   parallel-updates: done
   reauthentication-flow: done
-  test-coverage:
-    status: todo
-    comment: >-
-      Line+branch coverage is ~79% (CI floor 77% in pyproject.toml). The REST/MQTT
-      client and coordinator parsing branches need more payload-driven tests
-      to pass 95%.
+  test-coverage: done
 
   # Gold
   devices: done

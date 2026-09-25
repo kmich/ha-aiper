@@ -226,3 +226,92 @@ async def test_restart_restore_rejects_mismatched_authoritative_anchor() -> None
 
     assert entity._sync_with_coordinator() is False
     assert entity.native_value == 18
+
+
+def _last_state(value: str, attrs: dict) -> State:
+    now = datetime.now(UTC)
+    return State(
+        "sensor.scuba_s1_estimated_cleaning_time",
+        value,
+        attrs,
+        last_changed=now,
+        last_reported=now,
+        last_updated=now,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "last_state",
+    [
+        None,
+        _last_state("unknown", {"authoritative_runtime_hours": 0.2}),
+        _last_state("15", {}),
+        _last_state("inf", {"authoritative_runtime_hours": 0.2}),
+    ],
+)
+async def test_restore_ignores_missing_or_invalid_saved_state(last_state) -> None:
+    entity, _coordinator = _entity(_normalized_device(runtime_minutes=12))
+    entity.async_get_last_state = AsyncMock(return_value=last_state)  # type: ignore[method-assign]
+
+    await entity._async_restore_estimate()
+
+    assert entity.native_value == 12
+
+
+@pytest.mark.asyncio
+async def test_restore_skipped_when_not_cleaning() -> None:
+    entity, _coordinator = _entity(_normalized_device(status=2))
+    entity.async_get_last_state = AsyncMock()  # type: ignore[method-assign]
+
+    await entity._async_restore_estimate()
+
+    entity.async_get_last_state.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_in_home_assistant_ticks_and_stops(hass) -> None:
+    """Attached to HA, the sensor ticks each minute and follows coordinator updates."""
+    from datetime import timedelta
+
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    from tests.coordinator_factory import make_coordinator
+
+    coordinator = make_coordinator(hass=hass, data={"SN123": _normalized_device(runtime_minutes=12)})
+    entity = AiperEstimatedCleaningTimeSensor(coordinator, "SN123", coordinator.data["SN123"])
+    entity.hass = hass
+    entity.entity_id = "sensor.pool_robot_estimated_cleaning_time"
+    entity.async_get_last_state = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    writes: list[None] = []
+    entity.async_write_ha_state = lambda: writes.append(None)  # type: ignore[method-assign,misc]
+
+    await entity.async_added_to_hass()
+    assert entity._unsub_tick is not None
+
+    async_fire_time_changed(hass, datetime.now(UTC) + timedelta(minutes=1, seconds=1))
+    await hass.async_block_till_done()
+    assert entity.native_value == 13
+    assert writes
+
+    coordinator.data = {"SN123": _normalized_device(status=2, runtime_minutes=13)}
+    entity._handle_coordinator_update()
+    assert entity.native_value == 0
+    assert entity._unsub_tick is None
+
+    coordinator.data = {}
+    assert entity._current_snapshot() is None
+    assert entity._sync_with_coordinator() is False
+    await coordinator.async_shutdown()
+
+
+def test_runtime_values_that_cannot_anchor_are_ignored() -> None:
+    entity, coordinator = _entity(_normalized_device(runtime_minutes=12))
+    device = dict(coordinator.data["SN123"])
+
+    from custom_components.aiper.state import EntityState
+
+    for bad in ("soon", float("nan")):
+        device["runtime"] = EntityState(bad)
+        coordinator.data["SN123"] = device
+        assert entity._current_snapshot() == (True, None)

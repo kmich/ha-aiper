@@ -70,3 +70,46 @@ async def test_migration_refuses_future_major_version(hass: HomeAssistant) -> No
     entry.add_to_hass(hass)
 
     assert await async_migrate_entry(hass, entry) is False
+
+
+@pytest.mark.asyncio
+async def test_migration_resolves_legacy_select_and_switch_duplicates(hass: HomeAssistant) -> None:
+    """Legacy controls are pruned and duplicate selects collapse onto the canonical unique IDs."""
+    sn = "SN123456"
+    entry = _entry("u@example.com", "u@example.com")
+    entry.add_to_hass(hass)
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get_or_create(config_entry_id=entry.entry_id, identifiers={(DOMAIN, sn)})
+    ent_reg = er.async_get(hass)
+
+    def add(domain: str, unique_id: str, object_id: str, *, with_device: bool = True) -> str:
+        return ent_reg.async_get_or_create(
+            domain,
+            DOMAIN,
+            unique_id,
+            config_entry=entry,
+            device_id=device.id if with_device else None,
+            suggested_object_id=object_id,
+        ).entity_id
+
+    legacy_switch = add("switch", f"{sn}_start_stop", "pool_start_stop")
+    running_switch = add("switch", f"{sn}_running", "pool_running")
+    legacy_vacuum = add("vacuum", f"{sn}_vacuum", "pool")
+    legacy_warning = add("binary_sensor", f"{sn}_warning", "pool_warning")
+    mode_primary = add("select", f"{sn}_cleaning_mode", "pool_cleaning_mode")
+    mode_extra = add("select", f"{sn}_mode_select_v2", "pool_mode_select_2")
+    path_primary = add("select", f"{sn}_legacy_path", "pool_clean_path", with_device=False)
+    path_squatter = add("select", f"{sn}_clean_path", "pool_path_old", with_device=False)
+    unrelated = add("select", f"{sn}_speed", "pool_speed")
+    orphan = add("select", "OTHER_mode_selection", "other_mode", with_device=False)
+
+    assert await async_migrate_entry(hass, entry) is True
+
+    for removed in (legacy_switch, legacy_vacuum, legacy_warning, mode_extra, path_squatter):
+        assert ent_reg.async_get(removed) is None, removed
+    for kept in (running_switch, unrelated, orphan):
+        assert ent_reg.async_get(kept) is not None, kept
+    mode = ent_reg.async_get(mode_primary)
+    path = ent_reg.async_get(path_primary)
+    assert mode is not None and mode.unique_id == f"{sn}_mode_selection"
+    assert path is not None and path.unique_id == f"{sn}_clean_path"

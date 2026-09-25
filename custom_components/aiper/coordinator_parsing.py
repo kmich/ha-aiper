@@ -22,7 +22,6 @@ __all__ = [
     "_slugify",
     "_norm_key",
     "_merge_discovery_metadata",
-    "_merge_static_metadata",
     "_parse_dt",
     "_clean_path_value",
     "_deep_get",
@@ -104,11 +103,6 @@ def _merge_discovery_metadata(
             continue
         merged[key] = value
     return merged
-
-
-def _merge_static_metadata(existing: RawDeviceData, discovered: RawDeviceData) -> RawDeviceData:
-    """Merge discovery metadata without overwriting MQTT-owned live state."""
-    return _merge_discovery_metadata(existing, discovered, include_live=False)
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -409,12 +403,9 @@ def _parse_cleaning_history(raw: Any) -> tuple[int | None, float | None, list[di
     if total_count is None and records:
         total_count = len(records)
     if total_hours is None:
-        try:
-            duration_sum = sum(
-                float(record["duration_min"]) for record in records if record.get("duration_min") is not None
-            )
-        except Exception:
-            duration_sum = 0.0
+        duration_sum = sum(
+            float(record["duration_min"]) for record in records if record.get("duration_min") is not None
+        )
         if duration_sum > 0:
             total_hours = round(duration_sum / 60.0, 3)
 

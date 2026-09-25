@@ -45,8 +45,9 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked --group dev
-      # Coverage floor is set in pyproject.toml ([tool.coverage.report]).
-      - run: uv run --frozen pytest tests/ --tb=short --cov --cov-report=term
+      # Total floor in pyproject.toml ([tool.coverage.report]); per-module floor below.
+      - run: uv run --frozen pytest tests/ --tb=short --cov --cov-report=term --cov-report=json
+      - run: uv run --frozen .github/scripts/check_coverage.py coverage.json
 
   test-min-ha:
     name: Tests (minimum supported Home Assistant)

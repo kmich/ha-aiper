@@ -33,13 +33,15 @@ asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
 source = ["custom_components/aiper"]
-branch = true
+# Line coverage, matching how Home Assistant measures the test-coverage rule.
+branch = false
 
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
-# Ratchet this up as coverage improves; Silver quality scale needs > 95.
-fail_under = 77
+# Home Assistant's Silver quality scale needs > 95% line coverage in every
+# module; .github/scripts/check_coverage.py enforces the per-module floor.
+fail_under = 95
 
 [tool.ruff]
 line-length = 120

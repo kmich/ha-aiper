@@ -735,3 +735,14 @@ async def test_http_status_errors_are_classified(hass: HomeAssistant, status: in
 
     with pytest.raises(InvalidAuth if error == "invalid_auth" else InvalidResponse):
         await validate_input(hass, {CONF_USERNAME: "u@example.com", CONF_PASSWORD: "p", CONF_REGION: "eu"})
+
+
+@pytest.mark.asyncio
+async def test_transport_errors_are_cannot_connect(hass: HomeAssistant) -> None:
+    """A raw aiohttp transport error during validation is a connection problem."""
+    import aiohttp
+
+    FakeAiperApi.login_error = aiohttp.ClientConnectionError("dns")
+
+    with pytest.raises(CannotConnect):
+        await validate_input(hass, {CONF_USERNAME: "u@example.com", CONF_PASSWORD: "p", CONF_REGION: "eu"})

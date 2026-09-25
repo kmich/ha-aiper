@@ -34,6 +34,10 @@
 - tzdata is loaded in an executor instead of blocking the event loop.
 - The MQTT message callback is called once with a single `(sn, payload)`
   signature instead of through a `TypeError` fallback on every message.
+- An MQTT payload that is a bare JSON value (not an object) is ignored instead
+  of raising inside the event loop.
+- The one-time registry migration no longer fails on Home Assistant 2024.12
+  when a duplicate select already holds the canonical unique ID.
 
 ### Changed
 - All entities use `has_entity_name` with translation keys; the entity names
@@ -51,9 +55,10 @@
   session conflict, and does not repeat a failed sweep for six hours (it could
   previously send up to 144 paced requests per clean-path change).
 - `PARALLEL_UPDATES` is declared for every platform.
-- Manifest declares `loggers`; the quality scale is recorded per rule in
-  `quality_scale.yaml` and the manifest now claims `bronze` (test coverage is
-  the remaining Silver requirement). `hacs.json` declares Home Assistant
+- The integration now meets Home Assistant's **Silver** quality scale:
+  every rule is tracked in `quality_scale.yaml`, and line coverage is 99.5%
+  overall and at least 98% in every module (CI enforces 95% per module).
+  The manifest declares `loggers`, and `hacs.json` declares Home Assistant
   2024.12 as the minimum.
 
 ### Internal
@@ -66,8 +71,12 @@
 - Diagnostics use public `diagnostics()` methods instead of private attributes.
 - Tests build real coordinators instead of bypassing `__init__`, run against
   Home Assistant 2026.9 (Python 3.14) and the 2024.12 minimum (Python 3.12),
-  and report coverage with a CI floor. `validate.yml` merged into `ci.yml`;
-  branch-tracking hassfest/HACS actions are pinned to commits.
+  and enforce coverage in CI (95% total and per module). `validate.yml`
+  merged into `ci.yml`; branch-tracking hassfest/HACS actions are pinned to
+  commits.
+- Unused and unreachable code removed (`get_clean_path`, `get_device`,
+  `_merge_static_metadata`, and several `try` blocks around code that cannot
+  raise).
 
 ## [1.7.0] - 2026-09-11
 

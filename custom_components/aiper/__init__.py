@@ -281,8 +281,6 @@ async def _migrate_select_unique_ids(
         groups.setdefault((sn, kind), []).append(e)
 
     for (sn, group_kind), ents in groups.items():
-        if not ents:
-            continue
         ents_sorted = sorted(ents, key=lambda x: _preference(x, group_kind))
         primary = ents_sorted[0]
         target_uid = targets[sn][group_kind]
@@ -300,11 +298,12 @@ async def _migrate_select_unique_ids(
             by_uid.pop(primary.unique_id or "", None)
             by_uid[target_uid] = primary
 
-        # Remove all other duplicates for this sn/kind.
+        # Remove all other duplicates for this sn/kind. The entity squatting on
+        # the target unique_id may already be gone (removed above); removing it
+        # twice raises KeyError on older Home Assistant releases.
         for extra in ents_sorted[1:]:
-            if extra.entity_id == primary.entity_id:
-                continue
-            ent_reg.async_remove(extra.entity_id)
+            if ent_reg.async_get(extra.entity_id) is not None:
+                ent_reg.async_remove(extra.entity_id)
 
 
 def _registered_serials(hass: HomeAssistant, entry: ConfigEntry) -> list[str]:

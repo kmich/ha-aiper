@@ -211,13 +211,10 @@ class AiperCleanPathSelect(AiperSelectBase):
         clean_path = self.entity_state("clean_path")
         label = clean_path.value if clean_path is not None else None
         if label is not None and label not in CLEAN_PATH_MAP.values():
-            try:
-                opts = list(self._attr_options or [])
-                if label not in opts:
-                    opts.append(label)
-                    self._attr_options = opts
-            except Exception:
-                pass
+            # Surface firmware-specific paths (e.g. "Path 2") as selectable options.
+            opts = list(self._attr_options or [])
+            if label not in opts:
+                self._attr_options = [*opts, label]
         return str(label) if label is not None else None
 
     async def async_select_option(self, option: str) -> None:

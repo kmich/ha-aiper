@@ -34,3 +34,18 @@ def test_plain_json_and_empty_responses_pass_through() -> None:
 
     assert enc.decrypt_response('{"code": "0"}') == '{"code": "0"}'
     assert enc.decrypt_response("") == ""
+
+
+def test_zero_padding_keeps_block_aligned_data() -> None:
+    assert AiperEncryption._zero_pad(b"x" * 16) == b"x" * 16
+    assert AiperEncryption._zero_pad(b"x") == b"x" + b"\x00" * 15
+
+
+def test_non_rsa_public_key_is_rejected(monkeypatch) -> None:
+    import pytest
+
+    from custom_components.aiper import crypto
+
+    monkeypatch.setattr(crypto, "load_der_public_key", lambda der: object())
+    with pytest.raises(TypeError):
+        AiperEncryption()

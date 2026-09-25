@@ -14,7 +14,7 @@
     "awscrt",
     "awsiot"
   ],
-  "quality_scale": "bronze",
+  "quality_scale": "silver",
   "requirements": [
     "awsiotsdk>=1.29.0"
   ],

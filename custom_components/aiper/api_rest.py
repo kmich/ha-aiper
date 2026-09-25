@@ -24,7 +24,7 @@ from .connection import ConnectionStatus
 from .const import ApiEndpoint
 from .crypto import AiperEncryption
 from .profiles import SCUBA_S1_2025_MODEL, DeviceFamily, device_family, model_key
-from .redaction import redact_serial
+from .redaction import redact_serial, redact_str
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -463,14 +463,9 @@ class AiperRestClient:
                     self._headers["token"] = self._token
                     _LOGGER.debug("Token refreshed successfully")
                     return True
-            try:
-                code = payload.get("code") if isinstance(payload, dict) else None
-                msg = None
-                if isinstance(payload, dict):
-                    msg = payload.get("msg") or payload.get("message")
-                _LOGGER.warning("Token refresh failed (code=%s, message=%s)", code, msg)
-            except Exception:
-                _LOGGER.warning("Token refresh failed")
+            _LOGGER.warning(
+                "Token refresh failed (code=%s, message=%s)", payload.get("code"), self._payload_message(payload)
+            )
             return False
         except Exception as err:
             _LOGGER.error("Token refresh error: %s", err)
@@ -481,14 +476,11 @@ class AiperRestClient:
         try:
             payload = await self._call_encrypted("POST", "/users/getOpenIdToken", {}, retry_login=retry_login)
             if not self._is_success(payload):
-                try:
-                    code = payload.get("code") if isinstance(payload, dict) else None
-                    msg = None
-                    if isinstance(payload, dict):
-                        msg = payload.get("msg") or payload.get("message")
-                    _LOGGER.warning("OpenID token fetch failed (code=%s, message=%s)", code, msg)
-                except Exception:
-                    _LOGGER.warning("OpenID token fetch failed")
+                _LOGGER.warning(
+                    "OpenID token fetch failed (code=%s, message=%s)",
+                    payload.get("code"),
+                    self._payload_message(payload),
+                )
                 return
 
             data = payload.get("data", {}) or {}
@@ -507,7 +499,7 @@ class AiperRestClient:
                 "Got OpenID token data identity_id=%s pool_id=%s iot_endpoint=%s",
                 (self._identity_id[:8] + "...") if isinstance(self._identity_id, str) else None,
                 (self._identity_pool_id[:8] + "...") if isinstance(self._identity_pool_id, str) else None,
-                self._iot_endpoint,
+                redact_str(self._iot_endpoint) if self._iot_endpoint else None,
             )
 
         except Exception as err:
@@ -523,10 +515,7 @@ class AiperRestClient:
         """
         region = self._aws_region
         if not region and self._iot_endpoint and ".iot." in self._iot_endpoint:
-            try:
-                region = self._iot_endpoint.split(".iot.", 1)[1].split(".", 1)[0]
-            except Exception:
-                region = None
+            region = self._iot_endpoint.split(".iot.", 1)[1].split(".", 1)[0] or None
         return region or "eu-central-1"
 
     async def _exchange_openid_token(self) -> tuple[int, str]:

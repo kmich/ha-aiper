@@ -606,14 +606,15 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         """Return the MQTT shadow callback for a device (signature: ``(sn, data)``)."""
         return self.handle_shadow_update
 
-    def _apply_shadow_update(self, sn: str, data: dict) -> None:
+    def _apply_shadow_update(self, sn: str, data: Any) -> None:
         """Apply a shadow update and notify listeners (runs on HA loop)."""
-        try:
-            topic = data.get("_topic") if isinstance(data, dict) else None
-            keys = list(data.keys()) if isinstance(data, dict) else [type(data).__name__]
-            _LOGGER.debug("Shadow update for %s topic=%s keys=%s", redact_serial(sn), redact_topic(topic), keys)
-        except Exception:
-            _LOGGER.debug("Shadow update for %s (unparsed)", redact_serial(sn))
+        if not isinstance(data, dict):
+            # A bare JSON scalar/array carries no device state.
+            _LOGGER.debug("Ignoring non-object MQTT payload for %s (%s)", redact_serial(sn), type(data).__name__)
+            return
+        _LOGGER.debug(
+            "Shadow update for %s topic=%s keys=%s", redact_serial(sn), redact_topic(data.get("_topic")), list(data)
+        )
         self._on_shadow_update(sn, data)
 
     def _on_shadow_update(self, sn: str, data: dict) -> None:
@@ -800,11 +801,8 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 updates = merge_device_state(updates, normalize_w2_alarm_update(component))
 
         # Update last-seen time on any MQTT activity.
-        try:
-            if sn in self._devices:
-                self._devices[sn]["last_seen"] = dt_util.utcnow()
-        except Exception:
-            pass
+        if sn in self._devices:
+            self._devices[sn]["last_seen"] = dt_util.utcnow()
 
         # Mark any live machine fields this payload carried as MQTT-sourced, so
         # the next REST refresh defers to them until they age past the TTL.
@@ -881,12 +879,6 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             "device_model_images": image_urls,
             "command_state": self._command_state,
         }
-
-    def get_device(self, sn: str) -> DeviceState | None:
-        """Get device data by serial number."""
-        if self.data:
-            return self.data.get(sn)
-        return None
 
     def has_scuba_s1_device(self) -> bool:
         """Return True if any known device is a Scuba_S1_2025."""
@@ -1052,7 +1044,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         reported_status = _to_int(machine.get("status"))
         reported_running = status_running(reported_status) if reported_status is not None else None
         # Clean path is especially inconsistent across firmwares; normalize.
-        reported_clean_path = self._extract_clean_path_value(sn, machine)
+        reported_clean_path = self._extract_clean_path_value(machine)
 
         now = dt_util.utcnow().isoformat()
         changed = False
@@ -1105,31 +1097,10 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
     # Clean path cache
     # -----------------
 
-    def _extract_clean_path_value(self, sn: str, machine: dict[str, Any] | None = None) -> int | None:
-        """Best-effort extraction of clean-path from known payload containers.
-
-        Different firmwares publish clean path under different keys/containers:
-        - Current normalized entity attributes
-        - Current Machine payload
-        Returns a normalized integer when possible.
-        """
-        if machine is None:
-            clean_path = ((self.data or {}).get(sn) or {}).get("clean_path")
-            if clean_path is not None:
-                value = _clean_path_value(clean_path.attributes.get("code"))
-                if value is not None:
-                    return value
-                value = _clean_path_value(clean_path.value)
-                if value is not None:
-                    return value
-            machine = {}
-
-        if isinstance(machine, dict):
-            v = _clean_path_value(machine.get("cleanPath"))
-            if v is not None:
-                return v
-
-        return None
+    @staticmethod
+    def _extract_clean_path_value(machine: dict[str, Any]) -> int | None:
+        """Return the normalized clean-path value a Machine payload reports, if any."""
+        return _clean_path_value(machine.get("cleanPath"))
 
     def set_clean_path_cache(self, sn: str, value: int) -> None:
         """Update and persist the last confirmed clean-path preference."""
@@ -1255,25 +1226,3 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 self._confirm_pending_commands(sn, {"cleanPath": int(target)})
                 return True
         return False
-
-    def get_clean_path(self, sn: str) -> int | None:
-        """Get current clean-path preference.
-
-        Community-friendly behavior:
-        - Prefer the normalized entity state
-        - Fall back to the command/cache value
-        """
-        v = self._extract_clean_path_value(sn)
-        if v is not None:
-            return v
-
-        if sn in self._devices and "clean_path" in self._devices[sn]:
-            try:
-                val = self._devices[sn].get("clean_path")
-                v = _clean_path_value(val)
-                return v
-            except Exception:
-                return None
-
-        val = self._clean_path_cache.get(sn)
-        return _clean_path_value(val)

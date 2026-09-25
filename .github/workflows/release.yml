@@ -38,7 +38,9 @@ jobs:
         run: uv run --frozen mypy custom_components/ tests/ tools/ .github/scripts/
 
       - name: Unit tests
-        run: uv run --frozen pytest tests/ -v --cov
+        run: |
+          uv run --frozen pytest tests/ -v --cov --cov-report=json
+          uv run --frozen .github/scripts/check_coverage.py coverage.json
 
   release:
     name: Create GitHub Release

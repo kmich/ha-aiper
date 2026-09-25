@@ -14,7 +14,7 @@ from custom_components.aiper.coordinator import AiperDataUpdateCoordinator
 from custom_components.aiper.entity import device_info_for, device_online
 from custom_components.aiper.profiles import Capability, derive_device_profile
 from custom_components.aiper.select import AiperCleaningModeSelect, AiperCleanPathSelect
-from custom_components.aiper.state import normalize_device_state
+from custom_components.aiper.state import EntityState, normalize_device_state
 from custom_components.aiper.switch import AiperRunningSwitch
 from tests.coordinator_factory import BaseFakeApi, make_coordinator
 
@@ -217,3 +217,171 @@ async def test_clean_path_select_caches_and_confirms(hass: HomeAssistant) -> Non
     assert select.current_option == "Adaptive"
     with pytest.raises(ServiceValidationError):
         await select.async_select_option("Zigzag")
+
+
+@pytest.mark.asyncio
+async def test_failed_command_while_mqtt_drops_reports_mqtt_unavailable(hass: HomeAssistant) -> None:
+    """If MQTT dropped mid-command, the error says so instead of a generic rejection."""
+    api = CommandApi(accept=False)
+    coordinator, controller = _setup(hass, api)
+    select = AiperCleanPathSelect(coordinator, controller, SN)
+
+    async def reject_and_drop(sn: str, value: int) -> bool:
+        api.mqtt = False
+        return False
+
+    api.update_clean_path_setting = reject_and_drop  # type: ignore[method-assign]
+
+    with pytest.raises(HomeAssistantError) as err:
+        await select.async_select_option("Adaptive")
+    assert err.value.translation_key == "mqtt_unavailable"
+
+
+def test_device_online_is_none_for_unknown_device() -> None:
+    assert device_online(make_coordinator(data={}), SN) is None
+
+
+@pytest.mark.asyncio
+async def test_buttons_and_binary_sensors(hass: HomeAssistant) -> None:
+    from custom_components.aiper.binary_sensor import (
+        BINARY_SENSOR_DESCRIPTIONS,
+        AiperBinarySensor,
+        AiperCloudConnectedBinarySensor,
+    )
+    from custom_components.aiper.button import BUTTON_DESCRIPTIONS, AiperButton
+
+    api = CommandApi()
+    coordinator, controller = _setup(hass, api)
+    refresh = next(d for d in BUTTON_DESCRIPTIONS if d.key == "refresh_shadow")
+    button = AiperButton(coordinator, controller, refresh, SN, coordinator.data[SN])
+
+    assert button.available is True
+    await button.async_press()
+    assert ("shadow", SN) in api.commands
+
+    async def no_shadow(sn: str) -> bool:
+        return False
+
+    api.request_shadow = no_shadow  # type: ignore[method-assign]
+    with pytest.raises(HomeAssistantError) as err:
+        await button.async_press()
+    assert err.value.translation_key == "shadow_refresh_failed"
+
+    api.mqtt = False
+    assert button.available is False
+    coordinator.last_update_success = False
+    assert button.available is False
+
+    online = next(d for d in BINARY_SENSOR_DESCRIPTIONS if d.key == "online")
+    binary = AiperBinarySensor(coordinator, online, SN, coordinator.data[SN])
+    coordinator.last_update_success = True
+    assert binary.available is True
+    assert binary.is_on is True
+
+    class Api:
+        connection = type("C", (), {"is_connected": True})()
+
+    cloud = AiperCloudConnectedBinarySensor(make_coordinator(Api()), "entry")
+    assert cloud.is_on is True
+    assert cloud.available is True
+
+
+@pytest.mark.asyncio
+async def test_mode_select_label_resolution_and_current_mode_sources(hass: HomeAssistant) -> None:
+    coordinator, controller = _setup(hass, CommandApi())
+    select = AiperCleaningModeSelect(
+        coordinator, controller, SN, [1, 2, 9], cast(Any, {"1": "Smart", "x": "Bad", 2: "Floor"})
+    )
+
+    assert select.options == ["Smart", "Floor", "Mode 9"]
+    assert select._mode_id_for_label(None) is None
+    assert select._mode_id_for_label("  ") is None
+    assert select._mode_id_for_label("Floor") == 2
+    assert select._mode_id_for_label("Mode 9") == 9
+    assert select._mode_id_for_label("Turbo") is None
+
+    data = dict(coordinator.data[SN])
+    data["mode"] = EntityState("x", {"code": 42})
+    data["mode_options"] = EntityState([1, 2, 9], {"selected_mode": 9})
+    coordinator.data = {SN: data}
+    assert select.current_option == "Mode 9"
+
+    data["mode_options"] = EntityState([1, 2, 9], {})
+    coordinator.note_command_sent(SN, "mode", 2)
+    assert select.current_option == "Floor"
+
+    coordinator.clear_command_state(SN)
+    data["last_cleaning_mode"] = EntityState("Smart")
+    assert select.current_option == "Smart"
+
+    data.pop("last_cleaning_mode")
+    assert select.current_option is None
+
+    # Selecting the mode the device already reports is a no-op.
+    data["mode"] = EntityState("Floor", {"code": 2})
+    await select.async_select_option("Floor")
+    assert controller.api.commands == []  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_clean_path_select_dynamic_paths(hass: HomeAssistant) -> None:
+    api = CommandApi()
+    coordinator, controller = _setup(hass, api)
+    select = AiperCleanPathSelect(coordinator, controller, SN)
+
+    data = dict(coordinator.data[SN])
+    data["clean_path"] = EntityState("Path 2", {"code": 2})
+    coordinator.data = {SN: data}
+    assert select.current_option == "Path 2"
+    assert "Path 2" in select.options
+
+    await select.async_select_option("Path 2")  # already reported: no-op
+    assert api.commands == []
+
+    await select.async_select_option("Path 3")
+    assert ("clean_path", 3) in api.commands
+
+    with pytest.raises(ServiceValidationError):
+        await select.async_select_option("Path x")
+
+
+@pytest.mark.asyncio
+async def test_select_platform_builds_default_mode_map(hass: HomeAssistant) -> None:
+    from types import SimpleNamespace
+
+    from custom_components.aiper import select as select_platform
+
+    coordinator, controller = _setup(hass, CommandApi())
+    data = dict(coordinator.data[SN])
+    data["mode_options"] = EntityState([1, 2], {})
+    coordinator.data = {SN: data, "EMPTY": {**data, "mode_options": EntityState([], {})}}
+    added: list[Any] = []
+    entry = SimpleNamespace(runtime_data=SimpleNamespace(coordinator=coordinator, controller=controller))
+
+    await select_platform.async_setup_entry(hass, entry, lambda entities: added.extend(entities))  # type: ignore[arg-type]
+
+    mode_select = next(entity for entity in added if isinstance(entity, AiperCleaningModeSelect))
+    assert mode_select.options == ["Smart", "Floor"]
+    assert len(added) == 2
+
+
+def test_cloud_sensors_report_connection_health() -> None:
+    from datetime import UTC, datetime
+
+    from custom_components.aiper.connection import ConnectionStatus
+    from custom_components.aiper.sensor import AiperConnectionStateSensor, AiperLastCloudUpdateSensor
+
+    class Api:
+        connection = ConnectionStatus()
+
+    coordinator = make_coordinator(Api())
+    coordinator.last_successful_update = datetime(2026, 9, 1, tzinfo=UTC)
+    Api.connection.mark_connecting()
+
+    state_sensor = AiperConnectionStateSensor(coordinator, "entry")
+    updated_sensor = AiperLastCloudUpdateSensor(coordinator, "entry")
+
+    assert state_sensor.native_value == "connecting"
+    assert state_sensor.extra_state_attributes["connect_attempts"] == 1
+    assert state_sensor.available is True
+    assert updated_sensor.native_value == datetime(2026, 9, 1, tzinfo=UTC)

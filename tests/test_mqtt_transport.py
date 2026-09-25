@@ -145,3 +145,48 @@ def test_lifecycle_callbacks_track_state_and_notify_reconnect() -> None:
 
     transport._on_connection_closed(None, None)
     assert transport.last_disconnected_at is not None
+
+
+def test_build_connection_uses_delegate_or_static_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    from awsiot import mqtt_connection_builder
+
+    captured: list[dict[str, Any]] = []
+
+    def record(**kwargs: Any) -> str:
+        captured.append(kwargs)
+        return "connection"
+
+    monkeypatch.setattr(
+        mqtt_connection_builder,
+        "websockets_with_default_aws_signing",
+        record,
+    )
+    creds = AwsIotCredentials(access_key_id="AKIA", secret_access_key="secret", session_token="tok")
+
+    static = AwsIotMqttTransport(endpoint="e", region="eu-central-1", client_id="c", credentials=creds)
+    delegated = AwsIotMqttTransport(
+        endpoint="e", region="eu-central-1", client_id="c", credentials=creds, credentials_resolver=lambda: creds
+    )
+
+    assert static._build_connection() == "connection"
+    assert delegated._build_connection() == "connection"
+    assert captured[0]["clean_session"] is False
+    assert captured[0]["client_id"] == "c"
+    assert captured[1]["credentials_provider"] is not None
+
+
+@pytest.mark.asyncio
+async def test_disconnect_errors_and_reconnect_callback_errors_are_contained() -> None:
+    connection = FakeConnection(fail="disconnect")
+
+    def bad_callback(session_present: bool) -> None:
+        raise RuntimeError("callback bug")
+
+    transport = _transport(connection, on_reconnected=bad_callback)
+    await transport.async_connect()
+
+    transport._on_connection_resumed(None, 0, session_present=True)
+    await transport.async_disconnect()
+
+    assert transport.is_connected() is False
+    assert "disconnect failed" in (transport.last_error or "")
