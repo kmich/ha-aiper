@@ -11,9 +11,10 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from custom_components.aiper.api import AiperAuthenticationError, AiperConnectionError
 from custom_components.aiper.coordinator import AiperDataUpdateCoordinator
+from tests.coordinator_factory import BaseFakeApi
 
 
-class FailingApi:
+class FailingApi(BaseFakeApi):
     """Minimal API double whose device-list call raises a chosen error."""
 
     def __init__(self, error: Exception) -> None:

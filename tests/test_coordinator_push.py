@@ -12,10 +12,11 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aiper.coordinator import AiperDataUpdateCoordinator
 from custom_components.aiper.state import normalize_device_state
+from tests.coordinator_factory import BaseFakeApi, make_coordinator
 
 
 def _bare_coordinator() -> AiperDataUpdateCoordinator:
-    coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
+    coordinator = make_coordinator()
     coordinator._consumables_cache = {}
     coordinator._history_cache = {}
     coordinator._clean_path_cache = {}
@@ -138,8 +139,9 @@ async def test_clean_path_cache_restores_and_persists(hass: HomeAssistant) -> No
         async def async_load(self) -> dict[str, int]:
             return {"SN123": 1, "INVALID": 9}
 
-        async def async_save(self, data: dict[str, int]) -> None:
-            self.saved.append(data)
+        def async_delay_save(self, data_func: Any, delay: float = 0) -> None:
+            # Writes are coalesced by Store; record what would be written.
+            self.saved.append(data_func())
 
     store = FakeStore()
     coordinator._clean_path_store = cast(Any, store)
@@ -161,7 +163,7 @@ async def test_s1_capability_refresh_is_independent_from_rest_poll() -> None:
     coordinator._apply_device_profile("SN123")
     coordinator.data = {"SN123": normalize_device_state(dict(coordinator._devices["SN123"]))}
 
-    class FakeApi:
+    class FakeApi(BaseFakeApi):
         def is_mqtt_connected(self) -> bool:
             return True
 
@@ -189,7 +191,7 @@ async def test_capability_refresh_skips_models_without_verified_contracts() -> N
     coordinator._apply_device_profile("SN123")
     coordinator.data = {"SN123": normalize_device_state(dict(coordinator._devices["SN123"]))}
 
-    class FakeApi:
+    class FakeApi(BaseFakeApi):
         def __init__(self) -> None:
             self.query_clean_path_setting = AsyncMock(return_value=1)
             self.query_cleaning_mode_setting = AsyncMock(return_value=2)
@@ -237,7 +239,7 @@ async def test_s1_capability_refresh_does_not_regress_live_state() -> None:
         )
     }
 
-    class FakeApi:
+    class FakeApi(BaseFakeApi):
         def is_mqtt_connected(self) -> bool:
             return True
 
@@ -549,7 +551,7 @@ def test_shadow_update_promotes_hydrocomm_w2_state() -> None:
 async def test_scheduled_refresh_merges_live_rest_polling(hass: HomeAssistant) -> None:
     """Scheduled refreshes should merge light REST state such as charging."""
 
-    class FakeApi:
+    class FakeApi(BaseFakeApi):
         async def get_devices(self):
             return [
                 {
@@ -566,9 +568,7 @@ async def test_scheduled_refresh_merges_live_rest_polling(hass: HomeAssistant) -
             raise AssertionError("metadata info should not be polled before refresh interval")
 
     now = dt_util.utcnow()
-    coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
-    coordinator.hass = hass
-    coordinator.api = cast(Any, FakeApi())
+    coordinator = make_coordinator(FakeApi(), hass=hass)
     coordinator._devices = {
         "SN123": {
             "sn": "SN123",
@@ -609,7 +609,7 @@ async def test_scheduled_refresh_merges_live_rest_polling(hass: HomeAssistant) -
 async def test_rest_refresh_does_not_overwrite_mqtt_live_state(hass: HomeAssistant) -> None:
     """REST slow-refresh must not overwrite authoritative MQTT running/status/charging/mode."""
 
-    class FakeApi:
+    class FakeApi(BaseFakeApi):
         async def get_devices(self):
             # REST reports stale Idle/0 for machineStatus while device is actually running
             return [
@@ -627,9 +627,7 @@ async def test_rest_refresh_does_not_overwrite_mqtt_live_state(hass: HomeAssista
             raise AssertionError("metadata info should not be polled before refresh interval")
 
     now = dt_util.utcnow()
-    coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
-    coordinator.hass = hass
-    coordinator.api = cast(Any, FakeApi())
+    coordinator = make_coordinator(FakeApi(), hass=hass)
     coordinator._devices = {
         "SN123": {
             "sn": "SN123",
@@ -672,7 +670,7 @@ async def test_rest_refresh_does_not_overwrite_mqtt_live_state(hass: HomeAssista
 async def test_scuba_s1_fresh_rest_charging_replaces_stale_mqtt_state(hass: HomeAssistant) -> None:
     """S1 REST charging coherently replaces a stale low-battery MQTT report."""
 
-    class FakeApi:
+    class FakeApi(BaseFakeApi):
         async def get_devices(self):
             return [
                 {
@@ -692,9 +690,7 @@ async def test_scuba_s1_fresh_rest_charging_replaces_stale_mqtt_state(hass: Home
             return False
 
     now = dt_util.utcnow()
-    coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
-    coordinator.hass = hass
-    coordinator.api = cast(Any, FakeApi())
+    coordinator = make_coordinator(FakeApi(), hass=hass)
     coordinator._devices = {
         "SN123": {
             "sn": "SN123",
@@ -755,7 +751,7 @@ async def test_scuba_s1_rest_charging_defers_to_recent_mqtt_cleaning_report(hass
     MQTT "Cleaning" state with "Charging".
     """
 
-    class FakeApi:
+    class FakeApi(BaseFakeApi):
         async def get_devices(self):
             return [
                 {
@@ -775,9 +771,7 @@ async def test_scuba_s1_rest_charging_defers_to_recent_mqtt_cleaning_report(hass
             return False
 
     now = dt_util.utcnow()
-    coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
-    coordinator.hass = hass
-    coordinator.api = cast(Any, FakeApi())
+    coordinator = make_coordinator(FakeApi(), hass=hass)
     coordinator._devices = {
         "SN123": {
             "sn": "SN123",
@@ -819,9 +813,7 @@ async def test_scuba_s1_rest_charging_defers_to_recent_mqtt_cleaning_report(hass
 
 
 def _live_state_coordinator(hass: HomeAssistant, api: Any, now: datetime) -> AiperDataUpdateCoordinator:
-    coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
-    coordinator.hass = hass
-    coordinator.api = cast(Any, api)
+    coordinator = make_coordinator(api, hass=hass)
     coordinator._devices = {
         "SN123": {
             "sn": "SN123",
@@ -854,7 +846,7 @@ async def test_stale_mqtt_state_yields_to_fresh_rest_after_ttl(hass: HomeAssista
     "Cleaning" status indefinitely.
     """
 
-    class FakeApi:
+    class FakeApi(BaseFakeApi):
         async def get_devices(self):
             return [
                 {
@@ -903,7 +895,7 @@ async def test_rest_charging_applies_immediately_after_mqtt_dropout(hass: HomeAs
     MQTT_LIVE_STATE_TTL.
     """
 
-    class FakeApi:
+    class FakeApi(BaseFakeApi):
         async def get_devices(self):
             return [
                 {
@@ -960,7 +952,7 @@ async def test_scuba_s1_rest_cleaning_or_parked_implies_wet(
     resolves to Offline when the cloud flag is false.
     """
 
-    class FakeApi:
+    class FakeApi(BaseFakeApi):
         async def get_devices(self):
             device = {
                 "sn": "SN123",
@@ -981,9 +973,7 @@ async def test_scuba_s1_rest_cleaning_or_parked_implies_wet(
             return False
 
     now = dt_util.utcnow()
-    coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
-    coordinator.hass = hass
-    coordinator.api = cast(Any, FakeApi())
+    coordinator = make_coordinator(FakeApi(), hass=hass)
     coordinator._devices = {
         "SN123": {
             "sn": "SN123",
@@ -1029,7 +1019,7 @@ async def test_scuba_s1_sustained_battery_rise_is_conservative_charging_fallback
 ) -> None:
     """S1 may infer charging only from a sustained rise without fresher status."""
 
-    class FakeApi:
+    class FakeApi(BaseFakeApi):
         async def get_devices(self):
             return [
                 {
@@ -1048,9 +1038,7 @@ async def test_scuba_s1_sustained_battery_rise_is_conservative_charging_fallback
             return False
 
     now = dt_util.utcnow()
-    coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
-    coordinator.hass = hass
-    coordinator.api = cast(Any, FakeApi())
+    coordinator = make_coordinator(FakeApi(), hass=hass)
     coordinator._devices = {
         "SN123": {
             "sn": "SN123",
@@ -1243,7 +1231,7 @@ async def test_scuba_s1_clean_path_confirmation_ignores_stale_readback() -> None
     coordinator = _bare_coordinator()
     coordinator._devices["SN123"]["model"] = "Scuba_S1_2025"
 
-    class FakeApi:
+    class FakeApi(BaseFakeApi):
         def __init__(self) -> None:
             self.responses = iter((1, 0))
 

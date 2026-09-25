@@ -37,7 +37,6 @@ def _api_with_fake_mqtt() -> tuple[AiperApi, FakeMqttTransport]:
     api = AiperApi("user@example.com", "secret", "asia", async_session=cast(Any, object()))
     transport = FakeMqttTransport()
     api._mqtt_client = transport
-    api._mqtt_connected = True
     return api, transport
 
 

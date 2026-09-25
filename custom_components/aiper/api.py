@@ -32,7 +32,7 @@ from .const import (
 from .crypto import AiperEncryption
 from .mqtt import AwsIotCredentials, AwsIotMqttTransport
 from .profiles import SCUBA_S1_2025_MODEL, DeviceFamily, device_family, model_key
-from .redaction import redact_serial
+from .redaction import redact_serial, redact_str
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -142,7 +142,6 @@ class AiperApi:
         self._iot_endpoint: str | None = None
         self._aws_region: str | None = None
         self._mqtt_client: Any = None
-        self._mqtt_connected = False
         self._mqtt_first_disconnected_at: datetime | None = None
         # Single authoritative record of MQTT/credential connection health,
         # read by diagnostics and the connection-status entities.
@@ -1221,19 +1220,16 @@ class AiperApi:
             )
 
             if await self._mqtt_client.async_connect():
-                self._mqtt_connected = True
                 self._mqtt_first_disconnected_at = None
                 self.connection.mark_connected()
                 _LOGGER.debug("Connected to AWS IoT MQTT using AWS IoT Device SDK v2")
                 return True
 
-            self._mqtt_connected = False
             self.connection.mark_disconnected("MQTT transport did not establish a session")
             return False
 
         except Exception as err:
             _LOGGER.error("MQTT connection failed: %s", err)
-            self._mqtt_connected = False
             self.connection.mark_disconnected(err)
             return False
 
@@ -1258,6 +1254,40 @@ class AiperApi:
         await self._resubscribe_all_devices()
         return True
 
+    def diagnostics(self) -> dict[str, Any]:
+        """Return a JSON-safe snapshot of client/connection state for diagnostics.
+
+        Identifiers are partially redacted here; the diagnostics platform also
+        redacts sensitive keys and device serials over the whole payload.
+        """
+        client = self._mqtt_client
+        return {
+            "base_url": self.base_url,
+            "region": self.region,
+            "time_zone": self._headers.get("zoneId"),
+            "mqtt_connected": self.is_mqtt_connected(),
+            "connection": self.connection.as_diagnostics(),
+            "iot_endpoint": redact_str(self._iot_endpoint) if self._iot_endpoint else None,
+            "identity_id": redact_str(self._identity_id) if self._identity_id else None,
+            "aws_region": self._aws_region,
+            "mqtt_client": type(client).__name__ if client is not None else None,
+            "mqtt_last_error": getattr(client, "last_error", None),
+            "mqtt_last_connected_at": getattr(client, "last_connected_at", None),
+            "mqtt_last_disconnected_at": getattr(client, "last_disconnected_at", None),
+            "mqtt_reconnect_count": getattr(client, "reconnect_count", None),
+            # Non-zero and rising across reconnects means the SDK really is
+            # re-asking us to sign, which is what keeps a reconnect from
+            # retrying forever with expired Cognito credentials.
+            "mqtt_credential_signing_count": getattr(client, "credential_signing_count", None),
+            "mqtt_disconnected_seconds": self.mqtt_disconnected_seconds(),
+            "seconds_since_mqtt_rebuild": self.seconds_since_mqtt_rebuild(),
+            "aws_credentials_ttl": self.aws_credentials_ttl,
+            "aws_credentials_expires_in": (
+                round(self._aws_credentials_exp - time.time()) if self._aws_credentials_exp else None
+            ),
+            "session_conflict_cooldown_seconds": max(0, round(self._session_conflict_until - time.time())),
+        }
+
     def seconds_since_mqtt_rebuild(self) -> float | None:
         """Seconds since the last forced MQTT rebuild, or None if never."""
         if self._mqtt_last_rebuild_at is None:
@@ -1271,7 +1301,11 @@ class AiperApi:
         disconnect began, so `mqtt_disconnected_seconds` keeps measuring the
         same outage across transport objects being rebuilt.
         """
-        connected = bool(self._mqtt_connected and self._mqtt_client and self._mqtt_client.is_connected())
+        # The transport is the single source of truth for connectivity; the
+        # ConnectionStatus tracker below only records transitions for
+        # diagnostics and the connection-state entities.
+        client = self._mqtt_client
+        connected = bool(client is not None and client.is_connected())
         if connected:
             self._mqtt_first_disconnected_at = None
             if not self.connection.is_connected and self.connection.state is not ConnectionState.RECONNECTING:
@@ -1805,7 +1839,6 @@ class AiperApi:
         """
         client = self._mqtt_client
         self._mqtt_client = None
-        self._mqtt_connected = False
         if client is None:
             return
         with suppress(Exception):

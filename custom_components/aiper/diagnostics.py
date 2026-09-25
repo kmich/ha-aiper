@@ -1,138 +1,60 @@
 """Diagnostics support for the Aiper integration.
 
 The diagnostics output is intended to be safe to attach to GitHub issues.
-We therefore aggressively redact credentials, tokens, and other sensitive
-fields.
+Credentials, tokens and AWS secrets are removed; the account username and
+device serial numbers are partially redacted (``abc...xyz``) so entries can
+still be correlated within one report.
 """
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
+from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 
 from .redaction import redact, redact_known_values, redact_str
+
+TO_REDACT = {CONF_PASSWORD}
 
 
 async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
 
-    # `runtime_data` is unset (AttributeError) if diagnostics are requested
-    # before setup has assigned it, e.g. while the entry is stuck retrying
-    # setup -- degrade to an empty api/coordinator rather than raising.
+    # `runtime_data` is unset if diagnostics are requested before setup has
+    # assigned it, e.g. while the entry is stuck retrying setup -- degrade to
+    # an empty api/coordinator rather than raising.
     runtime_data = getattr(entry, "runtime_data", None)
     api = getattr(runtime_data, "api", None)
     coordinator = getattr(runtime_data, "coordinator", None)
 
-    # Config entry data: never expose credentials.
-    entry_data = {
-        "region": entry.data.get("region"),
-        "username": redact_str(str(entry.data.get("username", ""))) if entry.data.get("username") else None,
-    }
+    entry_data = async_redact_data(dict(entry.data), TO_REDACT)
+    username = entry.data.get(CONF_USERNAME)
+    if username:
+        entry_data[CONF_USERNAME] = redact_str(str(username))
+    entry_data.pop(CONF_PASSWORD, None)
 
     diag: dict[str, Any] = {
         "entry": {
             "title": entry.title,
+            "version": f"{entry.version}.{entry.minor_version}",
             "data": entry_data,
             "options": dict(entry.options),
         },
-        "api": {
-            "base_url": getattr(api, "base_url", None),
-            "region": getattr(api, "region", None),
-            "mqtt_connected": getattr(api, "is_mqtt_connected", lambda: False)(),
-        },
+        "api": api.diagnostics() if api is not None else {"base_url": None, "region": None, "mqtt_connected": False},
     }
 
-    connection = getattr(api, "connection", None)
-    if connection is not None and hasattr(connection, "as_diagnostics"):
-        diag["api"]["connection"] = connection.as_diagnostics()
-
-    if api is not None:
-        # Best-effort: include non-sensitive runtime details.
-        mqtt_client = getattr(api, "_mqtt_client", None)
-        diag["api"].update(
-            {
-                "iot_endpoint": redact_str(str(getattr(api, "_iot_endpoint", "")))
-                if getattr(api, "_iot_endpoint", None)
-                else None,
-                "identity_id": redact_str(str(getattr(api, "_identity_id", "")))
-                if getattr(api, "_identity_id", None)
-                else None,
-                "aws_region": getattr(api, "_aws_region", None),
-                "mqtt_client": type(mqtt_client).__name__ if mqtt_client is not None else None,
-                "mqtt_last_error": getattr(mqtt_client, "last_error", None) if mqtt_client is not None else None,
-                "mqtt_last_connected_at": getattr(mqtt_client, "last_connected_at", None)
-                if mqtt_client is not None
-                else None,
-                "mqtt_last_disconnected_at": getattr(mqtt_client, "last_disconnected_at", None)
-                if mqtt_client is not None
-                else None,
-                "mqtt_reconnect_count": getattr(mqtt_client, "reconnect_count", None)
-                if mqtt_client is not None
-                else None,
-                # Non-zero and rising across reconnects means the SDK really is
-                # re-asking us to sign, which is what keeps a reconnect from
-                # retrying forever with expired Cognito credentials.
-                "mqtt_credential_signing_count": getattr(mqtt_client, "credential_signing_count", None)
-                if mqtt_client is not None
-                else None,
-                "mqtt_disconnected_seconds": getattr(api, "mqtt_disconnected_seconds", lambda: None)(),
-                "seconds_since_mqtt_rebuild": getattr(api, "seconds_since_mqtt_rebuild", lambda: None)(),
-                "aws_credentials_ttl": getattr(api, "aws_credentials_ttl", None),
-                "aws_credentials_expires_in": (
-                    round(getattr(api, "_aws_credentials_exp", 0) - time.time())
-                    if getattr(api, "_aws_credentials_exp", None)
-                    else None
-                ),
-            }
-        )
-
     if coordinator is not None:
-        diag["coordinator"] = {
-            "last_update_success": getattr(coordinator, "last_update_success", None),
-            "update_interval_seconds": int(
-                getattr(getattr(coordinator, "update_interval", None), "total_seconds", lambda: 0)()
-            ),
-        }
+        diag.update(coordinator.diagnostics())
 
-        # Device snapshot (already reasonably bounded). Redact any sensitive keys.
-        try:
-            diag["devices"] = redact(coordinator.data or {})
-            diag["field_sources"] = redact(getattr(coordinator, "diagnostic_field_sources", {}) or {})
-            diag["state_reconciliation"] = redact(getattr(coordinator, "_state_reconciliation", {}) or {})
-            diag["mqtt_replay_suppressions"] = redact(getattr(coordinator, "_s1_mqtt_replay_suppressions", {}) or {})
-            image_urls = {}
-            for sn, device in (coordinator.data or {}).items():
-                if not isinstance(device, dict):
-                    continue
-                try:
-                    image_url = device["entity_picture"].value
-                except KeyError:
-                    image_url = None
-                if image_url:
-                    image_urls[sn] = image_url
-            diag["device_model_images"] = image_urls
-        except Exception:
-            diag["devices"] = "<unavailable>"
-
-        # Command tracker (useful for debugging select behavior).
-        try:
-            if hasattr(coordinator, "_command_state"):
-                diag["command_state"] = redact(getattr(coordinator, "_command_state", {}))
-        except Exception:
-            pass
-
-    # Pseudonymize identifiers that are not caught by key-name redaction:
-    # device serial numbers (keys and values, including MQTT topics) and the
-    # account username, which is also embedded in the entry title.
+    # Pseudonymize identifiers that key-name redaction does not catch: device
+    # serial numbers (keys and values, including MQTT topics) and the account
+    # username, which is also embedded in the entry title.
     identifiers: set[str] = set()
-    if coordinator is not None and isinstance(getattr(coordinator, "data", None), dict):
+    if coordinator is not None and isinstance(coordinator.data, dict):
         identifiers.update(str(sn) for sn in coordinator.data)
-    if api is not None and isinstance(getattr(api, "_devices", None), dict):
-        identifiers.update(str(sn) for sn in api._devices)
-    username = entry.data.get("username")
     if isinstance(username, str) and username:
         identifiers.add(username)
     return redact_known_values(redact(diag), identifiers)

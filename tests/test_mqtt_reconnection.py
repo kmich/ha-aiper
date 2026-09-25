@@ -23,11 +23,11 @@ from custom_components.aiper.coordinator import (
     MQTT_RECONNECT_GRACE_SECONDS,
     AiperDataUpdateCoordinator,
 )
+from tests.coordinator_factory import make_coordinator
 
 
 def _bare_coordinator(api: Any) -> AiperDataUpdateCoordinator:
-    coordinator = AiperDataUpdateCoordinator.__new__(AiperDataUpdateCoordinator)
-    coordinator.api = api
+    coordinator = make_coordinator(api)
     coordinator.data = {"SN123": {}}
     coordinator._mqtt_maintenance_task = None
     return coordinator

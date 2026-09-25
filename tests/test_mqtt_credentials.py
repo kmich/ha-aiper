@@ -525,7 +525,6 @@ async def test_disconnect_mqtt_drops_the_transport_even_if_it_errors() -> None:
             raise RuntimeError("socket is wedged")
 
     api._mqtt_client = ExplodingTransport()
-    api._mqtt_connected = True
 
     await api.disconnect_mqtt()
 
@@ -536,15 +535,19 @@ async def test_disconnect_mqtt_drops_the_transport_even_if_it_errors() -> None:
 def test_mqtt_disconnected_seconds_tracks_a_single_outage() -> None:
     """The outage clock must survive the transport being swapped out."""
     api = _api()
-    api._mqtt_connected = False
     api._mqtt_client = None
 
     first = api.mqtt_disconnected_seconds()
     assert first is not None and first >= 0
 
     started_at = api._mqtt_first_disconnected_at
+
     # Rebuilding the transport must not restart the clock.
-    api._mqtt_client = object()
+    class DisconnectedTransport:
+        def is_connected(self) -> bool:
+            return False
+
+    api._mqtt_client = DisconnectedTransport()
     assert api.mqtt_disconnected_seconds() is not None
     assert api._mqtt_first_disconnected_at == started_at
 
@@ -552,7 +555,6 @@ def test_mqtt_disconnected_seconds_tracks_a_single_outage() -> None:
 def test_reconnecting_clears_the_outage_clock() -> None:
     """Once connected again the outage measurement resets."""
     api = _api()
-    api._mqtt_connected = False
     assert api.mqtt_disconnected_seconds() is not None
 
     class ConnectedTransport:
@@ -560,7 +562,6 @@ def test_reconnecting_clears_the_outage_clock() -> None:
             return True
 
     api._mqtt_client = ConnectedTransport()
-    api._mqtt_connected = True
 
     assert api.is_mqtt_connected() is True
     assert api.mqtt_disconnected_seconds() is None

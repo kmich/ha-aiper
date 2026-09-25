@@ -66,6 +66,8 @@ S1_CAPABILITY_REFRESH_INTERVAL = timedelta(minutes=5)
 # cached state is no longer presented as current (entities go unavailable).
 MAX_CACHED_REST_FAILURES = 3
 CLEAN_PATH_STORE_VERSION = 1
+# Coalesce clean-path cache writes (seconds).
+CLEAN_PATH_SAVE_DELAY = 5
 
 # How long MQTT must stay down before we stop trusting the AWS CRT SDK's own
 # reconnect loop and rebuild the connection ourselves.
@@ -190,7 +192,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         """Return value-free per-field source ages for diagnostics."""
         now = dt_util.utcnow()
         result: dict[str, dict[str, dict[str, Any]]] = {}
-        for sn, fields in getattr(self, "_live_field_sources", {}).items():
+        for sn, fields in self._live_field_sources.items():
             result[sn] = {}
             for field, observation in fields.items():
                 observed_at = _ensure_utc_aware(observation.get("observed_at"))
@@ -210,9 +212,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         observed_at: datetime,
     ) -> None:
         """Record which source most recently supplied normalized live fields."""
-        observations = getattr(self, "_live_field_sources", None)
-        if observations is None:
-            observations = self._live_field_sources = {}
+        observations = self._live_field_sources
         device_fields = observations.setdefault(sn, {})
         timestamp = _ensure_utc_aware(observed_at) or dt_util.utcnow()
         for field in fields:
@@ -221,7 +221,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
 
     def _mqtt_field_is_fresh(self, sn: str, field: str, now: datetime) -> bool:
         """Return whether a live field has MQTT evidence newer than the TTL."""
-        observation = getattr(self, "_live_field_sources", {}).get(sn, {}).get(field) or {}
+        observation = self._live_field_sources.get(sn, {}).get(field) or {}
         if observation.get("source") != "mqtt":
             return False
         observed_at = _ensure_utc_aware(observation.get("observed_at"))
@@ -249,16 +249,14 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         battery = _coerce_int(value)
         if battery is None:
             return
-        samples = getattr(self, "_s1_battery_samples", None)
-        if samples is None:
-            samples = self._s1_battery_samples = {}
+        samples = self._s1_battery_samples
         history = samples.setdefault(sn, [])
         history.append({"observed_at": observed_at, "battery": battery})
         del history[:-3]
 
     def _s1_battery_rise_indicates_charging(self, sn: str) -> bool:
         """Return true for a sustained S1 rise without a newer MQTT report."""
-        history = getattr(self, "_s1_battery_samples", {}).get(sn) or []
+        history = self._s1_battery_samples.get(sn) or []
         if len(history) < 3:
             return False
         first, middle, last = history[-3:]
@@ -268,13 +266,13 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             return False
         if (last["observed_at"] - first["observed_at"]).total_seconds() < 120:
             return False
-        mqtt_report = getattr(self, "_last_s1_mqtt_machine_report", {}).get(sn) or {}
+        mqtt_report = self._last_s1_mqtt_machine_report.get(sn) or {}
         mqtt_at = _ensure_utc_aware(mqtt_report.get("observed_at"))
         return mqtt_at is None or mqtt_at <= first["observed_at"]
 
     def _s1_mqtt_reports_running_since(self, sn: str, *, since: datetime) -> bool:
         """Return True if a Scuba S1 MQTT report at/after `since` still shows Cleaning."""
-        mqtt_report = getattr(self, "_last_s1_mqtt_machine_report", {}).get(sn) or {}
+        mqtt_report = self._last_s1_mqtt_machine_report.get(sn) or {}
         mqtt_at = _ensure_utc_aware(mqtt_report.get("observed_at"))
         if mqtt_at is None or mqtt_at < since:
             return False
@@ -288,10 +286,8 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         rest_status: int | None = None,
     ) -> None:
         """Record why S1 operational state was reconciled for diagnostics."""
-        history = getattr(self, "_s1_battery_samples", {}).get(sn) or []
-        records = getattr(self, "_state_reconciliation", None)
-        if records is None:
-            records = self._state_reconciliation = {}
+        history = self._s1_battery_samples.get(sn) or []
+        records = self._state_reconciliation
         previous = records.get(sn) or {}
         events = list(previous.get("events") or [])
         event = {
@@ -349,12 +345,8 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         """Reject physically impossible S1 lifecycle replays."""
         raw_status = _coerce_int(machine.get("status"))
         base_status = status_value(raw_status)
-        terminal_reports = getattr(self, "_last_s1_terminal_report_at", None)
-        if terminal_reports is None:
-            terminal_reports = self._last_s1_terminal_report_at = {}
-        running_reports = getattr(self, "_last_s1_confirmed_running_report", None)
-        if running_reports is None:
-            running_reports = self._last_s1_confirmed_running_report = {}
+        terminal_reports = self._last_s1_terminal_report_at
+        running_reports = self._last_s1_confirmed_running_report
 
         if base_status in S1_TERMINAL_STATUS_CODES:
             terminal_reports[sn] = received_at
@@ -415,9 +407,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         if suppression_kind is None or suppression_age is None or suppression_guard is None:
             return False
 
-        suppressions = getattr(self, "_s1_mqtt_replay_suppressions", None)
-        if suppressions is None:
-            suppressions = self._s1_mqtt_replay_suppressions = {}
+        suppressions = self._s1_mqtt_replay_suppressions
         previous = suppressions.get(sn) or {}
         suppressions[sn] = {
             "count": int(previous.get("count") or 0) + 1,
@@ -502,15 +492,10 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         connect -- the signing delegate itself must never block, so it can
         only read a snapshot somebody else keeps current.
         """
-        refresh = getattr(self.api, "async_refresh_mqtt_credentials", None)
-        if refresh is not None:
-            with suppress(Exception):
-                await refresh()
+        with suppress(Exception):
+            await self.api.async_refresh_mqtt_credentials()
 
-        get_down_seconds = getattr(self.api, "mqtt_disconnected_seconds", None)
-        if get_down_seconds is None:
-            return
-        down_seconds = get_down_seconds()
+        down_seconds = self.api.mqtt_disconnected_seconds()
         if down_seconds is None:
             # MQTT is connected right now -- opportunistically pick up any
             # device that never got subscribed (see async_subscribe_all_devices).
@@ -519,12 +504,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         if down_seconds is None or down_seconds < MQTT_RECONNECT_GRACE_SECONDS:
             return
 
-        get_since_rebuild = getattr(self.api, "seconds_since_mqtt_rebuild", None)
-        reconnect = getattr(self.api, "reconnect_mqtt", None)
-        if get_since_rebuild is None or reconnect is None:
-            return
-
-        since_rebuild = get_since_rebuild()
+        since_rebuild = self.api.seconds_since_mqtt_rebuild()
         if since_rebuild is not None and since_rebuild < MQTT_REBUILD_MIN_INTERVAL_SECONDS:
             _LOGGER.debug(
                 "MQTT still down after %.0fs but last rebuild was only %.0fs ago; waiting",
@@ -535,7 +515,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
 
         _LOGGER.warning("MQTT has been disconnected for %.0fs; rebuilding the connection", down_seconds)
         with suppress(Exception):
-            if await reconnect():
+            if await self.api.reconnect_mqtt():
                 _LOGGER.info("MQTT reconnected after %.0fs offline", down_seconds)
                 with suppress(Exception):
                     await self.async_subscribe_all_devices()
@@ -557,12 +537,11 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         being cut off mid-rebuild, and so tests can observe it complete via
         hass.async_block_till_done().
         """
-        task = getattr(self, "_mqtt_maintenance_task", None)
+        task = self._mqtt_maintenance_task
         if task is not None and not task.done():
             return
-        config_entry = getattr(self, "config_entry", None)
-        if config_entry is not None:
-            self._mqtt_maintenance_task = config_entry.async_create_task(
+        if self.config_entry is not None:
+            self._mqtt_maintenance_task = self.config_entry.async_create_task(
                 self.hass, self._async_maintain_mqtt(), "aiper_mqtt_maintenance"
             )
         else:
@@ -798,7 +777,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     self._devices[sn]["clean_path"] = self._clean_path_cache.get(sn)
                 else:
                     self._devices[sn]["clean_path"] = None
-                self._devices[sn]["selected_mode"] = getattr(self, "_selected_mode_cache", {}).get(sn)
+                self._devices[sn]["selected_mode"] = self._selected_mode_cache.get(sn)
 
             # Expire pending commands (UI hints)
             for _sn in list(self._command_state.keys()):
@@ -996,9 +975,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 ):
                     machine = {key: value for key, value in machine.items() if key not in S1_REPLAY_LIFECYCLE_FIELDS}
                 mqtt_status = _coerce_int(machine.get("status"))
-                reports = getattr(self, "_last_s1_mqtt_machine_report", None)
-                if reports is None:
-                    reports = self._last_s1_mqtt_machine_report = {}
+                reports = self._last_s1_mqtt_machine_report
                 reports[sn] = {"observed_at": mqtt_received_at, "status": mqtt_status}
                 if mqtt_status in (2, 3):
                     self._record_s1_reconciliation(sn, trigger="mqtt_machine_status", rest_status=None)
@@ -1119,6 +1096,30 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         except Exception:
             return {}
         return result
+
+    def diagnostics(self) -> dict[str, Any]:
+        """Return coordinator state for the diagnostics download (unredacted)."""
+        image_urls: dict[str, Any] = {}
+        for sn, device in (self.data or {}).items():
+            picture = device.get("entity_picture") if isinstance(device, dict) else None
+            if picture is not None and picture.value:
+                image_urls[sn] = picture.value
+        return {
+            "coordinator": {
+                "last_update_success": self.last_update_success,
+                "update_interval_seconds": int(self.update_interval.total_seconds()) if self.update_interval else 0,
+                "last_successful_update": (
+                    self.last_successful_update.isoformat() if self.last_successful_update else None
+                ),
+                "consecutive_rest_failures": self._rest_failures,
+            },
+            "devices": self.data or {},
+            "field_sources": self.diagnostic_field_sources,
+            "state_reconciliation": self._state_reconciliation,
+            "mqtt_replay_suppressions": self._s1_mqtt_replay_suppressions,
+            "device_model_images": image_urls,
+            "command_state": self._command_state,
+        }
 
     def get_device(self, sn: str) -> DeviceState | None:
         """Get device data by serial number."""
@@ -1375,14 +1376,12 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         if self._clean_path_cache.get(sn) == normalized:
             return
         self._clean_path_cache[sn] = normalized
-        store = getattr(self, "_clean_path_store", None)
-        hass = getattr(self, "hass", None)
-        if store is not None and hass is not None:
-            hass.async_create_task(store.async_save(dict(self._clean_path_cache)))
+        if self._clean_path_store is not None:
+            self._clean_path_store.async_delay_save(lambda: dict(self._clean_path_cache), CLEAN_PATH_SAVE_DELAY)
 
     async def async_restore_clean_path_cache(self) -> None:
         """Restore last confirmed clean paths before the first refresh."""
-        store = getattr(self, "_clean_path_store", None)
+        store = self._clean_path_store
         if store is None:
             return
         try:
@@ -1404,8 +1403,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         reusable. Query contracts remain profile-gated; only the S1 contracts
         have been validated on hardware.
         """
-        is_mqtt_connected = getattr(self.api, "is_mqtt_connected", None)
-        if is_mqtt_connected is None or not is_mqtt_connected():
+        if not self.api.is_mqtt_connected():
             return
 
         changed = False
@@ -1427,9 +1425,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             try:
                 selected_mode = await self.api.query_cleaning_mode_setting(sn)
                 if selected_mode in (1, 2, 3, 5):
-                    selected_mode_cache = getattr(self, "_selected_mode_cache", None)
-                    if selected_mode_cache is None:
-                        selected_mode_cache = self._selected_mode_cache = {}
+                    selected_mode_cache = self._selected_mode_cache
                     previous_mode = selected_mode_cache.get(sn)
                     selected_mode_cache[sn] = selected_mode
                     device["selected_mode"] = selected_mode
