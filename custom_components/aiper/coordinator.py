@@ -31,6 +31,7 @@ from .coordinator_parsing import (
     _parse_dt,
 )
 from .profiles import SCUBA_S1_2025_MODEL, Capability, derive_device_profile, has_capability, model_key
+from .redaction import redact_serial, redact_topic
 from .repairs import async_update_unknown_model_issues
 from .s1_reconciliation import S1StateReconciler
 from .state import (
@@ -279,7 +280,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 if await self.api.subscribe_device(sn, cb):
                     await self.api.request_shadow(sn)
             except Exception as err:
-                _LOGGER.debug("Failed to subscribe device %s to MQTT: %s", sn, err)
+                _LOGGER.debug("Failed to subscribe device %s to MQTT: %s", redact_serial(sn), err)
 
     async def _async_maintain_mqtt(self) -> None:
         """Keep the MQTT signing credentials warm and recover a dead connection.
@@ -460,7 +461,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     try:
                         info = await self.api.get_device_info(sn)
                     except Exception as err:
-                        _LOGGER.debug("Device info metadata refresh failed for %s: %s", sn, err)
+                        _LOGGER.debug("Device info metadata refresh failed for %s: %s", redact_serial(sn), err)
                     if isinstance(info, dict):
                         self._devices[sn]["info"] = info
 
@@ -468,16 +469,16 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     try:
                         raw_hist = await self.api.get_cleaning_history(sn)
                     except Exception as err:
-                        _LOGGER.debug("Cleaning history fetch failed for %s: %s", sn, err)
+                        _LOGGER.debug("Cleaning history fetch failed for %s: %s", redact_serial(sn), err)
                     if raw_hist is not None:
                         try:
                             total_count, total_hours, records = _parse_cleaning_history(raw_hist)
                         except Exception as err:
-                            _LOGGER.debug("Cleaning history parse failed for %s: %s", sn, err)
+                            _LOGGER.debug("Cleaning history parse failed for %s: %s", redact_serial(sn), err)
                             total_count, total_hours, records = None, None, []
                         _LOGGER.debug(
                             "Cleaning history parsed for %s: count=%s hours=%s records=%d",
-                            sn,
+                            redact_serial(sn),
                             total_count,
                             total_hours,
                             len(records),
@@ -493,7 +494,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     try:
                         raw_cons = await self.api.get_consumables(sn)
                     except Exception as err:
-                        _LOGGER.debug("Consumables fetch failed for %s: %s", sn, err)
+                        _LOGGER.debug("Consumables fetch failed for %s: %s", redact_serial(sn), err)
                     cons_list = _parse_consumables(raw_cons)
                     # Always update cache when the call returned (even if parsing yielded empty),
                     # to avoid requiring an integration reload to observe new values.
@@ -610,9 +611,9 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         try:
             topic = data.get("_topic") if isinstance(data, dict) else None
             keys = list(data.keys()) if isinstance(data, dict) else [type(data).__name__]
-            _LOGGER.debug("Shadow update for %s topic=%s keys=%s", sn, topic, keys)
+            _LOGGER.debug("Shadow update for %s topic=%s keys=%s", redact_serial(sn), redact_topic(topic), keys)
         except Exception:
-            _LOGGER.debug("Shadow update for %s (unparsed)", sn)
+            _LOGGER.debug("Shadow update for %s (unparsed)", redact_serial(sn))
         self._on_shadow_update(sn, data)
 
     def _on_shadow_update(self, sn: str, data: dict) -> None:
@@ -650,7 +651,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             state = data.get("state") if isinstance(data, dict) else None
             delta_machine = state.get("Machine") if isinstance(state, dict) else None
             _publish_updates(_clean_path_updates(delta_machine))
-            _LOGGER.debug("Ignoring desired-only shadow delta for %s", sn)
+            _LOGGER.debug("Ignoring desired-only shadow delta for %s", redact_serial(sn))
             return
 
         payload = data
@@ -682,7 +683,9 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             else:
                 if any(key in state_payload for key in ("desired", "delta")):
                     _LOGGER.debug(
-                        "Ignoring non-reported shadow update for %s (keys=%s)", sn, list(state_payload.keys())
+                        "Ignoring non-reported shadow update for %s (keys=%s)",
+                        redact_serial(sn),
+                        list(state_payload.keys()),
                     )
                     return
                 if isinstance(state_payload, dict):
@@ -1199,7 +1202,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                         device["clean_path"] = clean_path
                         changed |= previous != clean_path
                 except Exception as err:
-                    _LOGGER.debug("Clean-path query failed for %s: %s", sn, err)
+                    _LOGGER.debug("Clean-path query failed for %s: %s", redact_serial(sn), err)
 
             try:
                 selected_mode = await self.api.query_cleaning_mode_setting(sn)
@@ -1210,7 +1213,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     device["selected_mode"] = selected_mode
                     changed |= previous_mode != selected_mode
             except Exception as err:
-                _LOGGER.debug("Cleaning-mode query failed for %s: %s", sn, err)
+                _LOGGER.debug("Cleaning-mode query failed for %s: %s", redact_serial(sn), err)
 
         if publish and changed and self.data:
             data = dict(self.data)
@@ -1240,7 +1243,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             try:
                 reported = await self.api.query_clean_path_setting(sn)
             except Exception as err:
-                _LOGGER.debug("Clean-path confirmation query failed for %s: %s", sn, err)
+                _LOGGER.debug("Clean-path confirmation query failed for %s: %s", redact_serial(sn), err)
                 continue
             if reported == int(target):
                 self.set_clean_path_cache(sn, int(target))

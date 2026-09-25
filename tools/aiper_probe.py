@@ -33,7 +33,7 @@ except ImportError:  # pragma: no cover - exercised only in incomplete dev envs
 
 from custom_components.aiper.api import AiperApi  # noqa: E402
 from custom_components.aiper.const import MqttTopic  # noqa: E402
-from custom_components.aiper.redaction import redact, redact_str  # noqa: E402
+from custom_components.aiper.redaction import redact, redact_known_values, redact_str  # noqa: E402
 
 DEFAULT_OUTPUT_DIR = Path("probe-output")
 DISCOVERY_FLOWS_DIR = REPO_ROOT / "tools" / "discovery_flows"
@@ -42,6 +42,19 @@ DEFAULT_DISCOVERY_FLOW = "generic"
 MANIFEST_PATH = REPO_ROOT / "custom_components" / "aiper" / "manifest.json"
 # Bump when the `bundle` subcommand changes the shape of its emitted object.
 BUNDLE_SCHEMA_VERSION = 1
+
+
+_SN_KEYS = ("sn", "deviceSn", "serialNumber", "equipmentSn", "deviceSN")
+
+# Serials seen this run. Files in a run directory are meant to be attached to
+# issue reports, so these are pseudonymized there; only `list` prints them in
+# full, because you pass one back with --sn.
+_KNOWN_SERIALS: set[str] = set()
+
+
+def _shareable(data: Any) -> Any:
+    """Redact secrets and pseudonymize known serials for files meant to be shared."""
+    return redact_known_values(redact(data), _KNOWN_SERIALS)
 
 
 def _utc_now() -> str:
@@ -57,7 +70,7 @@ def _json_default(value: Any) -> str:
 def _write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(redact(data), indent=2, sort_keys=True, default=_json_default) + "\n",
+        json.dumps(_shareable(data), indent=2, sort_keys=True, default=_json_default) + "\n",
         encoding="utf-8",
     )
 
@@ -65,7 +78,7 @@ def _write_json(path: Path, data: Any) -> None:
 def _append_ndjson(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as file:
-        file.write(json.dumps(redact(data), sort_keys=True, default=_json_default) + "\n")
+        file.write(json.dumps(_shareable(data), sort_keys=True, default=_json_default) + "\n")
 
 
 def _run_dir(base_dir: Path, prefix: str) -> Path:
@@ -76,7 +89,7 @@ def _run_dir(base_dir: Path, prefix: str) -> Path:
 
 
 def _device_sn(device: dict[str, Any]) -> str | None:
-    for key in ("sn", "deviceSn", "serialNumber", "equipmentSn", "deviceSN"):
+    for key in _SN_KEYS:
         value = device.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
@@ -144,15 +157,20 @@ async def _get_devices(api: AiperApi) -> list[dict[str, Any]]:
     devices = await api.get_devices()
     if not devices:
         raise SystemExit("No Aiper devices found")
+    for device in devices:
+        if isinstance(device, dict) and (serial := _device_sn(device)):
+            _KNOWN_SERIALS.add(serial)
     return devices
 
 
 def _select_sn(devices: list[dict[str, Any]], sn: str | None) -> str:
     if sn:
+        _KNOWN_SERIALS.add(sn)
         return sn
     first_sn = _device_sn(devices[0])
     if not first_sn:
         raise SystemExit("Could not infer a serial number from the first device; pass --sn")
+    _KNOWN_SERIALS.add(first_sn)
     return first_sn
 
 
@@ -382,9 +400,10 @@ def build_bundle(
 ) -> dict[str, Any]:
     """Assemble the single redacted onboarding bundle object.
 
-    Every value is routed through :func:`redaction.redact`, so the result is
-    safe to paste into a public GitHub issue. Serial numbers are intentionally
-    preserved (see ``redaction`` module docs).
+    Every value is routed through :func:`redaction.redact`, and the selected
+    and discovered device serial numbers are pseudonymized (``SN1...890``,
+    keeping the model-identifying prefix), so the result is safe to paste into
+    a public GitHub issue.
     """
     bundle: dict[str, Any] = {
         "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
@@ -406,7 +425,11 @@ def build_bundle(
             "clean_path": clean_path_query,
         },
     }
-    return redact(bundle)
+    serials = {sn}
+    for device in devices if isinstance(devices, list) else []:
+        if isinstance(device, dict):
+            serials.update(str(device[key]) for key in _SN_KEYS if device.get(key))
+    return redact_known_values(redact(bundle), serials)
 
 
 async def collect_bundle(
@@ -453,7 +476,7 @@ async def collect_bundle(
         clean_path_query=clean_path_query,
         devices=devices,
     )
-    bundle["mqtt_capture"] = redact({**mqtt, "events_captured": len(events)})
+    bundle["mqtt_capture"] = redact_known_values(redact({**mqtt, "events_captured": len(events)}), {sn})
     return bundle
 
 
@@ -678,6 +701,7 @@ def _write_manifest(
 async def cmd_list(args: argparse.Namespace) -> int:
     async with _make_api(args) as api:
         devices = await _get_devices(api)
+        # Full serials on purpose: this output is how you find the value for --sn.
         print(json.dumps(redact(devices), indent=2, sort_keys=True, default=_json_default))
         return 0
 
@@ -956,11 +980,11 @@ def _write_summary(out_dir: Path, command: str, sn: str, mqtt_events: int) -> No
     summary = (
         f"# Aiper Probe Summary\n\n"
         f"- Command: `{command}`\n"
-        f"- Serial number: `{sn}`\n"
+        f"- Serial number: `{redact_str(sn)}`\n"
         f"- MQTT events captured: {mqtt_events}\n"
         f"- Created at: {_utc_now()}\n\n"
         "Attach this directory when reporting discovery results. Review it first; "
-        "the tool redacts sensitive keys but intentionally keeps serial numbers.\n"
+        "the tool redacts sensitive keys and shortens device serial numbers.\n"
     )
     (out_dir / "summary.md").write_text(summary, encoding="utf-8")
 

@@ -6,9 +6,14 @@
 - Diagnostics no longer expose the account email through the entry title, and
   now partially redact the username, device serial numbers (keys, values and
   MQTT topics) and the Cognito identity.
-- INFO/WARNING/ERROR logs no longer contain device payloads, full serial
-  numbers, the account email or the AWS IoT endpoint; routine connection and
-  setup messages moved to DEBUG.
+- Logs no longer contain full serial numbers or the account email at any
+  level (serials are shortened, including inside MQTT topics and logged
+  command/MQTT-debug payloads), and INFO and above no longer contain device
+  payloads or the AWS IoT endpoint; routine connection and setup messages
+  moved to DEBUG.
+- The model-onboarding probe (`tools/aiper_probe.py`) now shortens serial
+  numbers in its public bundle and in every run-directory file; only `list`
+  still prints full serials, since you pass one back with `--sn`.
 
 ### Fixed
 - A 401/403 response to the login request no longer recurses into login()

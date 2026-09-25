@@ -656,7 +656,7 @@ class AiperRestClient:
                     zone_id = device.get("zoneId") or device.get("zone_id")
                     if isinstance(zone_id, str) and zone_id:
                         self._device_zone_id_by_sn[sn] = zone_id
-                    _LOGGER.debug("Found device: %s (%s)", device.get("name", "Unknown"), sn)
+                    _LOGGER.debug("Found device: %s (%s)", device.get("name", "Unknown"), redact_serial(sn))
 
             await self._async_cache_zone_info(set(self._device_zone_id_by_sn.values()))
             return devices
@@ -740,7 +740,9 @@ class AiperRestClient:
                     request_history,
                 )
             except Exception as err:
-                _LOGGER.debug("Cleaning history request failed for %s with %s: %s", sn, body, err)
+                _LOGGER.debug(
+                    "Cleaning history request failed for %s with keys %s: %s", redact_serial(sn), sorted(body), err
+                )
                 continue
 
             if isinstance(payload, dict) and self._is_success(payload):

@@ -21,9 +21,11 @@ The integration fetches:
 - Cleaning History (Total hours and cleanings).
 
 ## 5. What is Logged?
-At the default log level the integration does not write your email, device payloads, or full serial numbers; serials in warnings and errors are shortened (`SN1...890`).
-If you enable Debug Logging, debug lines include device serial numbers and response metadata. Raw MQTT payloads are only logged when you turn on the **MQTT debug logging** option.
-**Diagnostics automatically remove your password, tokens, Cognito identity, and AWS keys, and partially redact your account email (including in the entry title) and device serial numbers.** However, you should always review your logs before posting them publicly.
+The integration never writes your email or full device serial numbers to the log, at any log level. Serials are shortened to a form like `SN1...890`, including inside MQTT topics and logged command payloads.
+If you enable Debug Logging, debug lines include response metadata. Raw MQTT payloads are only logged when you turn on the **MQTT debug logging** option, and serials inside them are shortened too.
+**Diagnostics automatically remove your password, tokens, Cognito identity, and AWS keys, and partially redact your account email (including in the entry title) and device serial numbers.** The model-onboarding bundle from `tools/aiper_probe.py` shortens serials the same way. However, you should always review your logs before posting them publicly.
+
+Full serial numbers are only kept where they are technically needed: in Home Assistant's own device registry (shown on the device page), in the local Repairs entry for an unrecognized model (to tell you which device it is), in requests to Aiper's cloud, and in the probe's `list` output (you pass a serial back with `--sn`).
 
 ## 6. Command Safety
 The integration sends commands (like "Start" or "Set Mode") exactly as the official app does for models whose command contract has been verified on hardware (Scuba S1, Surfer S2). For other models the integration tries the command variants observed across Aiper firmware, remembers the one that works, and does not repeat a failed search for six hours. If a command fails, the integration surfaces the error; it does not retry in a loop that could lock your account, and a session conflict with the mobile app stops the attempt immediately.

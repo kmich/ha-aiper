@@ -26,7 +26,7 @@ from .api_rest import AiperRestClient
 from .connection import ConnectionState
 from .const import X9_SERIES_PREFIXES, XOR_KEY, ApiEndpoint, MqttTopic
 from .mqtt import AwsIotCredentials, AwsIotMqttTransport
-from .redaction import redact_serial
+from .redaction import redact_serial, redact_topic
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -300,7 +300,9 @@ class AiperMqttClient(AiperRestClient):
                 try:
                     await self._mqtt_client.async_subscribe(topic, _cb, 1)
                 except Exception as err:
-                    _LOGGER.debug("Re-subscribe failed for %s topic %s: %s", _sn, topic, err)
+                    _LOGGER.debug(
+                        "Re-subscribe failed for %s topic %s: %s", redact_serial(_sn), redact_topic(topic), err
+                    )
 
             # Topics for one device are independent of each other, so
             # subscribe them concurrently instead of paying N sequential
@@ -317,10 +319,10 @@ class AiperMqttClient(AiperRestClient):
             topic = MqttTopic.SHADOW_GET_REQUEST.format(sn=sn)
             if not await self._mqtt_client.async_publish(topic, "", 1):
                 return False
-            _LOGGER.debug("Published shadow get request to %s", topic)
+            _LOGGER.debug("Published shadow get request to %s", redact_topic(topic))
             return True
         except Exception as err:
-            _LOGGER.debug("Failed to request shadow for %s: %s", sn, err)
+            _LOGGER.debug("Failed to request shadow for %s: %s", redact_serial(sn), err)
             return False
 
     async def publish_shadow_update(self, sn: str, desired: dict[str, Any]) -> bool:
@@ -337,10 +339,10 @@ class AiperMqttClient(AiperRestClient):
             message = json.dumps(payload, separators=(",", ":"))
             if not await self._mqtt_client.async_publish(topic, message, 1):
                 return False
-            _LOGGER.debug("Published shadow update to %s: %s", topic, message)
+            _LOGGER.debug("Published shadow update to %s: %s", redact_topic(topic), message)
             return True
         except Exception as err:
-            _LOGGER.debug("Failed to publish shadow update for %s: %s", sn, err)
+            _LOGGER.debug("Failed to publish shadow update for %s: %s", redact_serial(sn), err)
             return False
 
     def _register_shadow_callback(self, sn: str, callback: ShadowCallback) -> None:
@@ -404,7 +406,11 @@ class AiperMqttClient(AiperRestClient):
                 data["_topic"] = topic
 
             if self.mqtt_debug:
-                _LOGGER.debug("MQTT message topic=%s payload=%s", topic, payload[:800])
+                _LOGGER.debug(
+                    "MQTT message topic=%s payload=%s",
+                    redact_topic(topic),
+                    payload[:800].replace(sn, redact_serial(sn)) if sn else payload[:800],
+                )
 
             with self._lock:
                 callbacks = list(self._shadow_callbacks.get(sn, []))
@@ -624,9 +630,9 @@ class AiperMqttClient(AiperRestClient):
                     return False
                 _LOGGER.debug(
                     "Sent command to %s: %s data=%s",
-                    sn,
+                    redact_serial(sn),
                     cmd_type,
-                    data_json,
+                    data_json.replace(sn, redact_serial(sn)),
                 )
                 return True
             _LOGGER.warning("MQTT not connected, cannot send command")

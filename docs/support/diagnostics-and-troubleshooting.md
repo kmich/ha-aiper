@@ -60,7 +60,7 @@ While the integration attempts to sanitize data, you must manually ensure the fo
 - AWS `AccessKeyId` or `SecretAccessKey`
 - Your exact latitude/longitude.
 
-*(Note: the diagnostics download already shortens device serial numbers and your account email to a form like `SN1...890`, and removes passwords, tokens and AWS keys. Debug logs are not redacted the same way, so check them before posting.)*
+*(Note: the diagnostics download, the probe bundle, and the integration's logs already shorten device serial numbers (and, in diagnostics, your account email) to a form like `SN1...890`, and diagnostics remove passwords, tokens and AWS keys. Logs can still contain other personal details such as your Wi-Fi network name, so check them before posting.)*
 
 ## 5. What to Include in a Bug Report
 

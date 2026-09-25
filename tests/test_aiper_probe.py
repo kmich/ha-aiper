@@ -219,12 +219,33 @@ async def test_collect_bundle_uses_mocked_api_without_network() -> None:
             self.callback(sn, {"_topic": "x/shadow/get/accepted", "Machine": {"status": 1, "report": "+INFO: 1,1,80"}})
             return True
 
-    bundle = await aiper_probe.collect_bundle(cast(Any, FakeApi()), "SN123", observe_seconds=0)
+    bundle = await aiper_probe.collect_bundle(
+        cast(Any, FakeApi()), "SN1234567890", observe_seconds=0, devices=[{"sn": "OTHER9876543"}]
+    )
 
     assert bundle["bundle_schema_version"] == aiper_probe.BUNDLE_SCHEMA_VERSION
-    assert bundle["sn"] == "SN123"
+    # Bundles are pasted into public issues: serials are pseudonymized,
+    # keeping the model-identifying prefix.
+    assert bundle["sn"] == "SN1...890"
+    assert bundle["rest"]["get_device_info"]["data"]["sn"] == "SN1...890"
+    assert bundle["devices"] == [{"sn": "OTH...543"}]
+    assert "SN1234567890" not in json.dumps(bundle)
     assert bundle["rest"]["get_device_info"]["ok"] is True
     assert bundle["rest"]["get_device_info"]["data"]["token"] == "***"
     assert bundle["mqtt"]["machine_report"] == "+INFO: 1,1,80"
     assert bundle["mqtt_capture"]["subscribed"] is True
     assert "leak-token" not in json.dumps(bundle)
+
+
+def test_run_directory_files_pseudonymize_known_serials(tmp_path, monkeypatch) -> None:
+    """Run-directory files are attached to issues, so known serials are shortened."""
+    monkeypatch.setattr(aiper_probe, "_KNOWN_SERIALS", set())
+    assert aiper_probe._select_sn([{"sn": "SN1234567890"}], None) == "SN1234567890"
+
+    aiper_probe._write_json(tmp_path / "x.json", {"sn": "SN1234567890", "topic": "aiper/things/SN1234567890/upChan"})
+    aiper_probe._append_ndjson(tmp_path / "x.ndjson", {"SN1234567890": {"token": "t"}})
+
+    written = (tmp_path / "x.json").read_text() + (tmp_path / "x.ndjson").read_text()
+    assert "SN1234567890" not in written
+    assert "aiper/things/SN1...890/upChan" in written
+    assert '"token": "***"' in written

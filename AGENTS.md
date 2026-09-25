@@ -76,10 +76,14 @@ a branch is obsolete.
 - Do not make live Aiper API calls in tests. Mock `AiperApi` and cover
   parser/coordinator/entity behavior with representative payload fixtures.
 - Treat credentials, tokens, Cognito identities, MQTT payloads, and serial
-  numbers as sensitive. Do not add logs that expose them. INFO and above must
-  not contain payloads, the account email, or full serials (use
-  `redaction.redact_serial` / `redact_topic`). Diagnostics pseudonymize serials
-  and the username via `redact_known_values`; probe bundles keep serials.
+  numbers as sensitive. Do not add logs that expose them. No log line at any
+  level may contain the account email or a full serial (use
+  `redaction.redact_serial` / `redact_topic`, and scrub serials out of logged
+  payload text). INFO and above must not contain payloads. Diagnostics, probe
+  bundles and probe run directories pseudonymize serials via
+  `redact_known_values`. Keep a full serial only where it is technically
+  required (cloud requests, MQTT topics on the wire, the device registry, the
+  local unknown-model repair, and the probe's `list` output used for `--sn`).
 - Before touching command/control behavior, read `api_commands.py` (and the
   layers it uses), `coordinator.py`, `controller.py`, `entity.py`, and the
   relevant platform module; command state crosses those layers.

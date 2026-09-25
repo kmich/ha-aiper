@@ -162,14 +162,17 @@ device status (`get_device_status`), consumables, a device-shadow snapshot, the
 raw `Machine` report string, and the mode + clean-path query results, plus
 top-level `integration_version` and `bundle_schema_version` fields. Every value
 is routed through `custom_components/aiper/redaction.py`, so it is safe to paste
-into a public GitHub issue (serial numbers are intentionally kept in probe
-bundles so topics and payloads can be correlated; Home Assistant's
-diagnostics download partially redacts them instead). It also
+into a public GitHub issue. Device serial numbers are shortened to a form like
+`SN1...890` everywhere in the bundle, including inside MQTT topics; the
+model-identifying prefix and a few trailing characters are kept, which is
+enough to correlate topics and payloads within one report. It also
 writes a `probe-output/<stamp>-bundle/` run directory unless `--no-write` is
 given. This is the payload the model-support issue template asks for.
 
 `list` logs in and prints the discovered devices as redacted JSON. Use it first
-to confirm the account, region, and serial numbers.
+to confirm the account, region, and serial numbers. It is the one command that
+prints full serial numbers, because you pass one back with `--sn`; don't paste
+its output publicly.
 
 `snapshot` captures read-only REST state for one device:
 
@@ -218,7 +221,9 @@ captures are real cloud/device payloads.
 ### Output Details
 
 `manifest.json` records the probe command, timestamp, region, selected serial
-number, and discovered device list.
+number (shortened), and discovered device list. Every file in a run directory
+shortens the serials the probe saw, so the directory can be attached to an
+issue.
 
 `rest-snapshot.json` contains one top-level object per REST call. Each call has:
 
@@ -325,7 +330,8 @@ official app behavior first, then encode support in the integration.
 After collecting device data:
 
 1. Review the output and remove anything irrelevant or unexpectedly sensitive.
-2. Keep serial numbers if they help correlate topic names and payloads.
+2. Keep the shortened serial numbers; they are enough to correlate topic names
+   and payloads. Never commit full serials in fixtures.
 3. Add representative payloads as fixtures under `tests/fixtures/<model_family>/`.
 4. Add parser tests before changing entity behavior.
 5. Add or update model-family/capability logic in the integration.

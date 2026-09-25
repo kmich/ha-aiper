@@ -46,8 +46,10 @@ def redact_serial(serial: object) -> str:
     return redact_str(str(serial)) if serial else ""
 
 
-def redact_topic(topic: str) -> str:
+def redact_topic(topic: object) -> str:
     """Redact the serial-number segment of an Aiper/AWS IoT thing topic."""
+    if not isinstance(topic, str):
+        return str(topic)
     parts = topic.split("/")
     for index, part in enumerate(parts[:-1]):
         if part == "things":
@@ -59,10 +61,10 @@ def redact_topic(topic: str) -> str:
 def redact(obj: Any, *, truncate_strings: bool = True) -> Any:
     """Recursively redact sensitive values from an arbitrary structure.
 
-    Serial numbers are intentionally not redacted here (probe bundles keep
-    them to correlate topics and payloads); the diagnostics platform
-    pseudonymizes them with ``redact_known_values``. Dataclass instances
-    (e.g. normalized ``EntityState`` values) are walked as dicts.
+    Serial numbers are not recognizable by key name alone, so callers that
+    share output (diagnostics, probe bundles and run files) pseudonymize the
+    serials they know about with ``redact_known_values`` afterwards. Dataclass
+    instances (e.g. normalized ``EntityState`` values) are walked as dicts.
     """
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         obj = {field.name: getattr(obj, field.name) for field in dataclasses.fields(obj)}
