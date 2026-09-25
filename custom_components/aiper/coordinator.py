@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from contextlib import suppress
 from copy import deepcopy
 from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -62,6 +62,9 @@ _LOGGER = logging.getLogger(__name__)
 
 LIVE_REFRESH_INTERVAL = timedelta(minutes=5)
 S1_CAPABILITY_REFRESH_INTERVAL = timedelta(minutes=5)
+# After this many consecutive failed device-list polls with MQTT also down,
+# cached state is no longer presented as current (entities go unavailable).
+MAX_CACHED_REST_FAILURES = 3
 CLEAN_PATH_STORE_VERSION = 1
 
 # How long MQTT must stay down before we stop trusting the AWS CRT SDK's own
@@ -161,10 +164,26 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         # Structure: {sn: {"pending": {kind: {...}}, "last": {kind: {...}}}}
 
         self._mqtt_maintenance_task: asyncio.Task[None] | None = None
+        # Consecutive polls whose device-list request failed while cached
+        # device state was served instead.
+        self._rest_failures = 0
 
         # Wall-clock time of the last successful poll, surfaced by the
         # cloud-connection "last update" sensor for offline automations.
         self.last_successful_update: datetime | None = None
+
+    @callback
+    def async_set_push_data(self, data: DevicesState) -> None:
+        """Publish MQTT/command-sourced data without rescheduling the REST poll.
+
+        ``DataUpdateCoordinator.async_set_updated_data`` restarts the refresh
+        timer on every call, so a chatty device pushing MQTT reports would keep
+        postponing the REST poll -- and the metadata refresh that rides on it
+        -- indefinitely. Push updates only replace the data and notify
+        listeners; the poll schedule and its success flag are left alone.
+        """
+        self.data = data
+        self.async_update_listeners()
 
     @property
     def diagnostic_field_sources(self) -> dict[str, dict[str, dict[str, Any]]]:
@@ -562,6 +581,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 self._last_metadata_fetch[_sn] = _ensure_utc_aware(_ts) or dt_util.utcnow()
 
             discovered_devices: list[RawDeviceData] | None = None
+            rest_refreshed = False
             # Serials whose REST device-list snapshot is an explicit physical
             # correction (charging / battery-rise): its live fields override
             # MQTT this cycle regardless of MQTT recency.
@@ -570,6 +590,8 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             rest_live_fields: dict[str, set[str]] = {}
             try:
                 discovered_devices = await self.api.get_devices()
+                self._rest_failures = 0
+                rest_refreshed = True
                 _LOGGER.debug("Got %d devices from API", len(discovered_devices))
                 for discovered in discovered_devices:
                     sn = discovered.get("sn")
@@ -642,6 +664,13 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             except Exception as err:
                 if not self._devices:
                     raise
+                self._rest_failures += 1
+                if self._rest_failures >= MAX_CACHED_REST_FAILURES and not self.api.is_mqtt_connected():
+                    # Neither channel is delivering fresh data: stop presenting
+                    # the cached snapshot as current so entities go unavailable.
+                    raise UpdateFailed(
+                        f"Aiper device list unavailable for {self._rest_failures} polls and MQTT is down: {err}"
+                    ) from err
                 _LOGGER.debug("Live device refresh failed, using cached device state: %s", err)
 
             devices = list(self._devices.values())
@@ -806,7 +835,8 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     result[sn] = normalized
 
             _LOGGER.debug("Coordinator updated devices=%s", list(result.keys()))
-            self.last_successful_update = dt_util.utcnow()
+            if rest_refreshed:
+                self.last_successful_update = dt_util.utcnow()
             with suppress(Exception):
                 async_update_unknown_model_issues(self.hass, self._devices)
             return result
@@ -820,49 +850,17 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             # DataUpdateCoordinator logs UpdateFailed itself (once per outage).
             raise UpdateFailed(f"Error communicating with API: {err}") from err
 
-    def handle_shadow_update(self, sn: str | dict, data: dict | None = None) -> None:
-        """Handle a shadow update from MQTT.
+    def handle_shadow_update(self, sn: str, data: dict[str, Any]) -> None:
+        """Handle a normalized MQTT payload for one device.
 
-        The integration supports two callback styles:
-          - handle_shadow_update(sn, data)
-          - handle_shadow_update(data)
-
-        In the single-argument form, we attempt to extract the serial number
-        from the payload ("_sn", "sn", or "data.sn").
-
-        The AWS IoT SDK invokes subscription callbacks on a background thread.
-        Home Assistant state updates must occur on the HA event loop.
+        The AWS IoT SDK invokes subscription callbacks on a background thread,
+        so the update is handed to the Home Assistant event loop.
         """
-        if data is None and isinstance(sn, dict):
-            payload = sn
-            data = payload
-            payload_data = payload.get("data")
-            serial = (
-                payload.get("_sn")
-                or payload.get("sn")
-                or (payload_data.get("sn") if isinstance(payload_data, dict) else None)
-            )
-            if not serial:
-                _LOGGER.debug("Ignoring MQTT update with no serial number: %s", payload)
-                return
-            sn = str(serial)
+        self.hass.loop.call_soon_threadsafe(self._apply_shadow_update, str(sn), data)
 
-        if data is None:
-            return
-
-        try:
-            self.hass.loop.call_soon_threadsafe(self._apply_shadow_update, str(sn), data)
-        except Exception:
-            # Fallback (should not generally happen)
-            self._apply_shadow_update(str(sn), data)
-
-    def make_shadow_callback(self, sn: str):
-        """Return a callback suitable for AWS IoT MQTT subscriptions."""
-
-        def _cb(data: dict) -> None:
-            self.handle_shadow_update(sn, data)
-
-        return _cb
+    def make_shadow_callback(self, sn: str) -> Callable[[str, dict[str, Any]], None]:
+        """Return the MQTT shadow callback for a device (signature: ``(sn, data)``)."""
+        return self.handle_shadow_update
 
     def _apply_shadow_update(self, sn: str, data: dict) -> None:
         """Apply a shadow update and notify listeners (runs on HA loop)."""
@@ -888,7 +886,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 current = normalize_device_state(self._devices.get(sn, {}))
             new_data: DevicesState = dict(self.data or {})
             new_data[sn] = merge_device_state(current, updates)
-            self.async_set_updated_data(new_data)
+            self.async_set_push_data(new_data)
 
         def _cache_clean_path(update: DeviceState) -> None:
             clean_path = update.get("clean_path")
@@ -1448,7 +1446,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                         key: normalized[key] for key in ("clean_path", "mode_options") if key in normalized
                     }
                     data[sn] = merge_device_state(data[sn], capability_updates, ignore_none=True)
-            self.async_set_updated_data(data)
+            self.async_set_push_data(data)
 
     async def async_confirm_clean_path_selection(
         self,
@@ -1475,7 +1473,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 if self.data and sn in self.data:
                     data = dict(self.data)
                     data[sn] = merge_device_state(data[sn], normalize_clean_path_update({"cleanPath": int(target)}))
-                    self.async_set_updated_data(data)
+                    self.async_set_push_data(data)
                 self._confirm_pending_commands(sn, {"cleanPath": int(target)})
                 return True
         return False

@@ -12,18 +12,20 @@ from homeassistant.components.sensor import RestoreSensor, SensorEntity, SensorE
 from homeassistant.components.sensor.const import SensorDeviceClass, SensorStateClass
 from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import AiperConfigEntry
 from .connection import ConnectionState
-from .const import DOMAIN
 from .coordinator import AiperDataUpdateCoordinator
-from .helpers import cloud_connection_device_info, is_not_hydrocomm
+from .entity import AiperEntity, cloud_connection_device_info
+from .helpers import is_not_hydrocomm
 from .profiles import Capability
 from .state import DeviceState, state_has_capability
+
+# Entities only read coordinator data; no per-entity update calls.
+PARALLEL_UPDATES = 0
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -43,25 +45,25 @@ class AiperSensorEntityDescription(SensorEntityDescription):
 SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     AiperSensorEntityDescription(
         key="battery",
-        name="Battery",
+        translation_key="battery",
         native_unit_of_measurement=PERCENTAGE,
         device_class=SensorDeviceClass.BATTERY,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     AiperSensorEntityDescription(
         key="status",
-        name="Status",
+        translation_key="status",
         icon="mdi:robot-vacuum",
     ),
     AiperSensorEntityDescription(
         key="mode",
-        name="Mode",
+        translation_key="mode",
         icon="mdi:robot-vacuum",
         include_fn=is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="temperature",
-        name="Water Temperature",
+        translation_key="temperature",
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
@@ -69,12 +71,12 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
     AiperSensorEntityDescription(
         key="warning",
-        name="Warning",
+        translation_key="warning",
         icon="mdi:alert-circle",
     ),
     AiperSensorEntityDescription(
         key="wifi_signal",
-        name="WiFi Signal",
+        translation_key="wifi_signal",
         icon="mdi:wifi",
         native_unit_of_measurement="dBm",
         device_class=SensorDeviceClass.SIGNAL_STRENGTH,
@@ -82,7 +84,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
     AiperSensorEntityDescription(
         key="runtime",
-        name="Current Cleaning Time",
+        translation_key="runtime",
         icon="mdi:timer",
         native_unit_of_measurement="h",
         state_class=SensorStateClass.MEASUREMENT,
@@ -91,7 +93,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     # --- Cleaning history (REST) ---
     AiperSensorEntityDescription(
         key="total_cleanings",
-        name="Total Cleanings",
+        translation_key="total_cleanings",
         icon="mdi:counter",
         state_class=SensorStateClass.TOTAL_INCREASING,
         enabled_default=False,
@@ -99,7 +101,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
     AiperSensorEntityDescription(
         key="total_cleaning_time",
-        name="Total Cleaning Time",
+        translation_key="total_cleaning_time",
         icon="mdi:timer-outline",
         native_unit_of_measurement="h",
         state_class=SensorStateClass.TOTAL_INCREASING,
@@ -108,7 +110,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
     AiperSensorEntityDescription(
         key="total_cleaning_time_minutes",
-        name="Total Cleaning Time Minutes",
+        translation_key="total_cleaning_time_minutes",
         icon="mdi:timer-outline",
         native_unit_of_measurement="min",
         state_class=SensorStateClass.TOTAL_INCREASING,
@@ -117,14 +119,14 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
     AiperSensorEntityDescription(
         key="last_cleaning_mode",
-        name="Last Cleaning Mode",
+        translation_key="last_cleaning_mode",
         icon="mdi:map-marker-path",
         enabled_default=False,
         include_fn=is_not_hydrocomm,
     ),
     AiperSensorEntityDescription(
         key="last_cleaning_start",
-        name="Last Cleaning Start",
+        translation_key="last_cleaning_start",
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
         enabled_default=False,
@@ -132,7 +134,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
     AiperSensorEntityDescription(
         key="last_cleaning_duration",
-        name="Last Cleaning Duration",
+        translation_key="last_cleaning_duration",
         icon="mdi:timer",
         native_unit_of_measurement="min",
         state_class=SensorStateClass.MEASUREMENT,
@@ -142,14 +144,14 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     # --- HydroComm / HydroHub water quality (MQTT shadow) ---
     AiperSensorEntityDescription(
         key="ph",
-        name="pH",
+        translation_key="ph",
         icon="mdi:ph",
         state_class=SensorStateClass.MEASUREMENT,
         capability=Capability.WATER_QUALITY,
     ),
     AiperSensorEntityDescription(
         key="orp",
-        name="ORP",
+        translation_key="orp",
         icon="mdi:current-dc",
         native_unit_of_measurement="mV",
         state_class=SensorStateClass.MEASUREMENT,
@@ -157,7 +159,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
     AiperSensorEntityDescription(
         key="ec",
-        name="EC",
+        translation_key="ec",
         icon="mdi:flash",
         native_unit_of_measurement="uS/cm",
         state_class=SensorStateClass.MEASUREMENT,
@@ -165,7 +167,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
     AiperSensorEntityDescription(
         key="tds",
-        name="TDS",
+        translation_key="tds",
         icon="mdi:water-percent",
         native_unit_of_measurement="ppm",
         state_class=SensorStateClass.MEASUREMENT,
@@ -173,7 +175,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
     AiperSensorEntityDescription(
         key="rcl",
-        name="Free Chlorine",
+        translation_key="rcl",
         icon="mdi:pool",
         native_unit_of_measurement="mg/L",
         state_class=SensorStateClass.MEASUREMENT,
@@ -181,21 +183,21 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
     AiperSensorEntityDescription(
         key="water_quality_score",
-        name="Water Quality Score",
+        translation_key="water_quality_score",
         icon="mdi:gauge",
         state_class=SensorStateClass.MEASUREMENT,
         capability=Capability.WATER_QUALITY,
     ),
     AiperSensorEntityDescription(
         key="water_quality_result",
-        name="Water Quality Result",
+        translation_key="water_quality_result",
         icon="mdi:water-check",
         entity_category=EntityCategory.DIAGNOSTIC,
         capability=Capability.WATER_QUALITY,
     ),
     AiperSensorEntityDescription(
         key="wqs_sample_time",
-        name="Water Sample Time",
+        translation_key="wqs_sample_time",
         icon="mdi:clock-outline",
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -203,14 +205,14 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
     AiperSensorEntityDescription(
         key="charge_type",
-        name="Charge Type",
+        translation_key="charge_type",
         icon="mdi:battery-charging",
         entity_category=EntityCategory.DIAGNOSTIC,
         capability=Capability.CHARGE_TYPE,
     ),
     AiperSensorEntityDescription(
         key="supply_voltage",
-        name="Supply Voltage",
+        translation_key="supply_voltage",
         icon="mdi:current-dc",
         native_unit_of_measurement="mV",
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -219,7 +221,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
     AiperSensorEntityDescription(
         key="solar_voltage",
-        name="Solar Voltage",
+        translation_key="solar_voltage",
         icon="mdi:solar-power-variant",
         native_unit_of_measurement="mV",
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -228,7 +230,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
     AiperSensorEntityDescription(
         key="light_level",
-        name="Light Level",
+        translation_key="light_level",
         icon="mdi:brightness-5",
         native_unit_of_measurement="lx",
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -237,7 +239,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
     AiperSensorEntityDescription(
         key="work_current",
-        name="Work Current",
+        translation_key="work_current",
         icon="mdi:current-dc",
         native_unit_of_measurement="mA",
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -246,7 +248,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
     AiperSensorEntityDescription(
         key="charge_current",
-        name="Charge Current",
+        translation_key="charge_current",
         icon="mdi:current-dc",
         native_unit_of_measurement="mA",
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -255,35 +257,35 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
     AiperSensorEntityDescription(
         key="calibration_status",
-        name="Calibration Status",
+        translation_key="calibration_status",
         icon="mdi:tune",
         entity_category=EntityCategory.DIAGNOSTIC,
         capability=Capability.PROBE_STATUS,
     ),
     AiperSensorEntityDescription(
         key="probe_1_status",
-        name="Probe 1 Status",
+        translation_key="probe_1_status",
         icon="mdi:water-thermometer",
         entity_category=EntityCategory.DIAGNOSTIC,
         capability=Capability.PROBE_STATUS,
     ),
     AiperSensorEntityDescription(
         key="probe_2_status",
-        name="Probe 2 Status",
+        translation_key="probe_2_status",
         icon="mdi:water-thermometer",
         entity_category=EntityCategory.DIAGNOSTIC,
         capability=Capability.PROBE_STATUS,
     ),
     AiperSensorEntityDescription(
         key="probe_3_status",
-        name="Probe 3 Status",
+        translation_key="probe_3_status",
         icon="mdi:water-thermometer",
         entity_category=EntityCategory.DIAGNOSTIC,
         capability=Capability.PROBE_STATUS,
     ),
     AiperSensorEntityDescription(
         key="ultrasonic_status",
-        name="Ultrasonic Sensor Status",
+        translation_key="ultrasonic_status",
         icon="mdi:radar",
         entity_category=EntityCategory.DIAGNOSTIC,
         capability=Capability.PROBE_STATUS,
@@ -291,49 +293,49 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     # --- Device info / firmware (REST) ---
     AiperSensorEntityDescription(
         key="device_family",
-        name="Device Family",
+        translation_key="device_family",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     AiperSensorEntityDescription(
         key="main_version",
-        name="Main Version",
+        translation_key="main_version",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     AiperSensorEntityDescription(
         key="mcu_version",
-        name="MCU Version",
+        translation_key="mcu_version",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     AiperSensorEntityDescription(
         key="ip_address",
-        name="IP Address",
+        translation_key="ip_address",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     AiperSensorEntityDescription(
         key="ap_hotspot",
-        name="AP Hotspot",
+        translation_key="ap_hotspot",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     AiperSensorEntityDescription(
         key="bluetooth_name",
-        name="Bluetooth Name",
+        translation_key="bluetooth_name",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     AiperSensorEntityDescription(
         key="clean_path",
-        name="Clean Path Preference",
+        translation_key="clean_path",
         entity_category=EntityCategory.DIAGNOSTIC,
         capability=Capability.CLEAN_PATH,
     ),
     AiperSensorEntityDescription(
         key="ota_state",
-        name="OTA State",
+        translation_key="ota_state",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     # --- Consumables (REST) ---
     AiperSensorEntityDescription(
         key="roller_brush",
-        name="Roller Brush",
+        translation_key="roller_brush",
         icon="mdi:percent",
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -342,7 +344,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
     AiperSensorEntityDescription(
         key="micromesh_filter",
-        name="MicroMesh Filter",
+        translation_key="micromesh_filter",
         icon="mdi:percent",
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -351,7 +353,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
     AiperSensorEntityDescription(
         key="caterpillar_tread",
-        name="Caterpillar Tread",
+        translation_key="caterpillar_tread",
         icon="mdi:percent",
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -360,7 +362,7 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
     AiperSensorEntityDescription(
         key="propeller",
-        name="Propeller",
+        translation_key="propeller",
         icon="mdi:percent",
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -372,7 +374,6 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
 ESTIMATED_CLEANING_TIME_DESCRIPTION = AiperSensorEntityDescription(
     key="estimated_cleaning_time",
     translation_key="estimated_cleaning_time",
-    name="Estimated Cleaning Time",
     icon="mdi:timer-sand",
     native_unit_of_measurement=UnitOfTime.MINUTES,
     device_class=SensorDeviceClass.DURATION,
@@ -427,11 +428,10 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class AiperSensor(CoordinatorEntity[AiperDataUpdateCoordinator], SensorEntity):
+class AiperSensor(AiperEntity, SensorEntity):
     """Representation of an Aiper sensor."""
 
     entity_description: AiperSensorEntityDescription
-    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -441,47 +441,34 @@ class AiperSensor(CoordinatorEntity[AiperDataUpdateCoordinator], SensorEntity):
         device_data: DeviceState,
     ) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator)
+        super().__init__(coordinator, sn, description.key, device_data)
         self.entity_description = description
-        self._sn = sn
-        self._attr_unique_id = f"{sn}_{description.key}"
         self._attr_entity_registry_enabled_default = bool(description.enabled_default)
-        self._attr_device_info = _device_info(sn, device_data)
 
     @property
     def native_value(self) -> Any:
         """Return the state of the sensor."""
-        if self.coordinator.data and self._sn in self.coordinator.data:
-            data = self.coordinator.data[self._sn]
-            return data[self.entity_description.key].value
-        return None
+        state = self.entity_state(self.entity_description.key)
+        return state.value if state is not None else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional sensor attributes."""
-        if self.coordinator.data and self._sn in self.coordinator.data:
-            data = self.coordinator.data[self._sn]
-            return dict(data[self.entity_description.key].attributes)
-        return {}
+        state = self.entity_state(self.entity_description.key)
+        return dict(state.attributes) if state is not None else {}
 
     @property
     def entity_picture(self) -> str | None:
         """Return a device model image for the primary status sensor."""
         if self.entity_description.key != "status":
             return None
-        if self.coordinator.data and self._sn in self.coordinator.data:
-            return self.coordinator.data[self._sn]["entity_picture"].value
-        return None
+        state = self.entity_state("entity_picture")
+        return state.value if state is not None else None
 
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
-        if not super().available:
-            return False
-        if self.coordinator.data and self._sn in self.coordinator.data:
-            data = self.coordinator.data[self._sn]
-            return data[self.entity_description.key].value is not None
-        return False
+        return super().available and self.native_value is not None
 
 
 class _AiperCloudSensorBase(CoordinatorEntity[AiperDataUpdateCoordinator], SensorEntity):
@@ -540,25 +527,10 @@ class AiperLastCloudUpdateSensor(_AiperCloudSensorBase):
         return self.coordinator.last_successful_update
 
 
-def _device_info(sn: str, device_data: DeviceState) -> DeviceInfo:
-    """Build shared Home Assistant device information."""
-    device_info = device_data["device_info"]
-    device_info_attrs = device_info.attributes
-    return DeviceInfo(
-        identifiers={(DOMAIN, sn)},
-        name=str(device_info.value or f"Aiper {sn}"),
-        manufacturer="Aiper",
-        model=device_info_attrs.get("model"),
-        serial_number=sn,
-        sw_version=device_info_attrs.get("sw_version"),
-    )
-
-
-class AiperEstimatedCleaningTimeSensor(CoordinatorEntity[AiperDataUpdateCoordinator], RestoreSensor):
+class AiperEstimatedCleaningTimeSensor(AiperEntity, RestoreSensor):
     """Estimate active cleaning duration between authoritative cloud samples."""
 
     entity_description = ESTIMATED_CLEANING_TIME_DESCRIPTION
-    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -567,10 +539,7 @@ class AiperEstimatedCleaningTimeSensor(CoordinatorEntity[AiperDataUpdateCoordina
         device_data: DeviceState,
     ) -> None:
         """Initialize the estimated cleaning-time sensor."""
-        super().__init__(coordinator)
-        self._sn = sn
-        self._attr_unique_id = f"{sn}_{self.entity_description.key}"
-        self._attr_device_info = _device_info(sn, device_data)
+        super().__init__(coordinator, sn, ESTIMATED_CLEANING_TIME_DESCRIPTION.key, device_data)
         self._estimated_minutes = 0.0
         self._authoritative_runtime_hours: float | None = None
         self._unsub_tick: Callable[[], None] | None = None
@@ -594,11 +563,6 @@ class AiperEstimatedCleaningTimeSensor(CoordinatorEntity[AiperDataUpdateCoordina
                 "until a newer authoritative lifecycle report arrives."
             ),
         }
-
-    @property
-    def available(self) -> bool:
-        """Return whether the coordinator still provides this device."""
-        return bool(super().available and self.coordinator.data and self._sn in self.coordinator.data)
 
     async def async_added_to_hass(self) -> None:
         """Restore a running estimate and start its minute ticker when appropriate."""

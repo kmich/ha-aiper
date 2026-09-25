@@ -116,10 +116,15 @@ async def test_setup_entry_stores_runtime_data_and_unload_disconnects(
     assert coordinator.data["SN123"]["device_info"].value == "Pool Robot"
     assert coordinator.data["SN123"]["device_family"].value == "shark"
     assert coordinator.update_interval is not None
-    assert runtime.unsub_capability_refresh is not None
+    # Listener/timer cleanup is registered with the entry's on-unload hooks.
+    assert entry._on_unload
     assert forwarded == [(cast(ConfigEntry, entry), aiper.PLATFORMS)]
 
     assert await aiper.async_unload_entry(hass, cast(ConfigEntry, entry)) is True
+
+    # Home Assistant runs the entry's on-unload hooks after a successful unload.
+
+    await entry._async_process_on_unload(hass)
 
     assert unloaded == [(cast(ConfigEntry, entry), aiper.PLATFORMS)]
     assert api.disconnected is True
@@ -176,6 +181,8 @@ async def test_setup_survives_mqtt_failure(
 
     # Cancel the coordinator's refresh timer so it doesn't outlive the test.
     assert await aiper.async_unload_entry(hass, cast(ConfigEntry, entry)) is True
+    # Home Assistant runs the entry's on-unload hooks after a successful unload.
+    await entry._async_process_on_unload(hass)
 
 
 @pytest.mark.asyncio
@@ -217,6 +224,8 @@ async def test_setup_forwards_platforms_exactly_once_when_mqtt_raises(
 
     # Cancel the coordinator's refresh timer so it doesn't outlive the test.
     assert await aiper.async_unload_entry(hass, cast(ConfigEntry, entry)) is True
+    # Home Assistant runs the entry's on-unload hooks after a successful unload.
+    await entry._async_process_on_unload(hass)
 
 
 @pytest.mark.asyncio
@@ -266,6 +275,10 @@ async def test_platforms_are_forwarded_before_mqtt_connect_is_attempted(
 
     assert await aiper.async_unload_entry(hass, cast(ConfigEntry, entry)) is True
 
+    # Home Assistant runs the entry's on-unload hooks after a successful unload.
+
+    await entry._async_process_on_unload(hass)
+
 
 @pytest.mark.asyncio
 async def test_remove_config_entry_device_rejects_active_device(hass: HomeAssistant) -> None:
@@ -276,7 +289,6 @@ async def test_remove_config_entry_device_rejects_active_device(hass: HomeAssist
         api=cast(AiperApi, FakeApi(username="test", password="test", region="asia")),
         controller=cast(AiperDeviceController, None),
         coordinator=cast(AiperDataUpdateCoordinator, SimpleNamespace(data={"SN123": {}})),
-        unsub_keepalive=None,
     )
 
     dev_reg = dr.async_get(hass)

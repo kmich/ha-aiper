@@ -16,6 +16,14 @@
         "data": {
           "password": "Password"
         }
+      },
+      "reconfigure": {
+        "title": "Riconfigura Aiper",
+        "description": "Aggiorna la regione o la password per {username}.",
+        "data": {
+          "password": "Password",
+          "region": "Regione"
+        }
       }
     },
     "error": {
@@ -27,7 +35,8 @@
     },
     "abort": {
       "already_configured": "Questo account è già configurato",
-      "reauth_successful": "La riautenticazione è stata completata"
+      "reauth_successful": "La riautenticazione è stata completata",
+      "reconfigure_successful": "La riconfigurazione è stata completata"
     }
   },
   "options": {
@@ -79,6 +88,120 @@
       },
       "charge_type": {
         "name": "Tipo di Carica"
+      },
+      "connection_state": {
+        "name": "Stato della connessione",
+        "state": {
+          "initializing": "Inizializzazione",
+          "connecting": "Connessione in corso",
+          "connected": "Connesso",
+          "disconnected": "Disconnesso",
+          "reconnecting": "Riconnessione",
+          "credentials_stale": "Credenziali scadute",
+          "fatal": "Richiede attenzione"
+        }
+      },
+      "last_cloud_update": {
+        "name": "Ultimo aggiornamento cloud"
+      },
+      "estimated_cleaning_time": {
+        "name": "Tempo di pulizia stimato"
+      },
+      "mode": {
+        "name": "Modalità"
+      },
+      "wifi_signal": {
+        "name": "Segnale WiFi"
+      },
+      "runtime": {
+        "name": "Tempo di pulizia attuale"
+      },
+      "total_cleanings": {
+        "name": "Pulizie totali"
+      },
+      "total_cleaning_time": {
+        "name": "Tempo di pulizia totale"
+      },
+      "total_cleaning_time_minutes": {
+        "name": "Tempo di pulizia totale (minuti)"
+      },
+      "last_cleaning_mode": {
+        "name": "Ultima modalità di pulizia"
+      },
+      "last_cleaning_start": {
+        "name": "Inizio ultima pulizia"
+      },
+      "last_cleaning_duration": {
+        "name": "Durata ultima pulizia"
+      },
+      "wqs_sample_time": {
+        "name": "Ora del campione d'acqua"
+      },
+      "supply_voltage": {
+        "name": "Tensione di alimentazione"
+      },
+      "solar_voltage": {
+        "name": "Tensione solare"
+      },
+      "light_level": {
+        "name": "Livello di luce"
+      },
+      "work_current": {
+        "name": "Corrente di lavoro"
+      },
+      "charge_current": {
+        "name": "Corrente di carica"
+      },
+      "calibration_status": {
+        "name": "Stato di calibrazione"
+      },
+      "probe_1_status": {
+        "name": "Stato sonda 1"
+      },
+      "probe_2_status": {
+        "name": "Stato sonda 2"
+      },
+      "probe_3_status": {
+        "name": "Stato sonda 3"
+      },
+      "ultrasonic_status": {
+        "name": "Stato sensore a ultrasuoni"
+      },
+      "device_family": {
+        "name": "Famiglia del dispositivo"
+      },
+      "main_version": {
+        "name": "Versione principale"
+      },
+      "mcu_version": {
+        "name": "Versione MCU"
+      },
+      "ip_address": {
+        "name": "Indirizzo IP"
+      },
+      "ap_hotspot": {
+        "name": "Hotspot AP"
+      },
+      "bluetooth_name": {
+        "name": "Nome Bluetooth"
+      },
+      "clean_path": {
+        "name": "Percorso di pulizia"
+      },
+      "ota_state": {
+        "name": "Stato OTA"
+      },
+      "roller_brush": {
+        "name": "Spazzola a rullo"
+      },
+      "micromesh_filter": {
+        "name": "Filtro MicroMesh"
+      },
+      "caterpillar_tread": {
+        "name": "Cingolo"
+      },
+      "propeller": {
+        "name": "Elica"
       }
     },
     "binary_sensor": {
@@ -105,6 +228,12 @@
       },
       "linked": {
         "name": "Dispositivo Collegato"
+      },
+      "cloud_connected": {
+        "name": "Cloud connesso"
+      },
+      "running": {
+        "name": "In funzione"
       }
     },
     "button": {
@@ -117,6 +246,42 @@
       "clear_command_state": {
         "name": "Cancella Stato Comando"
       }
+    },
+    "switch": {
+      "running": {
+        "name": "In funzione"
+      }
+    },
+    "select": {
+      "mode_selection": {
+        "name": "Modalità di pulizia"
+      },
+      "clean_path": {
+        "name": "Percorso di pulizia"
+      }
+    }
+  },
+  "issues": {
+    "unknown_model": {
+      "title": "Modello Aiper non riconosciuto",
+      "description": "Home Assistant non è riuscito a identificare il dispositivo Aiper \"{model}\" (numero di serie `{serial}`), quindi funziona con un profilo generico minimo e alcune entità potrebbero mancare.\n\nPuoi aiutare ad aggiungere il supporto completo seguendo la guida all'integrazione dei modelli collegata qui sotto e aprendo una issue su GitHub con il pacchetto generato."
+    }
+  },
+  "exceptions": {
+    "mqtt_unavailable": {
+      "message": "La connessione MQTT di Aiper non è disponibile, quindi questo comando non può essere inviato."
+    },
+    "device_offline": {
+      "message": "Il dispositivo Aiper è offline; i controlli sono disattivati."
+    },
+    "command_failed": {
+      "message": "Aiper non ha accettato il comando {command}: {reason}"
+    },
+    "invalid_option": {
+      "message": "\"{option}\" non è un'opzione valida per questo dispositivo Aiper."
+    },
+    "shadow_refresh_failed": {
+      "message": "Impossibile richiedere l'aggiornamento dello shadow Aiper."
     }
   }
 }

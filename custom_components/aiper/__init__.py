@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from contextlib import suppress
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -20,6 +19,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 
 from .api import AWS_CREDENTIALS_TTL_DEBUG_SECONDS, AiperApi, AiperAuthenticationError
+from .config_flow import normalize_username
 from .const import (
     CONF_METADATA_REFRESH_HOURS,
     CONF_MQTT_DEBUG,
@@ -49,8 +49,6 @@ class AiperRuntimeData:
     api: AiperApi
     controller: AiperDeviceController
     coordinator: AiperDataUpdateCoordinator
-    unsub_keepalive: Callable[[], None] | None = None
-    unsub_capability_refresh: Callable[[], None] | None = None
 
 
 type AiperConfigEntry = ConfigEntry[AiperRuntimeData]
@@ -78,9 +76,9 @@ async def async_remove_config_entry_device(
         if domain == DOMAIN and isinstance(identifier, str)
     }
 
-    coordinator = config_entry.runtime_data.coordinator if hasattr(config_entry, "runtime_data") else None
+    runtime_data = getattr(config_entry, "runtime_data", None)
     current_serials: set[str] = set()
-    coordinator_data = getattr(coordinator, "data", None)
+    coordinator_data = getattr(getattr(runtime_data, "coordinator", None), "data", None)
     if isinstance(coordinator_data, dict):
         current_serials = {str(sn) for sn in coordinator_data}
 
@@ -107,7 +105,7 @@ async def async_remove_config_entry_device(
 
 async def _cleanup_legacy_entities(
     hass: HomeAssistant,
-    entry: AiperConfigEntry,
+    entry: ConfigEntry,
     serial_numbers: list[str],
 ) -> None:
     """Remove legacy entities that are no longer provided.
@@ -183,7 +181,7 @@ async def _cleanup_legacy_entities(
 
 async def _migrate_select_unique_ids(
     hass: HomeAssistant,
-    entry: AiperConfigEntry,
+    entry: ConfigEntry,
     serial_numbers: list[str],
 ) -> None:
     """Normalize select unique_ids and remove duplicates deterministically.
@@ -206,22 +204,17 @@ async def _migrate_select_unique_ids(
 
     # Map device_id -> serial number (sn) from the device registry for robustness.
     sn_by_device_id: dict[str, str] = {}
-    try:
-        from homeassistant.helpers import device_registry as dr
-
-        dev_reg = dr.async_get(hass)
-        for e in entries:
-            if not e.device_id or e.device_id in sn_by_device_id:
-                continue
-            dev = dev_reg.async_get(e.device_id)
-            if not dev:
-                continue
-            for dom, ident in dev.identifiers:
-                if dom == DOMAIN:
-                    sn_by_device_id[e.device_id] = ident
-                    break
-    except Exception:
-        sn_by_device_id = {}
+    dev_reg = dr.async_get(hass)
+    for e in entries:
+        if not e.device_id or e.device_id in sn_by_device_id:
+            continue
+        dev = dev_reg.async_get(e.device_id)
+        if not dev:
+            continue
+        for dom, ident in dev.identifiers:
+            if dom == DOMAIN:
+                sn_by_device_id[e.device_id] = ident
+                break
 
     targets = {sn: {"mode": f"{sn}_mode_selection", "path": f"{sn}_clean_path"} for sn in serial_numbers}
 
@@ -255,13 +248,7 @@ async def _migrate_select_unique_ids(
 
         # Prefer stable (non-suffixed) entity_ids when duplicates exist (e.g., *_2, *_3).
         # This preserves dashboards that reference the unsuffixed entity_id.
-        suffixed = False
-        try:
-            import re as _re
-
-            suffixed = bool(_re.search(r"_\d+$", eid))
-        except Exception:
-            suffixed = False
+        suffixed = bool(re.search(r"_\d+$", eid))
 
         score = 9
         if kind == "mode":
@@ -320,6 +307,48 @@ async def _migrate_select_unique_ids(
             ent_reg.async_remove(extra.entity_id)
 
 
+def _registered_serials(hass: HomeAssistant, entry: ConfigEntry) -> list[str]:
+    """Return device serial numbers registered for a config entry."""
+    dev_reg = dr.async_get(hass)
+    serials: list[str] = []
+    for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
+        for domain, identifier in device.identifiers:
+            if domain == DOMAIN and isinstance(identifier, str) and not identifier.startswith("cloud_"):
+                serials.append(identifier)
+    return serials
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate old config entries.
+
+    1.1 -> 1.2: normalize the unique ID to the lower-cased username and run
+    the legacy entity-registry cleanup once instead of on every startup.
+    """
+    if entry.version > 1:
+        # Downgraded from a future major version we don't understand.
+        return False
+
+    if entry.minor_version < 2:
+        serials = _registered_serials(hass, entry)
+        await _migrate_select_unique_ids(hass, entry, serials)
+        await _cleanup_legacy_entities(hass, entry, serials)
+
+        unique_id = entry.unique_id
+        username = entry.data.get("username")
+        if isinstance(username, str) and username:
+            candidate = normalize_username(username)
+            conflict = any(
+                other.entry_id != entry.entry_id and other.unique_id == candidate
+                for other in hass.config_entries.async_entries(DOMAIN)
+            )
+            if not conflict:
+                unique_id = candidate
+        hass.config_entries.async_update_entry(entry, unique_id=unique_id, minor_version=2)
+        _LOGGER.debug("Migrated Aiper config entry to version 1.2")
+
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> bool:
     """Set up Aiper from a config entry."""
 
@@ -334,7 +363,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> boo
     try:
         _LOGGER.debug("Attempting login to Aiper API...")
         await api.login()
-        _LOGGER.info("Login successful")
+        _LOGGER.debug("Login successful")
     except AiperAuthenticationError as err:
         # Bad or stale credentials will never succeed on retry -- surface a
         # reauth prompt (Home Assistant's built-in "repair") instead of
@@ -380,18 +409,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> boo
     def _keepalive_listener() -> None:
         return
 
-    unsub_keepalive = coordinator.async_add_listener(_keepalive_listener)
-
-    # Remove legacy/orphaned entities from earlier test builds.
-    serials = list(coordinator.data.keys()) if coordinator.data else []
-    await _migrate_select_unique_ids(hass, entry, serials)
-    await _cleanup_legacy_entities(hass, entry, serials)
+    entry.async_on_unload(coordinator.async_add_listener(_keepalive_listener))
 
     entry.runtime_data = AiperRuntimeData(
         api=api,
         controller=AiperDeviceController(api, coordinator),
         coordinator=coordinator,
-        unsub_keepalive=unsub_keepalive,
     )
 
     entry.async_on_unload(entry.add_update_listener(_options_update_listener))
@@ -416,11 +439,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> boo
         coordinator's watchdog (_async_maintain_mqtt) keep retrying MQTT,
         including subscribing any device that never got subscribed here.
         """
-        _LOGGER.info("Attempting AWS IoT MQTT connection")
+        _LOGGER.debug("Attempting AWS IoT MQTT connection")
         try:
             if await api.connect_mqtt():
                 await coordinator.async_subscribe_all_devices()
-                _LOGGER.info("MQTT connected and subscriptions registered")
+                _LOGGER.debug("MQTT connected and subscriptions registered")
                 if coordinator.has_scuba_s1_device():
                     # Query S1 path/mode directly after subscriptions exist;
                     # do not depend on a general REST refresh that push traffic
@@ -439,13 +462,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> boo
     async def _async_refresh_s1_capabilities(_now: datetime) -> None:
         await coordinator.async_refresh_s1_capability_settings()
 
-    entry.runtime_data.unsub_capability_refresh = async_track_time_interval(
-        hass,
-        _async_refresh_s1_capabilities,
-        S1_CAPABILITY_REFRESH_INTERVAL,
+    entry.async_on_unload(
+        async_track_time_interval(
+            hass,
+            _async_refresh_s1_capabilities,
+            S1_CAPABILITY_REFRESH_INTERVAL,
+        )
     )
 
-    _LOGGER.info("Aiper integration setup complete")
+    _LOGGER.debug("Aiper integration setup complete")
 
     return True
 
@@ -453,12 +478,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> boo
 async def async_unload_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        if entry.runtime_data.unsub_keepalive:
-            with suppress(Exception):
-                entry.runtime_data.unsub_keepalive()
-        if entry.runtime_data.unsub_capability_refresh:
-            with suppress(Exception):
-                entry.runtime_data.unsub_capability_refresh()
         await entry.runtime_data.api.disconnect()
 
     return unload_ok

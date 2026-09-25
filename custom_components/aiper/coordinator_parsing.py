@@ -12,7 +12,8 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from .const import CLEAN_PATH_LABEL_TO_VALUE, mode_label
+from .const import clean_path_value as _clean_path_value
+from .const import mode_label
 from .state import RawDeviceData
 
 __all__ = [
@@ -149,52 +150,6 @@ def _parse_dt(value: Any) -> datetime | None:
                 return datetime.strptime(s, fmt).replace(tzinfo=UTC)
             except Exception:
                 continue
-    return None
-
-
-def _clean_path_value(val: Any) -> int | None:
-    """Normalize a clean-path value to a numeric ID.
-
-    Observed payload variance:
-      - integer 0/1 (app/server)
-      - stringified integers "0"/"1"
-      - labels like "S-shaped" / "Adaptive" (shadow/app report)
-      - sentinel -1 (treat as default 0)
-    """
-
-    if val is None:
-        return None
-
-    try:
-        if isinstance(val, int):
-            return 0 if val == -1 else int(val)
-        if isinstance(val, float):
-            iv = int(val)
-            return 0 if iv == -1 else iv
-        if isinstance(val, str):
-            s = val.strip()
-            if not s:
-                return None
-            # Numeric strings.
-            if s.lstrip("-").isdigit():
-                iv = int(s)
-                return 0 if iv == -1 else iv
-
-            # Normalize common label variants.
-            norm = " ".join(s.lower().replace("_", " ").replace("-", " ").split())
-            for label, pid in CLEAN_PATH_LABEL_TO_VALUE.items():
-                lnorm = " ".join(str(label).lower().replace("_", " ").replace("-", " ").split())
-                if norm == lnorm:
-                    return int(pid)
-
-            # Heuristics for unknown firmware spellings.
-            if "adaptive" in norm:
-                return 1
-            if "s" in norm and "shape" in norm:
-                return 0
-    except Exception:
-        return None
-
     return None
 
 

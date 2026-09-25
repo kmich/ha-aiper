@@ -627,3 +627,111 @@ async def test_user_step_unknown_exception_returns_form_error(
     )
     assert result["type"] == "form"
     assert result["errors"] == {"base": "unknown"}
+
+
+@pytest.mark.asyncio
+async def test_user_step_duplicate_username_is_case_insensitive(hass: HomeAssistant, aiper_flow_handler: None) -> None:
+    """`User@Example.com ` and `user@example.com` are the same Aiper account."""
+    MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="user@example.com",
+        data={CONF_USERNAME: "user@example.com", CONF_PASSWORD: "secret", CONF_REGION: "eu"},
+    ).add_to_hass(hass)
+
+    result = cast(
+        dict[str, Any],
+        await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={CONF_USERNAME: " User@Example.com ", CONF_PASSWORD: "secret", CONF_REGION: "eu"},
+        ),
+    )
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "already_configured"
+    # Duplicates abort before logging in, so the app session is not disturbed.
+    assert FakeAiperApi.instances == []
+
+
+@pytest.mark.asyncio
+async def test_user_step_stores_trimmed_username_and_normalized_unique_id(
+    hass: HomeAssistant, aiper_flow_handler: None
+) -> None:
+    """New entries use the lower-cased username as unique ID."""
+    result = cast(
+        dict[str, Any],
+        await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={CONF_USERNAME: " User@Example.com ", CONF_PASSWORD: "secret", CONF_REGION: "eu"},
+        ),
+    )
+
+    assert result["type"] == "create_entry"
+    entry = result["result"]
+    assert entry.unique_id == "user@example.com"
+    assert entry.data[CONF_USERNAME] == "User@Example.com"
+    assert entry.minor_version == 2
+
+
+@pytest.mark.asyncio
+async def test_reconfigure_updates_region_and_password(hass: HomeAssistant, aiper_flow_handler: None) -> None:
+    """Reconfigure lets users change region/password without re-adding the entry."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry-1",
+        unique_id="user@example.com",
+        data={CONF_USERNAME: "user@example.com", CONF_PASSWORD: "old-secret", CONF_REGION: "eu"},
+    )
+    entry.add_to_hass(hass)
+
+    result = cast(
+        dict[str, Any],
+        await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
+        ),
+    )
+    assert result["type"] == "form"
+    assert result["step_id"] == "reconfigure"
+
+    FakeAiperApi.login_error = AiperConnectionError("down")
+    result = cast(
+        dict[str, Any],
+        await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={CONF_PASSWORD: "new-secret", CONF_REGION: "us"}
+        ),
+    )
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "cannot_connect"}
+
+    FakeAiperApi.login_error = None
+    result = cast(
+        dict[str, Any],
+        await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={CONF_PASSWORD: "new-secret", CONF_REGION: "us"}
+        ),
+    )
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_PASSWORD] == "new-secret"
+    assert entry.data[CONF_REGION] == "us"
+    assert FakeAiperApi.instances[-1].region == "us"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "error"),
+    [(401, "invalid_auth"), (404, "invalid_response")],
+)
+async def test_http_status_errors_are_classified(hass: HomeAssistant, status: int, error: str) -> None:
+    """Non-retryable HTTP errors map to specific user-facing errors, not `unknown`."""
+    import aiohttp
+
+    FakeAiperApi.login_error = aiohttp.ClientResponseError(
+        request_info=cast(Any, None), history=(), status=status, message="nope"
+    )
+
+    with pytest.raises(InvalidAuth if error == "invalid_auth" else InvalidResponse):
+        await validate_input(hass, {CONF_USERNAME: "u@example.com", CONF_PASSWORD: "p", CONF_REGION: "eu"})

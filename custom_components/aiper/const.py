@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import IntEnum, StrEnum
+from typing import Any
 
 DOMAIN = "aiper"
 
@@ -167,3 +168,49 @@ CLEAN_PATH_MAP: dict[int, str] = {
 }
 
 CLEAN_PATH_LABEL_TO_VALUE: dict[str, int] = {v: k for k, v in CLEAN_PATH_MAP.items()}
+
+
+def clean_path_value(val: Any) -> int | None:
+    """Normalize a clean-path value to a numeric ID.
+
+    Observed payload variance:
+      - integer 0/1 (app/server)
+      - stringified integers "0"/"1"
+      - labels like "S-shaped" / "Adaptive" (shadow/app report)
+      - sentinel -1 (treat as default 0)
+    """
+
+    if val is None:
+        return None
+
+    try:
+        if isinstance(val, int):
+            return 0 if val == -1 else int(val)
+        if isinstance(val, float):
+            iv = int(val)
+            return 0 if iv == -1 else iv
+        if isinstance(val, str):
+            s = val.strip()
+            if not s:
+                return None
+            # Numeric strings.
+            if s.lstrip("-").isdigit():
+                iv = int(s)
+                return 0 if iv == -1 else iv
+
+            # Normalize common label variants.
+            norm = " ".join(s.lower().replace("_", " ").replace("-", " ").split())
+            for label, pid in CLEAN_PATH_LABEL_TO_VALUE.items():
+                lnorm = " ".join(str(label).lower().replace("_", " ").replace("-", " ").split())
+                if norm == lnorm:
+                    return int(pid)
+
+            # Heuristics for unknown firmware spellings.
+            if "adaptive" in norm:
+                return 1
+            if "shape" in norm or norm == "s" or norm.startswith("s "):
+                return 0
+    except Exception:
+        return None
+
+    return None

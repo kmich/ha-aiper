@@ -3,108 +3,80 @@
 from __future__ import annotations
 
 from contextlib import suppress
+from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import AiperConfigEntry
-from .const import DOMAIN
 from .controller import AiperDeviceController
 from .coordinator import AiperDataUpdateCoordinator
-from .helpers import device_name, device_online, supports_running_control
+from .entity import AiperControlEntity
+from .helpers import supports_running_control
+
+# Commands are serialized per device by the API; don't fan out in parallel.
+PARALLEL_UPDATES = 1
 
 
-class AiperRunningSwitch(CoordinatorEntity[AiperDataUpdateCoordinator], SwitchEntity):
+class AiperRunningSwitch(AiperControlEntity, SwitchEntity):
     """Switch for simple start/stop control."""
 
     _attr_icon = "mdi:pool"
+    _attr_translation_key = "running"
+    # Start/stop is an AT command over the MQTT downChan.
+    _requires_mqtt = True
 
     def __init__(
         self,
         coordinator: AiperDataUpdateCoordinator,
         controller: AiperDeviceController,
         sn: str,
-        name: str,
     ) -> None:
-        super().__init__(coordinator)
-        self.controller = controller
-        self._sn = sn
-        self._attr_name = f"{name} Running"
-        self._attr_unique_id = f"{sn}_running"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        dev = (self.coordinator.data or {})[self._sn]
-        device_info = dev["device_info"]
-        device_info_attrs = device_info.attributes
-        return {
-            "identifiers": {(DOMAIN, self._sn)},
-            "name": str(device_info.value or self._sn),
-            "manufacturer": "Aiper",
-            "model": device_info_attrs.get("model"),
-            "sw_version": device_info_attrs.get("sw_version"),
-        }
-
-    @property
-    def available(self) -> bool:
-        if not self.coordinator.last_update_success:
-            return False
-        if not self.coordinator.api.is_mqtt_connected():
-            return False
-
-        online = device_online(self.coordinator, self._sn)
-        return online is not False
+        """Initialize the running switch."""
+        super().__init__(coordinator, controller, sn, "running")
 
     @property
     def is_on(self) -> bool | None:
+        """Return the pending target while a command is in flight, else the reported state."""
         pending = self.coordinator.get_pending_command_target(self._sn, "running")
         if isinstance(pending, bool):
             return pending
-        dev = (self.coordinator.data or {})[self._sn]
-        running = dev["running"].value
+        state = self.entity_state("running")
+        running = state.value if state is not None else None
         return running if isinstance(running, bool) else None
-
-    def _raise_if_control_blocked(self) -> None:
-        if not self.coordinator.api.is_mqtt_connected():
-            raise HomeAssistantError("Aiper MQTT connection is not available; cannot send this command.")
-
-        online = device_online(self.coordinator, self._sn)
-        if online is False:
-            raise HomeAssistantError("Device is offline; controls are disabled.")
 
     async def _set_running(self, running: bool) -> None:
         self._raise_if_control_blocked()
 
         result = await self.controller.set_running(self._sn, running)
-        if not result.ok:
-            raise HomeAssistantError(f"Failed to set running state: {result.reason or 'device rejected the command'}")
+        self._raise_for_failed_command(result)
 
         with suppress(Exception):
             await self.controller.refresh_shadow(self._sn)
 
         await self.coordinator.async_request_refresh()
 
-    async def async_turn_on(self, **kwargs) -> None:
+    async def async_turn_on(self, **kwargs: Any) -> None:
         """Start running."""
         await self._set_running(True)
 
-    async def async_turn_off(self, **kwargs) -> None:
+    async def async_turn_off(self, **kwargs: Any) -> None:
         """Stop running."""
         await self._set_running(False)
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry, async_add_entities) -> None:
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: AiperConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
     """Set up switch entities from a config entry."""
-    coordinator: AiperDataUpdateCoordinator = entry.runtime_data.coordinator
-    controller: AiperDeviceController = entry.runtime_data.controller
+    coordinator = entry.runtime_data.coordinator
+    controller = entry.runtime_data.controller
 
-    entities: list[SwitchEntity] = []
-    if coordinator.data:
-        for sn, dev in coordinator.data.items():
-            if supports_running_control(dev):
-                entities.append(AiperRunningSwitch(coordinator, controller, sn, device_name(dev, sn)))
-
-    async_add_entities(entities)
+    async_add_entities(
+        AiperRunningSwitch(coordinator, controller, sn)
+        for sn, dev in (coordinator.data or {}).items()
+        if supports_running_control(dev)
+    )

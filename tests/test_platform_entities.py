@@ -93,7 +93,6 @@ def _hass_with_device(
             AiperDeviceController, AiperDeviceController(cast(Any, coordinator.api), cast(Any, coordinator))
         ),
         coordinator=cast(AiperDataUpdateCoordinator, coordinator),
-        unsub_keepalive=None,
     )
     return entry, coordinator
 
@@ -115,7 +114,7 @@ def _keys(entities: list[Any]) -> set[str]:
 
 
 def _select_keys(entities: list[Any]) -> set[str]:
-    return {entity._key for entity in entities}
+    return {entity.translation_key for entity in entities}
 
 
 def _unique_ids(entities: list[Any]) -> set[str]:
@@ -180,7 +179,7 @@ async def test_surfer_entity_publication_is_verified_and_not_scuba_specific(hass
         "remaining_hours": 20,
     }
     runtime = _entity_by_key(sensor_entities, "runtime")
-    assert runtime.entity_description.name == "Current Cleaning Time"
+    assert runtime.entity_description.translation_key == "runtime"
     assert runtime.unique_id == "SN123_runtime"
     assert runtime.native_value == 16.73
     assert "running" in _keys(binary_entities)
@@ -190,7 +189,8 @@ async def test_surfer_entity_publication_is_verified_and_not_scuba_specific(hass
     assert _entity_by_key(sensor_entities, "mode").native_value == "Scheduled"
     assert select_entities == []
     assert _unique_ids(switch_entities) == {"SN123_running"}
-    assert switch_entities[0].name == "Surfer S2 Running"
+    assert switch_entities[0].has_entity_name is True
+    assert switch_entities[0].translation_key == "running"
     assert switch_entities[0].is_on is True
 
     _coordinator.data["SN123"] = _profiled_device(
@@ -299,7 +299,7 @@ async def test_scuba_entity_publication_uses_scuba_capabilities(hass: HomeAssist
     assert "running" in _keys(binary_entities)
     assert _entity_by_key(binary_entities, "running").is_on is True
     assert _select_keys(select_entities) == {"mode_selection", "clean_path"}
-    mode_select = next(entity for entity in select_entities if entity._key == "mode_selection")
+    mode_select = next(entity for entity in select_entities if entity.translation_key == "mode_selection")
     assert mode_select.current_option == "Floor"
     assert switch_entities == []
 
@@ -347,8 +347,8 @@ async def test_scuba_s1_only_publishes_observed_entities(hass: HomeAssistant) ->
     assert "estimated_cleaning_time" in sensor_keys
     assert _entity_by_key(sensor_entities, "estimated_cleaning_time").native_value == 242
     assert _select_keys(select_entities) == {"mode_selection", "clean_path"}
-    mode_select = next(entity for entity in select_entities if entity._key == "mode_selection")
-    clean_path_select = next(entity for entity in select_entities if entity._key == "clean_path")
+    mode_select = next(entity for entity in select_entities if entity.translation_key == "mode_selection")
+    clean_path_select = next(entity for entity in select_entities if entity.translation_key == "clean_path")
     assert mode_select.options == ["Auto", "Floor", "Wall", "Scheduled"]
     assert mode_select.current_option == "Auto"
     _coordinator.pending_targets = {("SN123", "clean_path"): 0}

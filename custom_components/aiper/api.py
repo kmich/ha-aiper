@@ -14,15 +14,11 @@ from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from contextvars import ContextVar
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import aiohttp
-
-try:
-    from zoneinfo import ZoneInfo
-except Exception:  # pragma: no cover
-    ZoneInfo = None  # type: ignore
 
 from .connection import ConnectionState, ConnectionStatus
 from .const import (
@@ -31,6 +27,7 @@ from .const import (
     ApiEndpoint,
     CleaningMode,
     MqttTopic,
+    clean_path_value,
 )
 from .crypto import AiperEncryption
 from .mqtt import AwsIotCredentials, AwsIotMqttTransport
@@ -72,6 +69,18 @@ _REQUEST_ZONE_ID: ContextVar[str | None] = ContextVar("aiper_request_zone_id", d
 # window of expiring. Comfortably larger than the coordinator poll interval
 # so a refresh is never missed.
 MQTT_CREDENTIALS_REFRESH_MARGIN_SECONDS = 600
+
+
+def _load_zone_info(zone_id: str) -> tzinfo | None:
+    """Load a time zone from tzdata (blocking file I/O; run in an executor)."""
+    try:
+        return ZoneInfo(zone_id)
+    except Exception:
+        return None
+
+
+# MQTT payload callback: called as ``callback(sn, payload)`` from an AWS CRT thread.
+ShadowCallback = Callable[[str, dict[str, Any]], None]
 
 
 class AiperApiError(Exception):
@@ -147,7 +156,9 @@ class AiperApi:
         # Convenience lookup tables derived from device discovery / MQTT telemetry
         self._device_zone_id_by_sn: dict[str, str] = {}
         self._last_timezone_by_sn: dict[str, str] = {}
-        self._shadow_callbacks: dict[str, list[Callable]] = {}
+        # zoneId -> tzinfo, loaded off the event loop (see _async_cache_zone_info).
+        self._zone_info_cache: dict[str, tzinfo | None] = {}
+        self._shadow_callbacks: dict[str, list[ShadowCallback]] = {}
         self._lock = threading.Lock()
 
         # DownChan AT command acknowledgements (received on upChan as "+OK" / "+ERROR").
@@ -226,26 +237,7 @@ class AiperApi:
                     val = payload.get(key)
                     break
 
-        if isinstance(val, str):
-            s = val.strip()
-            if s.lstrip("-").isdigit():
-                try:
-                    val = int(s)
-                except Exception:
-                    val = None
-
-        if isinstance(val, int):
-            # Aiper's app treats -1 as the default path preference.
-            return 0 if val == -1 else int(val)
-
-        if isinstance(val, str):
-            norm = " ".join(val.lower().replace("_", " ").replace("-", " ").split())
-            if "adaptive" in norm:
-                return 1
-            if "shape" in norm or norm.startswith("s ") or norm == "s":
-                return 0
-
-        return None
+        return clean_path_value(val)
 
     async def _call_encrypted(
         self,
@@ -307,7 +299,7 @@ class AiperApi:
         # the credentials are bad, and re-entering login() would recurse until
         # RecursionError while hammering the login endpoint.
         if retry_login and path != "/login" and str(payload.get("code")) in ("401", "403"):
-            _LOGGER.info("Token appears expired; attempting refresh")
+            _LOGGER.debug("Token appears expired; attempting refresh")
             try:
                 if await self.refresh_token():
                     return await self._call_encrypted(
@@ -322,7 +314,7 @@ class AiperApi:
             except Exception:
                 pass
 
-            _LOGGER.info("Token refresh failed; re-authenticating")
+            _LOGGER.debug("Token refresh failed; re-authenticating")
             if await self.login():
                 return await self._call_encrypted(
                     method,
@@ -365,7 +357,15 @@ class AiperApi:
         data: Any = None,
         timeout: int = 30,
     ) -> tuple[int, str]:
-        """Perform an async REST request with limited retries/backoff on 429/5xx."""
+        """Perform an async REST request with limited retries/backoff.
+
+        Retries only transient failures, classified by type rather than by
+        error text: retryable HTTP statuses (429/5xx), connection errors,
+        truncated payloads and timeouts. Those become AiperConnectionError
+        once retries are exhausted. Any other HTTP error status is raised
+        immediately as ``aiohttp.ClientResponseError`` so callers can inspect
+        the status (e.g. Cognito 4xx handling).
+        """
         max_attempts = 4
         delay = 1.0
         last_exc: Exception | None = None
@@ -385,31 +385,17 @@ class AiperApi:
                         raise AiperConnectionError(f"HTTP {resp.status}")
                     resp.raise_for_status()
                     return resp.status, text
-            except Exception as err:
+            except (
+                AiperConnectionError,
+                aiohttp.ClientConnectionError,
+                aiohttp.ClientPayloadError,
+                TimeoutError,
+            ) as err:
                 last_exc = err
-                msg = str(err).lower()
-                transient = any(
-                    key in msg
-                    for key in (
-                        "429",
-                        "500",
-                        "502",
-                        "503",
-                        "504",
-                        "timeout",
-                        "tempor",
-                        "connection",
-                        "reset",
-                        "refused",
-                    )
-                )
-                if attempt >= max_attempts or not transient:
-                    break
+            if attempt < max_attempts:
                 await asyncio.sleep(delay + random.uniform(0, 0.3))
                 delay = min(delay * 2.0, 8.0)
-        if isinstance(last_exc, (AiperConnectionError, aiohttp.ClientConnectionError, TimeoutError)):
-            raise AiperConnectionError(f"Aiper request failed: {last_exc}") from last_exc
-        raise last_exc if last_exc else AiperConnectionError("Aiper request failed")
+        raise AiperConnectionError(f"Aiper request failed: {last_exc}") from last_exc
 
     async def _call_plain(
         self,
@@ -489,7 +475,7 @@ class AiperApi:
                 raise AiperResponseError(f"No token in login response: {result}")
 
             self._headers["token"] = self._token
-            _LOGGER.info("Successfully logged in to Aiper API (base_url=%s)", self.base_url)
+            _LOGGER.debug("Successfully logged in to Aiper API (base_url=%s)", self.base_url)
 
             # retry_login=False: a 401/402 here must not re-enter login().
             await self.get_openid_token(retry_login=False)
@@ -543,7 +529,7 @@ class AiperApi:
                 if isinstance(new_token, str) and new_token:
                     self._token = new_token
                     self._headers["token"] = self._token
-                    _LOGGER.info("Token refreshed successfully")
+                    _LOGGER.debug("Token refreshed successfully")
                     return True
             try:
                 code = payload.get("code") if isinstance(payload, dict) else None
@@ -711,16 +697,19 @@ class AiperApi:
         return creds
 
     async def get_devices(self) -> list[dict]:
-        """Get list of devices from API without blocking the event loop."""
+        """Get the account's device list.
+
+        Raises AiperApiError subclasses on failure rather than returning an
+        empty list, so callers can tell "no devices" from "request failed".
+        """
         try:
             payload = await self._call_encrypted("POST", "/equipment/getEquipment", {})
             _LOGGER.debug("Get devices response code=%s", payload.get("code"))
 
             if not self._is_success(payload):
-                _LOGGER.warning(
-                    "Get devices failed (code=%s, message=%s)", payload.get("code"), self._payload_message(payload)
+                raise AiperResponseError(
+                    f"Get devices failed (code={payload.get('code')}, message={self._payload_message(payload)})"
                 )
-                return []
 
             devices = payload.get("data", [])
             if isinstance(devices, dict):
@@ -737,11 +726,11 @@ class AiperApi:
                         self._device_zone_id_by_sn[sn] = zone_id
                     _LOGGER.debug("Found device: %s (%s)", device.get("name", "Unknown"), sn)
 
+            await self._async_cache_zone_info(set(self._device_zone_id_by_sn.values()))
             return devices
 
         except aiohttp.ClientError as err:
-            _LOGGER.error("Failed to get devices: %s", err)
-            return []
+            raise AiperConnectionError(f"Failed to get devices: {err}") from err
 
     async def get_device_info(self, sn: str) -> dict | None:
         """Get detailed info for a specific device without blocking the event loop."""
@@ -1235,7 +1224,7 @@ class AiperApi:
                 self._mqtt_connected = True
                 self._mqtt_first_disconnected_at = None
                 self.connection.mark_connected()
-                _LOGGER.info("Connected to AWS IoT MQTT using AWS IoT Device SDK v2")
+                _LOGGER.debug("Connected to AWS IoT MQTT using AWS IoT Device SDK v2")
                 return True
 
             self._mqtt_connected = False
@@ -1375,7 +1364,7 @@ class AiperApi:
             _LOGGER.debug("Failed to publish shadow update for %s: %s", sn, err)
             return False
 
-    def _register_shadow_callback(self, sn: str, callback: Callable[..., None]) -> None:
+    def _register_shadow_callback(self, sn: str, callback: ShadowCallback) -> None:
         """Register a callback for normalized MQTT shadow/report payloads.
 
         Idempotent: calling this again for the same (sn, callback) pair does
@@ -1439,19 +1428,17 @@ class AiperApi:
                 _LOGGER.debug("MQTT message topic=%s payload=%s", topic, payload[:800])
 
             with self._lock:
-                for cb in self._shadow_callbacks.get(sn, []):
-                    try:
-                        try:
-                            cb(sn, data)
-                        except TypeError:
-                            cb(data)
-                    except Exception as err:
-                        _LOGGER.error("Callback error: %s", err)
+                callbacks = list(self._shadow_callbacks.get(sn, []))
+            for cb in callbacks:
+                try:
+                    cb(sn, data)
+                except Exception as err:
+                    _LOGGER.error("Callback error: %s", err)
 
         except Exception as err:
             _LOGGER.error("Failed to process message: %s", err)
 
-    async def subscribe_device(self, sn: str, callback: Callable[..., None]) -> bool:
+    async def subscribe_device(self, sn: str, callback: ShadowCallback) -> bool:
         """Subscribe to device shadow updates."""
         if not self.is_mqtt_connected():
             _LOGGER.warning("MQTT not connected, cannot subscribe")
@@ -1492,17 +1479,28 @@ class AiperApi:
             return last
 
         zone_id = self._device_zone_id_by_sn.get(sn)
-        if ZoneInfo is not None and isinstance(zone_id, str) and zone_id:
-            try:
-                offset = datetime.now(ZoneInfo(zone_id)).utcoffset()
-                if offset is not None:
-                    hours = int(offset.total_seconds() / 3600)
-                    sign = "+" if hours >= 0 else "-"
-                    return f"UTC{sign}{abs(hours)}"
-            except Exception:
-                pass
+        zone = self._zone_info_cache.get(zone_id) if isinstance(zone_id, str) and zone_id else None
+        if zone is not None:
+            offset = datetime.now(zone).utcoffset()
+            if offset is not None:
+                hours = int(offset.total_seconds() / 3600)
+                sign = "+" if hours >= 0 else "-"
+                return f"UTC{sign}{abs(hours)}"
 
         return "UTC+0"
+
+    async def _async_cache_zone_info(self, zone_ids: set[str]) -> None:
+        """Load tzdata for newly seen zone IDs in an executor.
+
+        ``ZoneInfo()`` reads tzdata from disk on first use, which must not
+        happen on the event loop; the sync lookup above only reads this cache.
+        """
+        missing = {zone_id for zone_id in zone_ids if zone_id not in self._zone_info_cache}
+        if not missing:
+            return
+        loop = asyncio.get_running_loop()
+        for zone_id in missing:
+            self._zone_info_cache[zone_id] = await loop.run_in_executor(None, _load_zone_info, zone_id)
 
     def _record_ack(self, sn: str, ack: str) -> None:
         """Record an AT command acknowledgement received on upChan."""
@@ -1817,4 +1815,4 @@ class AiperApi:
         """Disconnect from MQTT and cleanup."""
         await self.disconnect_mqtt()
 
-        _LOGGER.info("Disconnected from Aiper API")
+        _LOGGER.debug("Disconnected from Aiper API")

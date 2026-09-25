@@ -16,6 +16,14 @@
         "data": {
           "password": "Wachtwoord"
         }
+      },
+      "reconfigure": {
+        "title": "Aiper opnieuw configureren",
+        "description": "Werk de regio of het wachtwoord voor {username} bij.",
+        "data": {
+          "password": "Wachtwoord",
+          "region": "Regio"
+        }
       }
     },
     "error": {
@@ -27,7 +35,8 @@
     },
     "abort": {
       "already_configured": "Dit account is al geconfigureerd",
-      "reauth_successful": "Opnieuw verifiëren is gelukt"
+      "reauth_successful": "Opnieuw verifiëren is gelukt",
+      "reconfigure_successful": "Opnieuw configureren is gelukt"
     }
   },
   "options": {
@@ -79,6 +88,120 @@
       },
       "charge_type": {
         "name": "Laadtype"
+      },
+      "connection_state": {
+        "name": "Verbindingsstatus",
+        "state": {
+          "initializing": "Initialiseren",
+          "connecting": "Verbinden",
+          "connected": "Verbonden",
+          "disconnected": "Verbroken",
+          "reconnecting": "Opnieuw verbinden",
+          "credentials_stale": "Inloggegevens verlopen",
+          "fatal": "Actie vereist"
+        }
+      },
+      "last_cloud_update": {
+        "name": "Laatste cloudupdate"
+      },
+      "estimated_cleaning_time": {
+        "name": "Geschatte reinigingstijd"
+      },
+      "mode": {
+        "name": "Modus"
+      },
+      "wifi_signal": {
+        "name": "WiFi-signaal"
+      },
+      "runtime": {
+        "name": "Huidige reinigingstijd"
+      },
+      "total_cleanings": {
+        "name": "Totaal aantal reinigingen"
+      },
+      "total_cleaning_time": {
+        "name": "Totale reinigingstijd"
+      },
+      "total_cleaning_time_minutes": {
+        "name": "Totale reinigingstijd (minuten)"
+      },
+      "last_cleaning_mode": {
+        "name": "Laatste reinigingsmodus"
+      },
+      "last_cleaning_start": {
+        "name": "Start laatste reiniging"
+      },
+      "last_cleaning_duration": {
+        "name": "Duur laatste reiniging"
+      },
+      "wqs_sample_time": {
+        "name": "Tijdstip watermonster"
+      },
+      "supply_voltage": {
+        "name": "Voedingsspanning"
+      },
+      "solar_voltage": {
+        "name": "Zonnespanning"
+      },
+      "light_level": {
+        "name": "Lichtniveau"
+      },
+      "work_current": {
+        "name": "Werkstroom"
+      },
+      "charge_current": {
+        "name": "Laadstroom"
+      },
+      "calibration_status": {
+        "name": "Kalibratiestatus"
+      },
+      "probe_1_status": {
+        "name": "Status sonde 1"
+      },
+      "probe_2_status": {
+        "name": "Status sonde 2"
+      },
+      "probe_3_status": {
+        "name": "Status sonde 3"
+      },
+      "ultrasonic_status": {
+        "name": "Status ultrasone sensor"
+      },
+      "device_family": {
+        "name": "Apparaatfamilie"
+      },
+      "main_version": {
+        "name": "Hoofdversie"
+      },
+      "mcu_version": {
+        "name": "MCU-versie"
+      },
+      "ip_address": {
+        "name": "IP-adres"
+      },
+      "ap_hotspot": {
+        "name": "AP-hotspot"
+      },
+      "bluetooth_name": {
+        "name": "Bluetooth-naam"
+      },
+      "clean_path": {
+        "name": "Reinigingspad"
+      },
+      "ota_state": {
+        "name": "OTA-status"
+      },
+      "roller_brush": {
+        "name": "Rolborstel"
+      },
+      "micromesh_filter": {
+        "name": "MicroMesh-filter"
+      },
+      "caterpillar_tread": {
+        "name": "Rupsband"
+      },
+      "propeller": {
+        "name": "Propeller"
       }
     },
     "binary_sensor": {
@@ -105,6 +228,12 @@
       },
       "linked": {
         "name": "Apparaat Gekoppeld"
+      },
+      "cloud_connected": {
+        "name": "Cloud verbonden"
+      },
+      "running": {
+        "name": "Actief"
       }
     },
     "button": {
@@ -117,6 +246,42 @@
       "clear_command_state": {
         "name": "Commando-status Wissen"
       }
+    },
+    "switch": {
+      "running": {
+        "name": "Actief"
+      }
+    },
+    "select": {
+      "mode_selection": {
+        "name": "Reinigingsmodus"
+      },
+      "clean_path": {
+        "name": "Reinigingspad"
+      }
+    }
+  },
+  "issues": {
+    "unknown_model": {
+      "title": "Onbekend Aiper-model",
+      "description": "Home Assistant kon het Aiper-apparaat \"{model}\" (serienummer `{serial}`) niet herkennen. Het draait daarom op een minimaal generiek profiel en sommige entiteiten kunnen ontbreken.\n\nJe kunt helpen volledige ondersteuning toe te voegen door de hieronder gelinkte handleiding voor modelondersteuning te volgen en een GitHub-issue te openen met de gegenereerde bundel."
+    }
+  },
+  "exceptions": {
+    "mqtt_unavailable": {
+      "message": "De Aiper MQTT-verbinding is niet beschikbaar, dus dit commando kan niet worden verzonden."
+    },
+    "device_offline": {
+      "message": "Het Aiper-apparaat is offline; bediening is uitgeschakeld."
+    },
+    "command_failed": {
+      "message": "Aiper heeft het commando {command} niet geaccepteerd: {reason}"
+    },
+    "invalid_option": {
+      "message": "\"{option}\" is geen geldige optie voor dit Aiper-apparaat."
+    },
+    "shadow_refresh_failed": {
+      "message": "Kan geen Aiper-shadowvernieuwing aanvragen."
     }
   }
 }

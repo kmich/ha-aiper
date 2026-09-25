@@ -85,7 +85,7 @@ class AwsIotMqttTransport:
             self._connected = True
             self.last_error = None
             self.last_connected_at = datetime.now(UTC)
-            _LOGGER.info("Connected to AWS IoT MQTT")
+            _LOGGER.debug("Connected to AWS IoT MQTT")
             return True
         except Exception as err:
             self._connected = False
@@ -101,7 +101,7 @@ class AwsIotMqttTransport:
             self._connected = True
             self.last_error = None
             self.last_connected_at = datetime.now(UTC)
-            _LOGGER.info("Connected to AWS IoT MQTT")
+            _LOGGER.debug("Connected to AWS IoT MQTT")
             return True
         except Exception as err:
             self._connected = False
