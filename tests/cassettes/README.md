@@ -41,7 +41,7 @@ pin each step, and it keeps cassettes readable.
 
 | key       | meaning                                                                                    |
 | --------- | ---------------------------------------------------------------------------------------- |
-| `status`  | HTTP status. `>= 400` is raised as `aiohttp.ClientResponseError(status=...)`, exactly like the real `_request_with_backoff` does via `resp.raise_for_status()`. Otherwise the entry is returned as `(status, json.dumps(json))`. |
+| `status`  | HTTP status. `>= 400` is raised as `aiohttp.ClientResponseError(status=...)`, like the real `_request_with_backoff` (in `api_rest.py`) does for non-retryable statuses via `resp.raise_for_status()`; the real client retries 429/5xx and then raises `AiperConnectionError`. Otherwise the entry is returned as `(status, json.dumps(json))`. |
 | `json`    | Response body. For Aiper REST calls this is the *decrypted* envelope (`FakeEncryption` is a no-op). For the Cognito exchange it is the raw `GetCredentialsForIdentity` body. |
 | `message` | Optional. Human note; also used as the `ClientResponseError` message for `>= 400`.       |
 

@@ -21,8 +21,9 @@ The integration fetches:
 - Cleaning History (Total hours and cleanings).
 
 ## 5. What is Logged?
-If you enable Debug Logging, the integration will print raw JSON payloads from the cloud.
-**Diagnostics automatically scrub your email, password, tokens, and AWS access keys.** However, you should always review your logs before posting them publicly.
+At the default log level the integration does not write your email, device payloads, or full serial numbers; serials in warnings and errors are shortened (`SN1...890`).
+If you enable Debug Logging, debug lines include device serial numbers and response metadata. Raw MQTT payloads are only logged when you turn on the **MQTT debug logging** option.
+**Diagnostics automatically remove your password, tokens, Cognito identity, and AWS keys, and partially redact your account email (including in the entry title) and device serial numbers.** However, you should always review your logs before posting them publicly.
 
 ## 6. Command Safety
-The integration sends commands (like "Start" or "Set Mode") exactly as the official app does. We do **not** use experimental or unknown command codes. If a command fails, the integration simply surfaces the error; it does not aggressively retry in a loop that could lock your account.
+The integration sends commands (like "Start" or "Set Mode") exactly as the official app does for models whose command contract has been verified on hardware (Scuba S1, Surfer S2). For other models the integration tries the command variants observed across Aiper firmware, remembers the one that works, and does not repeat a failed search for six hours. If a command fails, the integration surfaces the error; it does not retry in a loop that could lock your account, and a session conflict with the mobile app stops the attempt immediately.

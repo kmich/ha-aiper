@@ -8,8 +8,9 @@ The tool is intended for model support work such as Surfer S2 discovery.
 
 ## Approach
 
-The probe is deliberately thin. Protocol behavior belongs in
-`custom_components/aiper/api.py`, because that is what the Home Assistant
+The probe is deliberately thin. Protocol behavior belongs in the API client
+(`custom_components/aiper/api.py` and the `api_rest.py` / `api_mqtt.py` /
+`api_commands.py` layers behind it), because that is what the Home Assistant
 integration uses in production. If discovery needs a protocol capability that
 does not exist yet, add it to `AiperApi` first and call it from the probe.
 
@@ -161,7 +162,9 @@ device status (`get_device_status`), consumables, a device-shadow snapshot, the
 raw `Machine` report string, and the mode + clean-path query results, plus
 top-level `integration_version` and `bundle_schema_version` fields. Every value
 is routed through `custom_components/aiper/redaction.py`, so it is safe to paste
-into a public GitHub issue (serial numbers are intentionally kept). It also
+into a public GitHub issue (serial numbers are intentionally kept in probe
+bundles so topics and payloads can be correlated; Home Assistant's
+diagnostics download partially redacts them instead). It also
 writes a `probe-output/<stamp>-bundle/` run directory unless `--no-write` is
 given. This is the payload the model-support issue template asks for.
 

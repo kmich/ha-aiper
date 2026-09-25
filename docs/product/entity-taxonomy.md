@@ -2,6 +2,10 @@
 
 This document classifies every entity exposed by `ha-aiper`. The goal is to provide a clean UX by disabling low-value diagnostic entities by default, focusing the user's dashboard on what matters: "Is my robot running?" and "Is my water safe?"
 
+Names below are the English entity names; they are translated into the Home Assistant language (9 languages) via `strings.json`. Entity IDs of existing installs never change when names are translated.
+
+Controls (**Running** switch, **Cleaning mode** and **Clean path** selects) are unavailable while the device reports offline. The **Running** switch and the **Refresh Shadow** button also require the MQTT link. Failed commands raise a translated error in the UI instead of failing silently.
+
 | Entity | Platform | Family | Default | Category | Purpose | Automation Use |
 |---|---|---|---|---|---|---|
 | **Online** | Binary Sensor | All | **Enabled** | Diagnostic | Per-device online state reported by the cloud | Yes (Alert if offline) |

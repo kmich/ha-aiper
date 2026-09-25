@@ -221,9 +221,12 @@ submerged cleaning cycle ever reports a status code other than the default `1`.
 ## Legacy Clean-Path Runtime Path
 
 Scuba models other than `Scuba_S1_2025` still use the legacy clean-path matrix
-in `custom_components/aiper/api.py` because current hardware has not been
-re-probed. The matrix tries multiple endpoint families, encrypted and plain
-envelopes, and several body shapes.
+in `custom_components/aiper/api_commands.py` because current hardware has not
+been re-probed. The matrix tries multiple endpoint families, encrypted and plain
+envelopes, and several body shapes. The first variant that works is remembered
+per model (persisted across restarts) and tried first next time; if a full
+sweep finds nothing, it is not repeated for six hours, and a session conflict
+stops the sweep immediately.
 
 Query endpoint families still present for non-Surfer devices:
 

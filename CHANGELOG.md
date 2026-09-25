@@ -2,6 +2,68 @@
 
 ## [Unreleased]
 
+### Security
+- Diagnostics no longer expose the account email through the entry title, and
+  now partially redact the username, device serial numbers (keys, values and
+  MQTT topics) and the Cognito identity.
+- INFO/WARNING/ERROR logs no longer contain device payloads, full serial
+  numbers, the account email or the AWS IoT endpoint; routine connection and
+  setup messages moved to DEBUG.
+
+### Fixed
+- A 401/403 response to the login request no longer recurses into login()
+  until `RecursionError` (hundreds of login attempts per setup retry). The
+  OpenID fetch made during login can no longer re-enter login either.
+- Per-device `zoneId` overrides are scoped to their own request, so concurrent
+  requests for devices in different time zones no longer leave the session
+  header stuck on another device's zone. The default `zoneId` is now Home
+  Assistant's configured time zone instead of `Europe/Athens`.
+- A password that stops working after setup now opens Home Assistant's
+  re-authentication flow instead of failing every poll with an error log.
+- Re-authentication success no longer shows an untranslated message.
+- MQTT push updates no longer restart the REST poll timer, so a chatty device
+  cannot postpone polling and the metadata refresh indefinitely.
+- When the REST device list fails for three polls in a row while MQTT is also
+  down, entities become unavailable instead of presenting cached data as
+  current; `Last Cloud Update` only advances on a successful REST refresh.
+- tzdata is loaded in an executor instead of blocking the event loop.
+- The MQTT message callback is called once with a single `(sn, payload)`
+  signature instead of through a `TypeError` fallback on every message.
+
+### Changed
+- All entities use `has_entity_name` with translation keys; the entity names
+  and service errors are translated in all nine languages, and every
+  translation file now covers every string. Existing entity IDs are unchanged.
+- Config entries migrate to version 1.2: the unique ID becomes the lower-cased
+  username (so `User@Example.com` and `user@example.com` are one account), and
+  the legacy entity-registry cleanup runs once instead of on every startup.
+- New **Reconfigure** step to change the region or password.
+- REST retries are classified by exception type instead of error text;
+  `get_devices()` raises on failure instead of returning an empty list; HTTP
+  401/403 during setup maps to "invalid credentials".
+- Command discovery for models without a verified contract remembers the
+  REST/AT variant that worked per model (persisted across restarts), stops on a
+  session conflict, and does not repeat a failed sweep for six hours (it could
+  previously send up to 144 paced requests per clean-path change).
+- `PARALLEL_UPDATES` is declared for every platform.
+- Manifest declares `loggers`; the quality scale is recorded per rule in
+  `quality_scale.yaml` and the manifest now claims `bronze` (test coverage is
+  the remaining Silver requirement). `hacs.json` declares Home Assistant
+  2024.12 as the minimum.
+
+### Internal
+- `api.py` is a facade over `api_rest.py` (session, REST, Cognito),
+  `api_mqtt.py` (AWS IoT channel) and `api_commands.py` (model-aware settings).
+- Scuba S1 lifecycle heuristics moved to `s1_reconciliation.py`.
+- Shared `AiperEntity` / `AiperControlEntity` base classes in `entity.py`;
+  duplicated helpers (integer coercion, clean-path parsing, controller command
+  handling) collapsed; unused blocking MQTT transport methods removed.
+- Diagnostics use public `diagnostics()` methods instead of private attributes.
+- Tests build real coordinators instead of bypassing `__init__`, run against
+  Home Assistant 2026.9 (Python 3.14) and the 2024.12 minimum (Python 3.12),
+  and report coverage with a CI floor. `validate.yml` merged into `ci.yml`;
+  branch-tracking hassfest/HACS actions are pinned to commits.
+
 ## [1.7.0] - 2026-09-11
 
 ### Added

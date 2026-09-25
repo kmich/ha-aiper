@@ -6,7 +6,10 @@ Bring your Aiper pool cleaner and water quality monitor into Home Assistant. Thi
 - **Pool Cleaners (Scuba S1, Scuba X1, Surfer S2, Shark):** Live state, battery, estimated cleaning duration (Scuba S1), cleaning mode controls, clean path preferences, Surfer S2 start/stop, and supported consumable tracking.
 - **Water Quality Monitors (HydroComm, W2 Series):** Live pH, ORP (mV), EC (µS/cm), TDS (ppm), Free Chlorine (mg/L), overall Water Quality Score, and bitmask-decoded alarm warnings.
 - **Cloud connection health:** An "Aiper Cloud" device with Cloud Connected, Connection State, and Last Cloud Update entities so automations can react when the cloud link drops.
-- **Guided recovery:** A Repairs prompt for an unrecognized device model or rejected credentials, instead of the integration failing silently.
+- **Guided recovery:** A Repairs prompt for an unrecognized device model or rejected credentials (at startup or later), instead of the integration failing silently. Region and password can be changed with **Reconfigure**.
+- **Translated:** entity names and errors in 9 languages.
+
+Requires Home Assistant 2024.12 or newer.
 
 ## Configuration
 
