@@ -14,7 +14,7 @@ from contextlib import suppress
 from typing import Any
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -28,6 +28,7 @@ from .controller import AiperDeviceController
 from .coordinator import AiperDataUpdateCoordinator
 from .entity import AiperControlEntity, device_online
 from .helpers import supports_clean_path, supports_mode_control
+from .state import DeviceState
 from .state_common import _coerce_int as coerce_int
 
 _LOGGER = logging.getLogger(__name__)
@@ -88,7 +89,6 @@ class AiperCleaningModeSelect(AiperSelectBase):
             controller,
             sn,
             "mode_selection",
-            icon="mdi:robot-vacuum",
             mqtt_required=False,
             enabled_default=True,
         )
@@ -197,7 +197,6 @@ class AiperCleanPathSelect(AiperSelectBase):
             controller,
             sn,
             "clean_path",
-            icon="mdi:routes",
             mqtt_required=False,
             enabled_default=True,
         )
@@ -279,22 +278,45 @@ async def async_setup_entry(
     """Set up select entities from a config entry."""
     coordinator: AiperDataUpdateCoordinator = entry.runtime_data.coordinator
     controller: AiperDeviceController = entry.runtime_data.controller
+    known_devices: set[str] = set()
 
-    entities: list[SelectEntity] = []
+    def _create_device_entities(sn: str, dev: DeviceState) -> list[SelectEntity]:
+        mode_options = dev.get("mode_options")
+        if mode_options is None:
+            return []
+        supported = mode_options.value
+        if not isinstance(supported, list) or not supported:
+            return []
+        supported_ids = [int(mode_id) for mode_id in supported]
+        mode_map = mode_options.attributes.get("mode_map")
+        if not isinstance(mode_map, dict):
+            mode_map = {mode_id: mode_label(mode_id) for mode_id in supported_ids}
+
+        dev_entities: list[SelectEntity] = []
+        if supports_clean_path(dev):
+            dev_entities.append(AiperCleanPathSelect(coordinator, controller, sn))
+        if supports_mode_control(dev):
+            dev_entities.append(AiperCleaningModeSelect(coordinator, controller, sn, supported_ids, mode_map))
+        return dev_entities
+
+    @callback
+    def _async_add_new_devices() -> None:
+        if not coordinator.data:
+            return
+        new_entities: list[SelectEntity] = []
+        for sn, dev in coordinator.data.items():
+            if sn not in known_devices:
+                known_devices.add(sn)
+                new_entities.extend(_create_device_entities(sn, dev))
+        if new_entities:
+            async_add_entities(new_entities)
+
+    initial_entities: list[SelectEntity] = []
     if coordinator.data:
         for sn, dev in coordinator.data.items():
-            mode_options = dev["mode_options"]
-            supported = mode_options.value
-            if not isinstance(supported, list) or not supported:
-                continue
-            supported_ids = [int(mode_id) for mode_id in supported]
-            mode_map = mode_options.attributes.get("mode_map")
-            if not isinstance(mode_map, dict):
-                mode_map = {mode_id: mode_label(mode_id) for mode_id in supported_ids}
+            known_devices.add(sn)
+            initial_entities.extend(_create_device_entities(sn, dev))
 
-            if supports_clean_path(dev):
-                entities.append(AiperCleanPathSelect(coordinator, controller, sn))
-            if supports_mode_control(dev):
-                entities.append(AiperCleaningModeSelect(coordinator, controller, sn, supported_ids, mode_map))
-
-    async_add_entities(entities)
+    async_add_entities(initial_entities)
+    if hasattr(entry, "async_on_unload"):
+        entry.async_on_unload(coordinator.async_add_listener(_async_add_new_devices))

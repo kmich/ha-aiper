@@ -11,7 +11,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntityDescription,
 )
 from homeassistant.const import EntityCategory
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -44,7 +44,6 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[AiperBinarySensorEntityDescription, ...] = (
     AiperBinarySensorEntityDescription(
         key="in_water",
         translation_key="in_water",
-        icon="mdi:water",
         device_class=BinarySensorDeviceClass.MOISTURE,
         enabled_default=True,
         capability=Capability.IN_WATER,
@@ -52,21 +51,18 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[AiperBinarySensorEntityDescription, ...] = (
     AiperBinarySensorEntityDescription(
         key="running",
         translation_key="running",
-        icon="mdi:run",
         device_class=BinarySensorDeviceClass.RUNNING,
         include_fn=is_not_hydrocomm,
     ),
     AiperBinarySensorEntityDescription(
         key="charging",
         translation_key="charging",
-        icon="mdi:battery-charging",
         device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
         capability=Capability.CHARGING,
     ),
     AiperBinarySensorEntityDescription(
         key="solar_charging",
         translation_key="solar_charging",
-        icon="mdi:solar-power",
         device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
         enabled_default=False,  # MQTT-only
         capability=Capability.SOLAR_CHARGING,
@@ -74,7 +70,6 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[AiperBinarySensorEntityDescription, ...] = (
     AiperBinarySensorEntityDescription(
         key="bluetooth",
         translation_key="bluetooth",
-        icon="mdi:bluetooth",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         enabled_default=False,  # MQTT-only
         capability=Capability.BLUETOOTH,
@@ -82,13 +77,11 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[AiperBinarySensorEntityDescription, ...] = (
     AiperBinarySensorEntityDescription(
         key="wifi",
         translation_key="wifi",
-        icon="mdi:wifi",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
     ),
     AiperBinarySensorEntityDescription(
         key="linked",
         translation_key="linked",
-        icon="mdi:link",
         enabled_default=False,  # MQTT-only
         capability=Capability.DEVICE_LINK,
     ),
@@ -102,28 +95,47 @@ async def async_setup_entry(
 ) -> None:
     """Set up Aiper binary sensors based on a config entry."""
     coordinator: AiperDataUpdateCoordinator = entry.runtime_data.coordinator
+    known_devices: set[str] = set()
 
-    entities: list[BinarySensorEntity] = []
+    def _create_device_entities(sn: str, device_data: DeviceState) -> list[BinarySensorEntity]:
+        dev_entities: list[BinarySensorEntity] = []
+        for description in BINARY_SENSOR_DESCRIPTIONS:
+            if description.capability and not state_has_capability(device_data, description.capability):
+                continue
+            if not description.include_fn(device_data):
+                continue
+            dev_entities.append(
+                AiperBinarySensor(
+                    coordinator=coordinator,
+                    description=description,
+                    sn=sn,
+                    device_data=device_data,
+                )
+            )
+        return dev_entities
 
+    @callback
+    def _async_add_new_devices() -> None:
+        if not coordinator.data:
+            return
+        new_entities: list[BinarySensorEntity] = []
+        for sn, device_data in coordinator.data.items():
+            if sn not in known_devices:
+                known_devices.add(sn)
+                new_entities.extend(_create_device_entities(sn, device_data))
+        if new_entities:
+            async_add_entities(new_entities)
+
+    initial_entities: list[BinarySensorEntity] = []
     if coordinator.data:
         for sn, device_data in coordinator.data.items():
-            for description in BINARY_SENSOR_DESCRIPTIONS:
-                if description.capability and not state_has_capability(device_data, description.capability):
-                    continue
-                if not description.include_fn(device_data):
-                    continue
-                entities.append(
-                    AiperBinarySensor(
-                        coordinator=coordinator,
-                        description=description,
-                        sn=sn,
-                        device_data=device_data,
-                    )
-                )
+            known_devices.add(sn)
+            initial_entities.extend(_create_device_entities(sn, device_data))
 
-    entities.append(AiperCloudConnectedBinarySensor(coordinator, entry.entry_id))
-
-    async_add_entities(entities)
+    initial_entities.append(AiperCloudConnectedBinarySensor(coordinator, entry.entry_id))
+    async_add_entities(initial_entities)
+    if hasattr(entry, "async_on_unload"):
+        entry.async_on_unload(coordinator.async_add_listener(_async_add_new_devices))
 
 
 class AiperBinarySensor(AiperEntity, BinarySensorEntity):

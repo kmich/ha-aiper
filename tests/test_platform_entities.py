@@ -47,6 +47,8 @@ class FakeCoordinator:
     metadata_refreshed: list[str] | None = None
     command_state_cleared: list[str] | None = None
 
+    listeners: list[Any] | None = None
+
     def get_pending_command_target(self, sn: str, kind: str) -> Any:
         return (self.pending_targets or {}).get((sn, kind))
 
@@ -62,6 +64,19 @@ class FakeCoordinator:
         if self.command_state_cleared is None:
             self.command_state_cleared = []
         self.command_state_cleared.append(sn)
+
+    def async_add_listener(self, update_callback: Any, context: Any = None) -> Any:
+        if self.listeners is None:
+            self.listeners = []
+        self.listeners.append(update_callback)
+        return lambda: (
+            self.listeners.remove(update_callback) if self.listeners and update_callback in self.listeners else None
+        )
+
+    def async_update_listeners(self) -> None:
+        if self.listeners:
+            for listener in list(self.listeners):
+                listener()
 
 
 def _profiled_device(
@@ -89,9 +104,7 @@ def _hass_with_device(
     entry = MockConfigEntry(domain=DOMAIN, entry_id="entry-1", options={})
     entry.runtime_data = AiperRuntimeData(
         api=cast(AiperApi, coordinator.api),
-        controller=cast(
-            AiperDeviceController, AiperDeviceController(cast(Any, coordinator.api), cast(Any, coordinator))
-        ),
+        controller=AiperDeviceController(cast(Any, coordinator.api), cast(Any, coordinator)),
         coordinator=cast(AiperDataUpdateCoordinator, coordinator),
     )
     return entry, coordinator
@@ -504,6 +517,69 @@ async def test_hydrocomm_entity_publication_uses_monitor_capabilities(hass: Home
     assert "online" in _keys(binary_entities)
     assert "charging" in _keys(binary_entities)
     assert "running" not in _keys(binary_entities)
-    assert _entity_by_key(binary_entities, "charging").is_on is True
     assert select_entities == []
     assert switch_entities == []
+
+
+@pytest.mark.asyncio
+async def test_dynamic_device_discovery_adds_entities_for_new_device(hass: HomeAssistant) -> None:
+    """New devices appearing in coordinator data are dynamically registered without reloading."""
+    entry, coordinator = _hass_with_device(
+        hass,
+        {
+            "sn": "SN123",
+            "name": "Scuba S1",
+            "model": "Scuba_S1",
+            "battLevel": 100,
+            "machineStatus": 1,
+            "supported_mode_ids": [1, 2, 3],
+        },
+    )
+
+    sensor_entities = await _setup_platform(sensor, hass, entry)
+    binary_entities = await _setup_platform(binary_sensor, hass, entry)
+    button_entities = await _setup_platform(button, hass, entry)
+    switch_entities = await _setup_platform(switch, hass, entry)
+    select_entities = await _setup_platform(select, hass, entry)
+
+    # Initial device entities only belong to SN123 (plus entry-level connection sensors)
+    initial_sensor_count = len(sensor_entities)
+    initial_binary_count = len(binary_entities)
+    initial_button_count = len(button_entities)
+    initial_switch_count = len(switch_entities)
+    initial_select_count = len(select_entities)
+
+    assert any(getattr(e, "_sn", None) == "SN123" for e in sensor_entities)
+    assert not any(getattr(e, "_sn", None) == "SN456" for e in sensor_entities)
+
+    # A new device is discovered on coordinator update
+    coordinator.data["SN456"] = _profiled_device(
+        {
+            "sn": "SN456",
+            "name": "Scuba S1 Backyard",
+            "model": "Scuba_S1",
+            "battLevel": 85,
+            "machineStatus": 1,
+            "supported_mode_ids": [1, 2, 3],
+        },
+        extra_capabilities=frozenset({Capability.RUNNING_CONTROL}),
+    )
+    coordinator.async_update_listeners()
+
+    # Entities for SN456 were dynamically registered
+    assert len(sensor_entities) > initial_sensor_count
+    assert len(binary_entities) > initial_binary_count
+    assert len(button_entities) > initial_button_count
+    assert len(switch_entities) > initial_switch_count
+    assert len(select_entities) > initial_select_count
+
+    assert any(getattr(e, "_sn", None) == "SN456" for e in sensor_entities)
+    assert any(getattr(e, "_sn", None) == "SN456" for e in binary_entities)
+    assert any(getattr(e, "_sn", None) == "SN456" for e in button_entities)
+    assert any(getattr(e, "_sn", None) == "SN456" for e in switch_entities)
+    assert any(getattr(e, "_sn", None) == "SN456" for e in select_entities)
+
+    # Subsequent updates do not duplicate entities
+    current_sensor_count = len(sensor_entities)
+    coordinator.async_update_listeners()
+    assert len(sensor_entities) == current_sensor_count

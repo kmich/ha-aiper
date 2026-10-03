@@ -320,7 +320,7 @@ async def test_mode_select_label_resolution_and_current_mode_sources(hass: HomeA
     # Selecting the mode the device already reports is a no-op.
     data["mode"] = EntityState("Floor", {"code": 2})
     await select.async_select_option("Floor")
-    assert controller.api.commands == []  # type: ignore[attr-defined]
+    assert controller.api.commands == []
 
 
 @pytest.mark.asyncio

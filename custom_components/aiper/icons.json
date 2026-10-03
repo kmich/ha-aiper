@@ -1,0 +1,155 @@
+{
+  "entity": {
+    "binary_sensor": {
+      "in_water": {
+        "default": "mdi:water"
+      },
+      "running": {
+        "default": "mdi:run"
+      },
+      "charging": {
+        "default": "mdi:battery-charging"
+      },
+      "solar_charging": {
+        "default": "mdi:solar-power"
+      },
+      "bluetooth": {
+        "default": "mdi:bluetooth"
+      },
+      "wifi": {
+        "default": "mdi:wifi"
+      },
+      "linked": {
+        "default": "mdi:link"
+      }
+    },
+    "button": {
+      "refresh_shadow": {
+        "default": "mdi:cloud-refresh"
+      },
+      "refresh_metadata": {
+        "default": "mdi:database-refresh"
+      },
+      "clear_command_state": {
+        "default": "mdi:playlist-remove"
+      }
+    },
+    "select": {
+      "mode_selection": {
+        "default": "mdi:robot-vacuum"
+      },
+      "clean_path": {
+        "default": "mdi:routes"
+      }
+    },
+    "switch": {
+      "running": {
+        "default": "mdi:pool"
+      }
+    },
+    "sensor": {
+      "status": {
+        "default": "mdi:robot-vacuum"
+      },
+      "mode": {
+        "default": "mdi:robot-vacuum"
+      },
+      "warning": {
+        "default": "mdi:alert-circle"
+      },
+      "wifi_signal": {
+        "default": "mdi:wifi"
+      },
+      "runtime": {
+        "default": "mdi:timer"
+      },
+      "total_cleanings": {
+        "default": "mdi:counter"
+      },
+      "total_cleaning_time": {
+        "default": "mdi:timer-outline"
+      },
+      "total_cleaning_time_minutes": {
+        "default": "mdi:timer-outline"
+      },
+      "last_cleaning_mode": {
+        "default": "mdi:map-marker-path"
+      },
+      "last_cleaning_duration": {
+        "default": "mdi:timer"
+      },
+      "ph": {
+        "default": "mdi:ph"
+      },
+      "orp": {
+        "default": "mdi:current-dc"
+      },
+      "ec": {
+        "default": "mdi:flash"
+      },
+      "tds": {
+        "default": "mdi:water-percent"
+      },
+      "rcl": {
+        "default": "mdi:pool"
+      },
+      "water_quality_score": {
+        "default": "mdi:gauge"
+      },
+      "water_quality_result": {
+        "default": "mdi:water-check"
+      },
+      "wqs_sample_time": {
+        "default": "mdi:clock-outline"
+      },
+      "charge_type": {
+        "default": "mdi:battery-charging"
+      },
+      "supply_voltage": {
+        "default": "mdi:current-dc"
+      },
+      "solar_voltage": {
+        "default": "mdi:solar-power-variant"
+      },
+      "light_level": {
+        "default": "mdi:brightness-5"
+      },
+      "work_current": {
+        "default": "mdi:current-dc"
+      },
+      "charge_current": {
+        "default": "mdi:current-dc"
+      },
+      "calibration_status": {
+        "default": "mdi:tune"
+      },
+      "probe_1_status": {
+        "default": "mdi:water-thermometer"
+      },
+      "probe_2_status": {
+        "default": "mdi:water-thermometer"
+      },
+      "probe_3_status": {
+        "default": "mdi:water-thermometer"
+      },
+      "ultrasonic_status": {
+        "default": "mdi:radar"
+      },
+      "roller_brush": {
+        "default": "mdi:percent"
+      },
+      "micromesh_filter": {
+        "default": "mdi:percent"
+      },
+      "caterpillar_tread": {
+        "default": "mdi:percent"
+      },
+      "propeller": {
+        "default": "mdi:percent"
+      },
+      "estimated_cleaning_time": {
+        "default": "mdi:timer-sand"
+      }
+    }
+  }
+}

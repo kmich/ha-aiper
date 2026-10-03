@@ -7,11 +7,13 @@ from typing import Any
 
 import pytest
 
-from custom_components.aiper.coordinator import _clean_path_value, _parse_cleaning_history, _parse_consumables
+from custom_components.aiper.coordinator_parsing import (
+    _clean_path_value,
+    _parse_cleaning_history,
+    _parse_consumables,
+)
 from custom_components.aiper.state import (
-    _centihours_to_hours,
     _collect_warning_codes,
-    _hours,
     _normalize_warn_code,
     normalize_device_state,
     normalize_machine_update,
@@ -21,6 +23,7 @@ from custom_components.aiper.state import (
     normalize_w2_sensor_status_update,
     normalize_w2_wqs_update,
 )
+from custom_components.aiper.state_common import _centihours_to_hours, _hours
 
 
 def test_clean_path_value_normalizes_common_variants() -> None:

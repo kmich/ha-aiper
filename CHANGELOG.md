@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-10-03
+
+### Added
+- Promoted integration to Home Assistant **Gold** quality scale (`quality_scale: "gold"`).
+- Dynamic device discovery: devices added to the Aiper account after setup are now automatically discovered and registered across all platforms during coordinator polling without reloading the integration (`dynamic-devices`).
+- Centralized icon translations in `icons.json` for all entity platforms (`icon-translations`).
+- Added `suggested_display_precision` across numeric and analog sensors (pH: 2, temperature: 1, ORP/EC/TDS: 0, cleaning runtime/duration: 1).
+- Standardized water conductivity sensor unit to `µS/cm`.
+
+### Changed
+- Achieved Platinum-tier strict type checking (`mypy --strict`) compliance across `custom_components/aiper` (`strict-typing`).
+
+### Fixed
+- Fixed event loop policy initialization on Windows when running `tools/aiper_probe.py` on Python 3.14 (`WindowsSelectorEventLoopPolicy` compatibility).
+
 ## [1.8.0] - 2026-09-25
 
 ### Security

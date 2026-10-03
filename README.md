@@ -133,8 +133,9 @@ Dutch, Portuguese, Russian and Simplified Chinese.
 - **Unverified models.** Command formats are verified on hardware for the
   Scuba S1 and Surfer S2. Other models try the variants seen across Aiper
   firmware and remember the one that works.
-- **New devices** added to your Aiper account after setup appear after
-  reloading the integration.
+- **Device discovery.** New devices added to your Aiper account after setup are
+  automatically discovered during coordinator polling without needing an
+  integration reload.
 
 ### Use cases
 

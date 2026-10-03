@@ -19,7 +19,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from .const import CleaningMode, DeviceFamily, Status, mode_label
+from .const import CleaningMode, Status, mode_label
+from .const import DeviceFamily as DeviceFamily
 
 
 class Capability(StrEnum):

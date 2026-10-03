@@ -14,9 +14,9 @@
     "awscrt",
     "awsiot"
   ],
-  "quality_scale": "silver",
+  "quality_scale": "gold",
   "requirements": [
     "awsiotsdk>=1.29.0"
   ],
-  "version": "1.8.0"
+  "version": "1.8.1"
 }

@@ -252,14 +252,14 @@ class AiperCommandClient(AiperMqttClient):
                 {"sn": sn, "deviceId": equip_id},
             ]
 
-        payload = await self._sweep_rest(
+        sweep_payload = await self._sweep_rest(
             sn,
             "clean_path_query",
             CLEAN_PATH_QUERY_PATHS,
             bodies,
-            accept=lambda payload: self._clean_path_value_from_payload(payload) is not None,
+            accept=lambda p: self._clean_path_value_from_payload(p) is not None,
         )
-        return self._clean_path_value_from_payload(payload) if payload else None
+        return self._clean_path_value_from_payload(sweep_payload) if sweep_payload else None
 
     async def update_clean_path_setting(self, sn: str, value: int) -> bool:
         """Update clean-path preference and apply it to the device asynchronously."""
