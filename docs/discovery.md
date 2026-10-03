@@ -42,9 +42,10 @@ Default commands are read-only:
 
 Commands that can affect a real device require `--allow-control`.
 
-Serial numbers are intentionally not redacted because they are needed to
-correlate REST payloads, MQTT topics, and support reports. Passwords, tokens,
-AWS credentials, Cognito/OpenID data, and authorization-like fields are redacted.
+Device serial numbers in run directories and bundles are pseudonymized (e.g., `SN_1234...`)
+for safe sharing in issue reports; only the `list` command prints full serials so you can
+pass one with `--sn`. Passwords, tokens, AWS credentials, Cognito/OpenID data, and
+authorization-like fields are fully redacted.
 
 ## Setup
 

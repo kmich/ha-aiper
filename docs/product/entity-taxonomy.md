@@ -23,7 +23,7 @@ Controls (**Running** switch, **Cleaning mode** and **Clean path** selects) are 
 | **Cleaning Mode** | Select | Cleaners | **Enabled** | None | Change cleaning mode | Yes (Set before schedule) |
 | **Clean Path** | Select | Scuba | **Enabled** | None | Change pathing algorithm | No |
 | **Running** | Switch | Surfer | **Enabled** | None | Start/stop cleaning | Yes |
-| **pH / ORP / EC / TDS / Chlorine** | Sensor | Monitors | **Enabled** | None | Core water chemistry | Yes (Alert if out of bounds) |
+| **pH / ORP / EC / TDS / Chlorine** | Sensor | Monitors | **Enabled** | None | Core water chemistry: pH, ORP (mV), EC (µS/cm), TDS (ppm), Free Chlorine (mg/L) | Yes (Alert if out of bounds) |
 | **Water Quality Score** | Sensor | Monitors | **Enabled** | None | Global water safety metric | Yes |
 | **Consumables (Brush/Filter/etc.)**| Sensor | Cleaners | **Enabled** | None | Wear items % | Yes (Alert if < 10%) |
 | **Total Cleanings / Time** | Sensor | Cleaners | Disabled | Diagnostic | Lifetime metrics | No |

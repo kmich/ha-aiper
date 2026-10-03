@@ -1,6 +1,6 @@
 # Aiper Pool Cleaner & Water Quality Monitor
 
-[![HACS][hacs-badge]][hacs-url] [![GitHub Release][release-badge]][release-url] [![CI][ci-badge]][ci-url]
+[![HACS][hacs-badge]][hacs-url] [![GitHub Release][release-badge]][release-url] [![CI][ci-badge]][ci-url] [![Quality Scale][quality-scale-badge]][quality-scale-url]
 
 **Bring your Aiper pool cleaner and water quality monitor into Home Assistant.**  
 View live status, battery, charging state, cleaning modes, consumables, and water chemistry (pH, ORP, Chlorine) alongside safe controls, directly in your smart home dashboard.
@@ -190,3 +190,5 @@ To use the device headers, place an image (like `docs/assets/scuba_x1.png`) into
 [release-url]: https://github.com/kmich/ha-aiper/releases
 [ci-badge]: https://img.shields.io/github/actions/workflow/status/kmich/ha-aiper/ci.yml?label=CI
 [ci-url]: https://github.com/kmich/ha-aiper/actions/workflows/ci.yml
+[quality-scale-badge]: https://img.shields.io/badge/Quality%20Scale-Gold-gold.svg
+[quality-scale-url]: https://developers.home-assistant.io/docs/core/integration-quality-scale/

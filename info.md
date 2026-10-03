@@ -7,7 +7,8 @@ Bring your Aiper pool cleaner and water quality monitor into Home Assistant. Thi
 - **Water Quality Monitors (HydroComm, W2 Series):** Live pH, ORP (mV), EC (µS/cm), TDS (ppm), Free Chlorine (mg/L), overall Water Quality Score, and bitmask-decoded alarm warnings.
 - **Cloud connection health:** An "Aiper Cloud" device with Cloud Connected, Connection State, and Last Cloud Update entities so automations can react when the cloud link drops.
 - **Guided recovery:** A Repairs prompt for an unrecognized device model or rejected credentials (at startup or later), instead of the integration failing silently. Region and password can be changed with **Reconfigure**.
-- **Translated:** entity names and errors in 9 languages.
+- **Dynamic Device Discovery:** New devices added to your account after setup are automatically discovered without reloading.
+- **Gold Quality Scale:** Meets Home Assistant's Gold quality tier with translated entity names, icons, and error handling in 9 languages.
 
 Requires Home Assistant 2024.12 or newer.
 
