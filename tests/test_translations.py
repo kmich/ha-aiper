@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 INTEGRATION_DIR = Path("custom_components/aiper")
 
@@ -26,7 +27,7 @@ def test_config_flow_abort_reasons_are_translated() -> None:
         assert reason in aborts
 
 
-def _flatten(data: dict, prefix: str = "") -> dict[str, str]:
+def _flatten(data: dict[str, Any], prefix: str = "") -> dict[str, str]:
     out: dict[str, str] = {}
     for key, value in data.items():
         if isinstance(value, dict):
@@ -77,3 +78,19 @@ def test_entity_translation_keys_exist() -> None:
         - set(strings["issues"])
     )
     assert used <= set(strings["exceptions"]), used - set(strings["exceptions"])
+
+
+def test_icons_json_matches_entity_translations() -> None:
+    """Every icon defined in icons.json must match a valid entity translation key."""
+    icons_file = INTEGRATION_DIR / "icons.json"
+    assert icons_file.exists()
+    icons = json.loads(icons_file.read_text(encoding="utf-8"))
+    strings = json.loads((INTEGRATION_DIR / "strings.json").read_text(encoding="utf-8"))
+
+    assert "entity" in icons
+    for platform, keys in icons["entity"].items():
+        assert platform in strings["entity"], f"Unknown platform in icons.json: {platform}"
+        for key, icon_def in keys.items():
+            assert key in strings["entity"][platform], f"Unknown translation key in icons.json: {platform}.{key}"
+            assert "default" in icon_def, f"Missing default icon for {platform}.{key}"
+            assert icon_def["default"].startswith("mdi:"), f"Icon for {platform}.{key} must start with mdi:"

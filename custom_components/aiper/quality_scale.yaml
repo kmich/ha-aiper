@@ -53,17 +53,13 @@ rules:
   docs-supported-functions: done
   docs-troubleshooting: done
   docs-use-cases: done
-  dynamic-devices:
-    status: todo
-    comment: Devices added to the Aiper account after setup appear after a reload.
+  dynamic-devices: done
   entity-category: done
   entity-device-class: done
   entity-disabled-by-default: done
   entity-translations: done
   exception-translations: done
-  icon-translations:
-    status: todo
-    comment: Icons are still set in entity descriptions rather than icons.json.
+  icon-translations: done
   reconfiguration-flow: done
   repair-issues: done
   stale-devices: done
@@ -73,6 +69,4 @@ rules:
     status: todo
     comment: awsiotsdk is callback/thread based; the integration bridges it to asyncio.
   inject-websession: done
-  strict-typing:
-    status: todo
-    comment: mypy runs in non-strict mode.
+  strict-typing: done

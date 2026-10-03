@@ -38,7 +38,6 @@ from .state import (
     DevicesState,
     DeviceState,
     RawDeviceData,
-    _coerce_bool,
     merge_device_state,
     normalize_clean_path_update,
     normalize_device_state,
@@ -54,6 +53,7 @@ from .state import (
     normalize_w2_wqs_update,
     supported_mode_ids_from_payload,
 )
+from .state_common import _coerce_bool
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -617,7 +617,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         )
         self._on_shadow_update(sn, data)
 
-    def _on_shadow_update(self, sn: str, data: dict) -> None:
+    def _on_shadow_update(self, sn: str, data: dict[str, Any]) -> None:
         """Process shadow update from MQTT."""
         topic = data.get("_topic") if isinstance(data, dict) else None
         mqtt_observed_at, mqtt_observed_at_explicit = self._mqtt_observation(data)

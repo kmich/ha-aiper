@@ -1107,8 +1107,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     if sys.platform == "win32":
         # aiohttp can pick aiodns from the dev environment, and aiodns requires
-        # a selector loop on Windows.
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        # a selector loop on Windows when available.
+        policy_cls = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
+        if policy_cls is not None:
+            asyncio.set_event_loop_policy(policy_cls())
 
     parser = build_parser()
     args = parser.parse_args(argv)

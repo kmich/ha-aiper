@@ -31,6 +31,14 @@ Alternatively, follow these manual steps:
 
 ## Recent Changes
 
+### v1.8.1
+- Promoted to Home Assistant's **Gold** quality scale (`quality_scale: "gold"`).
+- Dynamic device discovery without reloading: devices added to the Aiper account after setup are automatically registered during coordinator polling.
+- Centralized entity icon translations in `icons.json`.
+- Platinum-tier strict type checking (`mypy --strict`) enforced across `custom_components/aiper`.
+- Sensor display precision configured across numeric/analog sensors and standardized water conductivity unit to `µS/cm`.
+- Python 3.14 Windows event loop compatibility in `tools/aiper_probe.py`.
+
 ### v1.8.0
 - Meets Home Assistant's **Silver** quality scale, with translated entity names and errors in 9 languages and a new **Reconfigure** option for region and password.
 - Security: diagnostics, logs and the model-onboarding bundle no longer expose your email or full device serial numbers.

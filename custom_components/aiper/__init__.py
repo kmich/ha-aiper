@@ -18,7 +18,8 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 
-from .api import AWS_CREDENTIALS_TTL_DEBUG_SECONDS, AiperApi, AiperAuthenticationError
+from .api import AWS_CREDENTIALS_TTL_DEBUG_SECONDS, AiperAuthenticationError
+from .api import AiperApi as AiperApi
 from .config_flow import normalize_username
 from .const import (
     CONF_METADATA_REFRESH_HOURS,

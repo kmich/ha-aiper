@@ -7,7 +7,7 @@ and the Cognito exchange that yields AWS credentials for MQTT.
 
 from __future__ import annotations
 
-import asyncio
+import asyncio as asyncio
 import json
 import logging
 import random
@@ -15,7 +15,7 @@ import time
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from datetime import tzinfo
-from typing import Any
+from typing import Any, TypeVar, cast
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -27,6 +27,8 @@ from .profiles import SCUBA_S1_2025_MODEL, DeviceFamily, device_family, model_ke
 from .redaction import redact_serial, redact_str
 
 _LOGGER = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 SESSION_CONFLICT_CODE = "402"
 SESSION_CONFLICT_COOLDOWN_SECONDS = 180
@@ -130,7 +132,7 @@ class AiperRestClient:
         # Single authoritative record of MQTT/credential connection health,
         # read by diagnostics and the connection-status entities.
         self.connection = ConnectionStatus()
-        self._devices: dict[str, dict] = {}
+        self._devices: dict[str, dict[str, Any]] = {}
         # Convenience lookup tables derived from device discovery / MQTT telemetry
         self._device_zone_id_by_sn: dict[str, str] = {}
         self._last_timezone_by_sn: dict[str, str] = {}
@@ -153,7 +155,7 @@ class AiperRestClient:
         }
 
     @staticmethod
-    def _is_success(payload: dict) -> bool:
+    def _is_success(payload: dict[str, Any]) -> bool:
         code = payload.get("code")
         successful = payload.get("successful")
         return str(code) in ("0", "200") or successful is True
@@ -273,7 +275,7 @@ class AiperRestClient:
                     retry_login=False,
                 )
 
-        return payload
+        return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
 
     def _request_headers(self, token: str | None) -> dict[str, str]:
         """Return a per-request copy of the session headers."""
@@ -299,8 +301,8 @@ class AiperRestClient:
         method: str,
         url: str,
         *,
-        headers: dict,
-        json_body: dict | None = None,
+        headers: dict[str, str],
+        json_body: dict[str, Any] | None = None,
         data: Any = None,
         timeout: int = 30,
     ) -> tuple[int, str]:
@@ -371,7 +373,8 @@ class AiperRestClient:
         if not text:
             return {}
         try:
-            return json.loads(text)
+            parsed = json.loads(text)
+            return cast(dict[str, Any], parsed) if isinstance(parsed, dict) else {"data": parsed}
         except Exception:
             return {"code": status, "successful": False, "message": text[:500]}
 
@@ -434,7 +437,7 @@ class AiperRestClient:
         header_zid = self._headers.get("zoneId")
         return header_zid if isinstance(header_zid, str) and header_zid else None
 
-    async def _call_with_zoneid(self, sn: str, fn: Callable[[], Awaitable[Any]]) -> Any:
+    async def _call_with_zoneid(self, sn: str, fn: Callable[[], Awaitable[_T]]) -> _T:
         """Invoke async `fn` with the zoneId header set for `sn`.
 
         The override lives in a ContextVar, so it applies only to requests made
@@ -617,7 +620,7 @@ class AiperRestClient:
         self._aws_credentials_cooldown_until = 0.0
         return creds
 
-    async def get_devices(self) -> list[dict]:
+    async def get_devices(self) -> list[dict[str, Any]]:
         """Get the account's device list.
 
         Raises AiperApiError subclasses on failure rather than returning an
@@ -653,7 +656,7 @@ class AiperRestClient:
         except aiohttp.ClientError as err:
             raise AiperConnectionError(f"Failed to get devices: {err}") from err
 
-    async def get_device_info(self, sn: str) -> dict | None:
+    async def get_device_info(self, sn: str) -> dict[str, Any] | None:
         """Get detailed info for a specific device without blocking the event loop."""
         try:
             payload = await self._call_encrypted("POST", "/equipment/getEquipmentInfo", {"sn": sn})
@@ -673,7 +676,7 @@ class AiperRestClient:
             _LOGGER.error("Failed to get device info for %s: %s", redact_serial(sn), err)
             return None
 
-    async def get_device_status(self, sn: str) -> dict | None:
+    async def get_device_status(self, sn: str) -> dict[str, Any] | None:
         """Get online status for a device without blocking the event loop."""
         try:
             payload = await self._call_encrypted("POST", "/equipment/checkEquipmentOnlineStatus", {"sn": sn})

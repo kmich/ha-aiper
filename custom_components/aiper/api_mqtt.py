@@ -581,7 +581,7 @@ class AiperMqttClient(AiperRestClient):
 
         return None
 
-    async def send_command(self, sn: str, cmd_type: str, data: dict | None = None) -> bool:
+    async def send_command(self, sn: str, cmd_type: str, data: dict[str, Any] | None = None) -> bool:
         """Send a command to the device."""
         is_x9 = any(sn.upper().startswith(prefix) for prefix in X9_SERIES_PREFIXES)
 

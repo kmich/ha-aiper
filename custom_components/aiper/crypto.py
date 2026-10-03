@@ -12,6 +12,7 @@ import base64
 import json
 import secrets
 import time
+from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -68,7 +69,7 @@ class AiperEncryption:
     def _zero_unpad(data: bytes) -> bytes:
         return data.rstrip(b"\x00")
 
-    def encrypt_request(self, body: dict) -> str:
+    def encrypt_request(self, body: dict[str, Any]) -> str:
         body = dict(body)
         body["nonce"] = self._nonce()
         body["timestamp"] = int(time.time() * 1000)

@@ -8,7 +8,7 @@ still be correlated within one report.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
@@ -57,4 +57,4 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
         identifiers.update(str(sn) for sn in coordinator.data)
     if isinstance(username, str) and username:
         identifiers.add(username)
-    return redact_known_values(redact(diag), identifiers)
+    return cast(dict[str, Any], redact_known_values(redact(diag), identifiers))

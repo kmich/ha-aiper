@@ -60,7 +60,7 @@ The integration is functional but carries reverse-engineering complexity. Tests
 run against current Home Assistant (dev lock, Python 3.14) and the declared
 minimum (Home Assistant 2024.12 on Python 3.12, see `hacs.json` and the
 `test-min-ha` CI job). Keep tests anchored to captured or representative
-payload shapes. The integration meets the **Silver** quality scale;
+payload shapes. The integration meets the **Gold** quality scale;
 `quality_scale.yaml` tracks every rule. CI enforces at least 95% line
 coverage in total (`pyproject.toml`) and per module
 (`.github/scripts/check_coverage.py`), so new code needs tests.
@@ -103,7 +103,17 @@ a branch is obsolete.
 
 ## Modernization Priorities
 
-1. Gold: pick up devices added to the account after setup without a reload
-   (dynamic-devices).
-2. Gold: move entity icons into `icons.json` (icon-translations).
-3. Platinum: tighten typing toward mypy strict mode.
+1. Completed: dynamic device discovery on coordinator polling without reloads (`dynamic-devices`).
+2. Completed: centralized entity icon translations in `icons.json` (`icon-translations`).
+3. Completed: Platinum-tier strict type checking (`mypy --strict`) on `custom_components/aiper`.
+4. Platinum: evaluate `awsiotsdk` async wrapper / pure asyncio bridge (`async-dependency`).
+
+## Product Audits & Remediation
+
+To perform product audits, remediation, or validation for this repository, read and follow the shared local skill pack starting at:
+`G:\AI-Agent-Skills\product-audit\START-HERE.md`
+
+- **Do not copy** the skill pack into this repository.
+- **Audit outputs** (reports and evidence) must be written to `.agent-audit\reports\` and `.agent-audit\evidence\`.
+- **Do not modify product code** during an audit.
+

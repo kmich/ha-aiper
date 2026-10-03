@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from .profiles import DeviceFamily
-from .state import Capability, DeviceState, state_has_capability
+from .profiles import Capability, DeviceFamily
+from .state import DeviceState, state_has_capability
 
 
 def supports_running_control(dev: DeviceState) -> bool:
