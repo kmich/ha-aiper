@@ -1,0 +1,16 @@
+{
+  "_bundle_provenance": {
+    "bundle_schema_version": 1,
+    "captured_at": "2026-10-25T22:02:14+00:00",
+    "generated_by": "hand-written from REST getEquipment/getEquipmentInfo captures",
+    "integration_version": "1.8.1",
+    "notes": "Scuba V3 Ultra, main/SOC firmware V1.1.16.4, Americas region. Serial replaced."
+  },
+  "deviceModel": "Scuba_V3_Ultra",
+  "deviceType": "3",
+  "fw_main": "V1.1.16.4",
+  "model": "Scuba_V3_Ultra",
+  "name": "Scuba V3 Ultra",
+  "online": 1,
+  "sn": "SEEDSN000000"
+}

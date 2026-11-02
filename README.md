@@ -19,6 +19,7 @@ View live status, battery, charging state, cleaning modes, consumables, and wate
 | ✅ **Shark** | |
 | 🧪 **Scuba P1 Pro** | |
 | 🧪 **Scuba V3** | |
+| 🧪 **Scuba V3 Ultra** | |
 
 The current 2026 retail Scuba S1 identifies itself through Aiper's cloud as
 `Scuba_S1_2025`; both names refer to the verified model listed above.
@@ -31,6 +32,16 @@ been verified on hardware by the maintainer. Reports welcome.
 `machineStatus` 2/3 map to Charging/Charged as on the S3, and the
 water-temperature entity is dropped. The cleaning-mode options are still the
 generic Scuba set; the V3's real mode command IDs have not been captured yet.
+
+🧪 **Scuba V3 Ultra** support is onboarded from a community report (issue
+#56) and has not been verified on hardware by the maintainer. This firmware
+has no `Machine` shadow section; live state and settings come from `*Report`
+sections instead, including read-only entities for the next scheduled clean,
+battery health/voltage/current/power, the debris basket, and per-board OTA
+firmware. `machineStatus` 2 maps to Charging and 7 to Parked. Several raw
+settings (eco/water-governor/speed modes, airbag timing, motor thresholds)
+are exposed as diagnostics with codes whose meaning is not yet confirmed.
+Reports welcome.
 
 *(Don't see your model? We need your help! Check our [Diagnostics Guide](docs/support/diagnostics-and-troubleshooting.md) for how to submit a payload.)*
 

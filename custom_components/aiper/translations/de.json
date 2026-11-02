@@ -202,6 +202,78 @@
       },
       "propeller": {
         "name": "Propeller"
+      },
+      "next_scheduled_clean": {
+        "name": "Nächste geplante Reinigung"
+      },
+      "last_cleaning_result": {
+        "name": "Letztes Reinigungsergebnis"
+      },
+      "battery_health": {
+        "name": "Akkuzustand"
+      },
+      "battery_temperature": {
+        "name": "Akkutemperatur"
+      },
+      "battery_voltage": {
+        "name": "Akkuspannung"
+      },
+      "battery_current": {
+        "name": "Akkustrom"
+      },
+      "battery_power": {
+        "name": "Akkuleistung"
+      },
+      "debris_basket_health": {
+        "name": "Zustand des Schmutzkorbs"
+      },
+      "cleaning_estimates": {
+        "name": "Geschätzte Reinigungszeiten"
+      },
+      "voice_volume": {
+        "name": "Sprachlautstärke"
+      },
+      "eco_mode": {
+        "name": "Super-Eco-Modus"
+      },
+      "water_gover_mode": {
+        "name": "Wasserregulierungsmodus"
+      },
+      "bottom_run_mode": {
+        "name": "Bodenlaufmodus"
+      },
+      "little_water_mode": {
+        "name": "Niedrigwassermodus"
+      },
+      "multi_bottom_mode": {
+        "name": "Mehrfachboden-Modus"
+      },
+      "surface_water_settings": {
+        "name": "Oberflächenreinigungseinstellungen"
+      },
+      "airbag_status": {
+        "name": "Luftkissenstatus"
+      },
+      "airbag_settings": {
+        "name": "Luftkissen-Zeitsteuerung"
+      },
+      "speed_settings": {
+        "name": "Geschwindigkeitseinstellungen"
+      },
+      "motor_thresholds": {
+        "name": "Motor-Schwellenwerte"
+      },
+      "base_version": {
+        "name": "Firmware der Basisplatine"
+      },
+      "computing_version": {
+        "name": "Firmware der Rechenplatine"
+      },
+      "led_version": {
+        "name": "Firmware der LED-Platine"
+      },
+      "power_version": {
+        "name": "Firmware der Stromplatine"
       }
     },
     "binary_sensor": {
@@ -234,6 +306,24 @@
       },
       "running": {
         "name": "Läuft"
+      },
+      "debris_basket_blocked": {
+        "name": "Schmutzkorb blockiert"
+      },
+      "debris_basket_in_place": {
+        "name": "Schmutzkorb eingesetzt"
+      },
+      "camera": {
+        "name": "Kamera"
+      },
+      "schedule_weather": {
+        "name": "Zeitplan-Wetteroption"
+      },
+      "schedule_adapt": {
+        "name": "Zeitplan-Anpassungsoption"
+      },
+      "schedule_habit": {
+        "name": "Zeitplan-Gewohnheitsoption"
       }
     },
     "button": {

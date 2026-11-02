@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -33,6 +34,7 @@ class AiperBinarySensorEntityDescription(BinarySensorEntityDescription):
     enabled_default: bool = True
     capability: Capability | None = None
     include_fn: Callable[[DeviceState], bool] = lambda _: True
+    expose_attributes: bool = False
 
 
 BINARY_SENSOR_DESCRIPTIONS: tuple[AiperBinarySensorEntityDescription, ...] = (
@@ -87,6 +89,40 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[AiperBinarySensorEntityDescription, ...] = (
     ),
 )
 
+# Read-only binary sensors from Scuba V3 Ultra ``*Report`` sections
+# (report_sections.py). Debris-basket semantics are not yet physically verified.
+REPORT_BINARY_SENSOR_DESCRIPTIONS: tuple[AiperBinarySensorEntityDescription, ...] = (
+    AiperBinarySensorEntityDescription(
+        key="debris_basket_blocked",
+        translation_key="debris_basket_blocked",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        capability=Capability.REPORT_SECTIONS,
+        expose_attributes=True,
+    ),
+    AiperBinarySensorEntityDescription(
+        key="debris_basket_in_place",
+        translation_key="debris_basket_in_place",
+        capability=Capability.REPORT_SECTIONS,
+        expose_attributes=True,
+    ),
+    AiperBinarySensorEntityDescription(
+        key="camera",
+        translation_key="camera",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        capability=Capability.REPORT_SECTIONS,
+    ),
+    *(
+        AiperBinarySensorEntityDescription(
+            key=key,
+            translation_key=key,
+            entity_category=EntityCategory.DIAGNOSTIC,
+            enabled_default=False,
+            capability=Capability.REPORT_SECTIONS,
+        )
+        for key in ("schedule_weather", "schedule_adapt", "schedule_habit")
+    ),
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -99,7 +135,7 @@ async def async_setup_entry(
 
     def _create_device_entities(sn: str, device_data: DeviceState) -> list[BinarySensorEntity]:
         dev_entities: list[BinarySensorEntity] = []
-        for description in BINARY_SENSOR_DESCRIPTIONS:
+        for description in (*BINARY_SENSOR_DESCRIPTIONS, *REPORT_BINARY_SENSOR_DESCRIPTIONS):
             if description.capability and not state_has_capability(device_data, description.capability):
                 continue
             if not description.include_fn(device_data):
@@ -161,6 +197,14 @@ class AiperBinarySensor(AiperEntity, BinarySensorEntity):
         state = self.entity_state(self.entity_description.key)
         value = state.value if state is not None else None
         return value if isinstance(value, bool) else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return the raw report fields for descriptions that expose them."""
+        if not self.entity_description.expose_attributes:
+            return None
+        state = self.entity_state(self.entity_description.key)
+        return dict(state.attributes) if state is not None else None
 
     @property
     def available(self) -> bool:

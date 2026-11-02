@@ -233,6 +233,32 @@ def test_scuba_v3_semantics_resolve_from_device_list_model() -> None:
     assert state["charging"].value is True
 
 
+def test_scuba_v3_ultra_reports_charging_on_status_2() -> None:
+    """Scuba V3 Ultra (V1.1.16.4) reports status 2 on the charger, not Returning."""
+    state = normalize_device_state({"deviceModel": "Scuba_V3_Ultra", "machineStatus": 2})
+
+    assert state["status"].value == "Charging"
+    assert state["charging"].value is True
+    assert state["running"].value is False
+
+
+def test_scuba_v3_ultra_status_7_after_finish_is_parked() -> None:
+    """Status 7 follows FinishTaskReport while the cleaner waits in the water."""
+    state = normalize_device_state({"model": "Scuba_V3_Ultra", "machineStatus": 7})
+
+    assert state["status"].value == "Parked"
+    assert state["charging"].value is False
+    assert state["running"].value is False
+
+
+def test_scuba_v3_ultra_cleaning_status_is_unchanged() -> None:
+    state = normalize_device_state({"model": "Scuba_V3_Ultra", "machineStatus": 1})
+
+    assert state["status"].value == "Cleaning"
+    assert state["charging"].value is False
+    assert state["running"].value is True
+
+
 def test_identity_metadata_is_normalized_at_boundary() -> None:
     """Platform entities should not need model/name/firmware fallback chains."""
     device = {

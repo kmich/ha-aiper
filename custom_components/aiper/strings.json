@@ -202,6 +202,78 @@
       },
       "propeller": {
         "name": "Propeller"
+      },
+      "next_scheduled_clean": {
+        "name": "Next scheduled clean"
+      },
+      "last_cleaning_result": {
+        "name": "Last cleaning result"
+      },
+      "battery_health": {
+        "name": "Battery health"
+      },
+      "battery_temperature": {
+        "name": "Battery temperature"
+      },
+      "battery_voltage": {
+        "name": "Battery voltage"
+      },
+      "battery_current": {
+        "name": "Battery current"
+      },
+      "battery_power": {
+        "name": "Battery power"
+      },
+      "debris_basket_health": {
+        "name": "Debris basket health"
+      },
+      "cleaning_estimates": {
+        "name": "Cleaning time estimates"
+      },
+      "voice_volume": {
+        "name": "Voice volume"
+      },
+      "eco_mode": {
+        "name": "Super eco mode"
+      },
+      "water_gover_mode": {
+        "name": "Water governor mode"
+      },
+      "bottom_run_mode": {
+        "name": "Bottom run mode"
+      },
+      "little_water_mode": {
+        "name": "Little water mode"
+      },
+      "multi_bottom_mode": {
+        "name": "Multi-bottom mode"
+      },
+      "surface_water_settings": {
+        "name": "Surface cleaning settings"
+      },
+      "airbag_status": {
+        "name": "Airbag status"
+      },
+      "airbag_settings": {
+        "name": "Airbag timing"
+      },
+      "speed_settings": {
+        "name": "Speed settings"
+      },
+      "motor_thresholds": {
+        "name": "Motor thresholds"
+      },
+      "base_version": {
+        "name": "Base board firmware"
+      },
+      "computing_version": {
+        "name": "Computing board firmware"
+      },
+      "led_version": {
+        "name": "LED board firmware"
+      },
+      "power_version": {
+        "name": "Power board firmware"
       }
     },
     "binary_sensor": {
@@ -234,6 +306,24 @@
       },
       "running": {
         "name": "Running"
+      },
+      "debris_basket_blocked": {
+        "name": "Debris basket blocked"
+      },
+      "debris_basket_in_place": {
+        "name": "Debris basket in place"
+      },
+      "camera": {
+        "name": "Camera"
+      },
+      "schedule_weather": {
+        "name": "Schedule weather option"
+      },
+      "schedule_adapt": {
+        "name": "Schedule adapt option"
+      },
+      "schedule_habit": {
+        "name": "Schedule habit option"
       }
     },
     "button": {

@@ -10,11 +10,20 @@ from typing import Any
 
 from homeassistant.components.sensor import RestoreSensor, SensorEntity, SensorEntityDescription
 from homeassistant.components.sensor.const import SensorDeviceClass, SensorStateClass
-from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTemperature, UnitOfTime
+from homeassistant.const import (
+    PERCENTAGE,
+    EntityCategory,
+    UnitOfElectricCurrent,
+    UnitOfElectricPotential,
+    UnitOfPower,
+    UnitOfTemperature,
+    UnitOfTime,
+)
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from . import AiperConfigEntry
 from .connection import ConnectionState
@@ -22,7 +31,8 @@ from .coordinator import AiperDataUpdateCoordinator
 from .entity import AiperEntity, cloud_connection_device_info
 from .helpers import is_not_hydrocomm
 from .profiles import Capability
-from .state import DeviceState, state_has_capability
+from .report_sections import next_scheduled_clean
+from .state import DeviceState, EntityState, state_has_capability
 
 # Entities only read coordinator data; no per-entity update calls.
 PARALLEL_UPDATES = 0
@@ -35,6 +45,8 @@ class AiperSensorEntityDescription(SensorEntityDescription):
     enabled_default: bool | None = None
     capability: Capability | None = None
     include_fn: Callable[[DeviceState], bool] = lambda _: True
+    # Recompute value and attributes from the stored state at read time.
+    computed_fn: Callable[[EntityState], tuple[Any, dict[str, Any]]] | None = None
 
     def __post_init__(self) -> None:
         """Default diagnostics to disabled unless the description overrides it."""
@@ -354,6 +366,96 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
     ),
 )
 
+
+def _next_scheduled_clean_state(state: EntityState) -> tuple[Any, dict[str, Any]]:
+    """Return the next scheduled start (as of now) and that task's details."""
+    schedule = state.attributes.get("schedule")
+    entries = [entry for entry in schedule if isinstance(entry, dict)] if isinstance(schedule, list) else []
+    start, entry = next_scheduled_clean(entries, dt_util.now(), dt_util.get_default_time_zone())
+    attributes: dict[str, Any] = dict(state.attributes)
+    if entry is not None:
+        attributes.update(
+            {
+                key: entry.get(key)
+                for key in ("weekday_name", "clean_mode", "clean_intensity", "water_gover", "clean_areas")
+            }
+        )
+    return start, attributes
+
+
+def _report(key: str, **kwargs: Any) -> AiperSensorEntityDescription:
+    """Describe a sensor fed by a Scuba V3 Ultra ``*Report`` shadow section."""
+    kwargs.setdefault("entity_category", EntityCategory.DIAGNOSTIC)
+    return AiperSensorEntityDescription(
+        key=key,
+        translation_key=key,
+        capability=Capability.REPORT_SECTIONS,
+        **kwargs,
+    )
+
+
+# Read-only sensors from Scuba V3 Ultra ``*Report`` sections (report_sections.py).
+# Raw codes whose meaning is unknown stay raw; most of them are disabled.
+REPORT_SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
+    _report(
+        "next_scheduled_clean",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=None,
+        computed_fn=_next_scheduled_clean_state,
+    ),
+    _report("last_cleaning_result", entity_category=None),
+    _report(
+        "battery_health",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        enabled_default=True,
+    ),
+    _report(
+        "battery_temperature",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        enabled_default=True,
+    ),
+    _report(
+        "battery_voltage",
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        device_class=SensorDeviceClass.VOLTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=2,
+    ),
+    _report(
+        "battery_current",
+        native_unit_of_measurement=UnitOfElectricCurrent.MILLIAMPERE,
+        device_class=SensorDeviceClass.CURRENT,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    _report(
+        "battery_power",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    _report("debris_basket_health"),
+    _report("cleaning_estimates"),
+    _report("voice_volume", native_unit_of_measurement=PERCENTAGE, enabled_default=True),
+    _report("eco_mode", enabled_default=True),
+    _report("water_gover_mode"),
+    _report("bottom_run_mode"),
+    _report("little_water_mode"),
+    _report("multi_bottom_mode"),
+    _report("surface_water_settings"),
+    _report("airbag_status"),
+    _report("airbag_settings"),
+    _report("speed_settings"),
+    _report("motor_thresholds"),
+    _report("base_version"),
+    _report("computing_version"),
+    _report("led_version"),
+    _report("power_version"),
+)
+
 ESTIMATED_CLEANING_TIME_DESCRIPTION = AiperSensorEntityDescription(
     key="estimated_cleaning_time",
     translation_key="estimated_cleaning_time",
@@ -378,7 +480,7 @@ async def async_setup_entry(
 
     def _create_device_entities(sn: str, device_data: DeviceState) -> list[SensorEntity]:
         dev_entities: list[SensorEntity] = []
-        for description in SENSOR_DESCRIPTIONS:
+        for description in (*SENSOR_DESCRIPTIONS, *REPORT_SENSOR_DESCRIPTIONS):
             if description.capability and not state_has_capability(device_data, description.capability):
                 continue
             if not description.include_fn(device_data):
@@ -452,13 +554,21 @@ class AiperSensor(AiperEntity, SensorEntity):
     def native_value(self) -> Any:
         """Return the state of the sensor."""
         state = self.entity_state(self.entity_description.key)
-        return state.value if state is not None else None
+        if state is None:
+            return None
+        if self.entity_description.computed_fn is not None:
+            return self.entity_description.computed_fn(state)[0]
+        return state.value
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional sensor attributes."""
         state = self.entity_state(self.entity_description.key)
-        return dict(state.attributes) if state is not None else {}
+        if state is None:
+            return {}
+        if self.entity_description.computed_fn is not None:
+            return self.entity_description.computed_fn(state)[1]
+        return dict(state.attributes)
 
     @property
     def entity_picture(self) -> str | None:

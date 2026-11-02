@@ -50,6 +50,7 @@ class Capability(StrEnum):
     CATERPILLAR_TREAD = "caterpillar_tread"
     PROPELLER = "propeller"
     ESTIMATED_CLEANING_TIME = "estimated_cleaning_time"
+    REPORT_SECTIONS = "report_sections"
 
 
 SURFER_MODEL_MARKERS = (DeviceFamily.SURFER.value,)
@@ -57,6 +58,7 @@ SHARK_MODEL_MARKERS = (DeviceFamily.SHARK.value,)
 SCUBA_S1_2025_MODEL = "scuba_s1_2025"
 SCUBA_P1_PRO_MODEL = "scuba_p1_pro"
 SCUBA_V3_MODEL = "scuba_v3"
+SCUBA_V3_ULTRA_MODEL = "scuba_v3_ultra"
 
 COMMON_CAPABILITIES = frozenset(
     {
@@ -131,6 +133,25 @@ SCUBA_V3_CAPABILITIES = SCUBA_CAPABILITIES - frozenset(
         Capability.PROPELLER,
     }
 )
+
+# The Scuba V3 Ultra identifies itself as ``Scuba_V3_Ultra`` (main/SOC firmware
+# V1.1.16.4) and is not a ``Scuba_V3`` variant on the wire: its shadow has no
+# ``Machine`` section and reports live state in ``*Report`` sections instead
+# (see ``_machine_from_reports``). It does report a water temperature
+# (``WQSReport.temp``), and its consumables list holds a Roller Brush, a
+# MicroMesh filter and a Propeller (plus Sensor and Filter Box). Charge-type and
+# caterpillar-tread data are absent, so those entities stay off. Its other
+# ``*Report`` sections (schedule, battery telemetry, debris basket, settings)
+# become read-only entities via ``REPORT_SECTIONS`` (see ``report_sections``).
+SCUBA_V3_ULTRA_CAPABILITIES = (
+    SCUBA_CAPABILITIES
+    - frozenset(
+        {
+            Capability.CHARGE_TYPE,
+            Capability.CATERPILLAR_TREAD,
+        }
+    )
+) | frozenset({Capability.REPORT_SECTIONS})
 
 SURFER_CAPABILITIES = (
     COMMON_CAPABILITIES - frozenset({Capability.ROLLER_BRUSH, Capability.CATERPILLAR_TREAD})
@@ -250,9 +271,28 @@ SCUBA_V3_STATUS_SEMANTICS = StatusSemantics(
     running=frozenset({int(Status.CLEANING)}),
 )
 
+# Scuba V3 Ultra (main firmware V1.1.16.4), from ``OpInfoReport.status`` and
+# the REST ``machineStatus``, captured over one cleaning cycle and the charge
+# after it:
+# - status 1 while cleaning (battery falling)
+# - status 7 right after ``FinishTaskReport``, still in the water, with
+#   ``GetWorkModeReport.working`` = 0 (not running)
+# - status 2 on the charger (battery rising), which the shared enum reads as
+#   "Returning" and treats as running
+# Status 3 was not observed; it stays a charging state as in the shared enum.
+SCUBA_V3_ULTRA_STATUS_SEMANTICS = StatusSemantics(
+    labels={
+        int(Status.RETURNING): "Charging",
+        7: "Parked",
+    },
+    charging=frozenset({int(Status.RETURNING), int(Status.CHARGING)}),
+    running=frozenset({int(Status.CLEANING)}),
+)
+
 MODEL_STATUS_SEMANTICS: dict[str, StatusSemantics] = {
     SCUBA_S1_2025_MODEL: SCUBA_S1_2025_STATUS_SEMANTICS,
     SCUBA_V3_MODEL: SCUBA_V3_STATUS_SEMANTICS,
+    SCUBA_V3_ULTRA_MODEL: SCUBA_V3_ULTRA_STATUS_SEMANTICS,
     "scuba_s3": SCUBA_S3_STATUS_SEMANTICS,
 }
 
@@ -359,6 +399,8 @@ def derive_device_profile(device: dict[str, Any]) -> DeviceProfile:
             capabilities = set(SCUBA_P1_PRO_CAPABILITIES)
         elif key == SCUBA_V3_MODEL:
             capabilities = set(SCUBA_V3_CAPABILITIES)
+        elif key == SCUBA_V3_ULTRA_MODEL:
+            capabilities = set(SCUBA_V3_ULTRA_CAPABILITIES)
         else:
             capabilities = set(SCUBA_CAPABILITIES)
     elif family == DeviceFamily.SURFER:
