@@ -202,6 +202,78 @@
       },
       "propeller": {
         "name": "Hélice"
+      },
+      "next_scheduled_clean": {
+        "name": "Prochain nettoyage programmé"
+      },
+      "last_cleaning_result": {
+        "name": "Résultat du dernier nettoyage"
+      },
+      "battery_health": {
+        "name": "État de la batterie"
+      },
+      "battery_temperature": {
+        "name": "Température de la batterie"
+      },
+      "battery_voltage": {
+        "name": "Tension de la batterie"
+      },
+      "battery_current": {
+        "name": "Courant de la batterie"
+      },
+      "battery_power": {
+        "name": "Puissance de la batterie"
+      },
+      "debris_basket_health": {
+        "name": "État du panier à débris"
+      },
+      "cleaning_estimates": {
+        "name": "Estimations du temps de nettoyage"
+      },
+      "voice_volume": {
+        "name": "Volume vocal"
+      },
+      "eco_mode": {
+        "name": "Mode super éco"
+      },
+      "water_gover_mode": {
+        "name": "Mode régulateur d'eau"
+      },
+      "bottom_run_mode": {
+        "name": "Mode de parcours du fond"
+      },
+      "little_water_mode": {
+        "name": "Mode faible niveau d'eau"
+      },
+      "multi_bottom_mode": {
+        "name": "Mode multi-fond"
+      },
+      "surface_water_settings": {
+        "name": "Paramètres de nettoyage de surface"
+      },
+      "airbag_status": {
+        "name": "État du coussin d'air"
+      },
+      "airbag_settings": {
+        "name": "Minutage du coussin d'air"
+      },
+      "speed_settings": {
+        "name": "Paramètres de vitesse"
+      },
+      "motor_thresholds": {
+        "name": "Seuils du moteur"
+      },
+      "base_version": {
+        "name": "Firmware de la carte de base"
+      },
+      "computing_version": {
+        "name": "Firmware de la carte de calcul"
+      },
+      "led_version": {
+        "name": "Firmware de la carte LED"
+      },
+      "power_version": {
+        "name": "Firmware de la carte d'alimentation"
       }
     },
     "binary_sensor": {
@@ -234,6 +306,24 @@
       },
       "running": {
         "name": "En marche"
+      },
+      "debris_basket_blocked": {
+        "name": "Panier à débris bloqué"
+      },
+      "debris_basket_in_place": {
+        "name": "Panier à débris en place"
+      },
+      "camera": {
+        "name": "Caméra"
+      },
+      "schedule_weather": {
+        "name": "Option météo de programmation"
+      },
+      "schedule_adapt": {
+        "name": "Option d'adaptation de programmation"
+      },
+      "schedule_habit": {
+        "name": "Option d'habitude de programmation"
       }
     },
     "button": {

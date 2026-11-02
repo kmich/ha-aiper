@@ -7,7 +7,7 @@ on orchestration and so parser behavior can be tested in isolation.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta, tzinfo
 from typing import Any
 
 from homeassistant.util import dt as dt_util
@@ -25,6 +25,8 @@ __all__ = [
     "_parse_dt",
     "_clean_path_value",
     "_deep_get",
+    "_finished_task_summary",
+    "_machine_from_reports",
     "_number",
     "_parse_cleaning_history",
     "_parse_consumables",
@@ -179,6 +181,76 @@ def _number(value: Any) -> float | None:
         except ValueError:
             return None
     return None
+
+
+def _machine_from_reports(payload: dict[str, Any]) -> dict[str, Any]:
+    """Map ``*Report`` shadow sections onto Machine-style fields.
+
+    The Scuba V3 Ultra (main firmware V1.1.16.4) has no ``Machine`` section in
+    its shadow. Captured sections: ``OpInfoReport`` {status, batQuantity,
+    wifiRssi, wifiName, batVoltage, batCurrent, batTemperature},
+    ``InwaterReport`` {inWater}, ``WQSReport`` {temp} (degrees C) and
+    ``GetAlarmReport`` {code: [...]} (an empty list when nothing is active).
+    """
+    machine: dict[str, Any] = {}
+    op_info = payload.get("OpInfoReport")
+    if isinstance(op_info, dict):
+        if op_info.get("status") is not None:
+            machine["status"] = op_info["status"]
+        if op_info.get("batQuantity") is not None:
+            machine["cap"] = op_info["batQuantity"]
+    in_water = payload.get("InwaterReport")
+    if isinstance(in_water, dict) and in_water.get("inWater") is not None:
+        machine["in_water"] = in_water["inWater"]
+    wqs = payload.get("WQSReport")
+    if isinstance(wqs, dict) and wqs.get("temp") is not None:
+        machine["temp"] = wqs["temp"]
+    alarm = payload.get("GetAlarmReport")
+    if isinstance(alarm, dict) and isinstance(alarm.get("code"), list):
+        machine["warn_codes"] = list(alarm["code"])
+    return machine
+
+
+def _finished_task_summary(
+    finish: dict[str, Any],
+    active_task: dict[str, Any] | None,
+    tz: tzinfo,
+) -> dict[str, Any]:
+    """Return last-cleaning fields from a Scuba V3 Ultra ``FinishTaskReport``.
+
+    ``finish`` is ``{"task": {"nameID": "Custom_...", "taskType": 2, ...,
+    "cleanResult": 4}, "ts": "<epoch ms of the finish>"}``. It carries no start
+    time; that comes from ``GetWorkModeReport.task.startTime`` (device-local
+    "HH:MM:SS") of the same ``nameID``, recorded while the task was running.
+    Only the fields the payloads support are returned.
+    """
+    task = finish.get("task")
+    if not isinstance(task, dict):
+        return {}
+    summary: dict[str, Any] = {}
+    name_id = task.get("nameID")
+    if isinstance(name_id, str) and name_id:
+        # nameID is "<kind>_<id>": Custom_..., automation_<n>_..., Memory_...
+        summary["last_cleaning_mode"] = name_id.split("_", 1)[0].capitalize()
+
+    ts = _number(finish.get("ts"))
+    end = _parse_dt(int(ts)) if ts is not None and ts > 0 else None
+    if end is None or not isinstance(active_task, dict) or active_task.get("nameID") != name_id:
+        return summary
+    start_text = active_task.get("startTime")
+    if not isinstance(start_text, str):
+        return summary
+    try:
+        start_clock = time.fromisoformat(start_text.strip())
+    except ValueError:
+        return summary
+    end_local = end.astimezone(tz)
+    start = datetime.combine(end_local.date(), start_clock, tzinfo=tz)
+    if start > end_local:
+        start -= timedelta(days=1)
+    summary["last_cleaning_start"] = start.astimezone(UTC)
+    summary["last_cleaning_duration"] = round((end - start).total_seconds() / 60.0, 1)
+    return summary
 
 
 def _parse_cleaning_history(raw: Any) -> tuple[int | None, float | None, list[dict[str, Any]]]:

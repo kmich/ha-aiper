@@ -202,6 +202,78 @@
       },
       "propeller": {
         "name": "Пропеллер"
+      },
+      "next_scheduled_clean": {
+        "name": "Следующая запланированная очистка"
+      },
+      "last_cleaning_result": {
+        "name": "Результат последней очистки"
+      },
+      "battery_health": {
+        "name": "Состояние батареи"
+      },
+      "battery_temperature": {
+        "name": "Температура батареи"
+      },
+      "battery_voltage": {
+        "name": "Напряжение батареи"
+      },
+      "battery_current": {
+        "name": "Ток батареи"
+      },
+      "battery_power": {
+        "name": "Мощность батареи"
+      },
+      "debris_basket_health": {
+        "name": "Состояние корзины для мусора"
+      },
+      "cleaning_estimates": {
+        "name": "Расчётное время очистки"
+      },
+      "voice_volume": {
+        "name": "Громкость голоса"
+      },
+      "eco_mode": {
+        "name": "Режим супер-эко"
+      },
+      "water_gover_mode": {
+        "name": "Режим регулятора воды"
+      },
+      "bottom_run_mode": {
+        "name": "Режим движения по дну"
+      },
+      "little_water_mode": {
+        "name": "Режим малого количества воды"
+      },
+      "multi_bottom_mode": {
+        "name": "Режим мультидна"
+      },
+      "surface_water_settings": {
+        "name": "Настройки очистки поверхности"
+      },
+      "airbag_status": {
+        "name": "Статус воздушной подушки"
+      },
+      "airbag_settings": {
+        "name": "Таймер воздушной подушки"
+      },
+      "speed_settings": {
+        "name": "Настройки скорости"
+      },
+      "motor_thresholds": {
+        "name": "Пороги двигателя"
+      },
+      "base_version": {
+        "name": "Прошивка базовой платы"
+      },
+      "computing_version": {
+        "name": "Прошивка вычислительной платы"
+      },
+      "led_version": {
+        "name": "Прошивка платы светодиодов"
+      },
+      "power_version": {
+        "name": "Прошивка платы питания"
       }
     },
     "binary_sensor": {
@@ -234,6 +306,24 @@
       },
       "running": {
         "name": "Работает"
+      },
+      "debris_basket_blocked": {
+        "name": "Корзина для мусора заблокирована"
+      },
+      "debris_basket_in_place": {
+        "name": "Корзина для мусора установлена"
+      },
+      "camera": {
+        "name": "Камера"
+      },
+      "schedule_weather": {
+        "name": "Опция расписания по погоде"
+      },
+      "schedule_adapt": {
+        "name": "Опция адаптивного расписания"
+      },
+      "schedule_habit": {
+        "name": "Опция расписания по привычке"
       }
     },
     "button": {

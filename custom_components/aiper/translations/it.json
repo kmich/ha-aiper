@@ -202,6 +202,78 @@
       },
       "propeller": {
         "name": "Elica"
+      },
+      "next_scheduled_clean": {
+        "name": "Prossima pulizia programmata"
+      },
+      "last_cleaning_result": {
+        "name": "Risultato dell'ultima pulizia"
+      },
+      "battery_health": {
+        "name": "Stato della batteria"
+      },
+      "battery_temperature": {
+        "name": "Temperatura della batteria"
+      },
+      "battery_voltage": {
+        "name": "Tensione della batteria"
+      },
+      "battery_current": {
+        "name": "Corrente della batteria"
+      },
+      "battery_power": {
+        "name": "Potenza della batteria"
+      },
+      "debris_basket_health": {
+        "name": "Stato del cestello detriti"
+      },
+      "cleaning_estimates": {
+        "name": "Stime del tempo di pulizia"
+      },
+      "voice_volume": {
+        "name": "Volume vocale"
+      },
+      "eco_mode": {
+        "name": "Modalità super eco"
+      },
+      "water_gover_mode": {
+        "name": "Modalità regolatore acqua"
+      },
+      "bottom_run_mode": {
+        "name": "Modalità percorso sul fondo"
+      },
+      "little_water_mode": {
+        "name": "Modalità poca acqua"
+      },
+      "multi_bottom_mode": {
+        "name": "Modalità multi-fondo"
+      },
+      "surface_water_settings": {
+        "name": "Impostazioni pulizia superficie"
+      },
+      "airbag_status": {
+        "name": "Stato airbag"
+      },
+      "airbag_settings": {
+        "name": "Tempistica airbag"
+      },
+      "speed_settings": {
+        "name": "Impostazioni velocità"
+      },
+      "motor_thresholds": {
+        "name": "Soglie motore"
+      },
+      "base_version": {
+        "name": "Firmware scheda base"
+      },
+      "computing_version": {
+        "name": "Firmware scheda di calcolo"
+      },
+      "led_version": {
+        "name": "Firmware scheda LED"
+      },
+      "power_version": {
+        "name": "Firmware scheda di alimentazione"
       }
     },
     "binary_sensor": {
@@ -234,6 +306,24 @@
       },
       "running": {
         "name": "In funzione"
+      },
+      "debris_basket_blocked": {
+        "name": "Cestello detriti bloccato"
+      },
+      "debris_basket_in_place": {
+        "name": "Cestello detriti inserito"
+      },
+      "camera": {
+        "name": "Telecamera"
+      },
+      "schedule_weather": {
+        "name": "Opzione meteo programmazione"
+      },
+      "schedule_adapt": {
+        "name": "Opzione adattiva programmazione"
+      },
+      "schedule_habit": {
+        "name": "Opzione abitudine programmazione"
       }
     },
     "button": {

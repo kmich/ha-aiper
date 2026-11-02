@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+- Support for the Scuba V3 Ultra (`Scuba_V3_Ultra`), whose firmware reports
+  live state and settings through `*Report` shadow sections instead of a
+  `Machine` section. Fixes status/battery/in-water/water-temperature staying
+  stuck or unavailable, and adds read-only entities (next scheduled clean,
+  battery health/voltage/current/power, debris basket status, last cleaning
+  result, per-board OTA firmware, and other device settings as diagnostics)
+  (#56).
+
 ## [1.8.1] - 2026-10-03
 
 ### Added

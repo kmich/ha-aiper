@@ -202,6 +202,78 @@
       },
       "propeller": {
         "name": "Propeller"
+      },
+      "next_scheduled_clean": {
+        "name": "Volgende geplande schoonmaak"
+      },
+      "last_cleaning_result": {
+        "name": "Laatste schoonmaakresultaat"
+      },
+      "battery_health": {
+        "name": "Batterijstatus"
+      },
+      "battery_temperature": {
+        "name": "Batterijtemperatuur"
+      },
+      "battery_voltage": {
+        "name": "Batterijspanning"
+      },
+      "battery_current": {
+        "name": "Batterijstroom"
+      },
+      "battery_power": {
+        "name": "Batterijvermogen"
+      },
+      "debris_basket_health": {
+        "name": "Status vuilbak"
+      },
+      "cleaning_estimates": {
+        "name": "Geschatte schoonmaaktijden"
+      },
+      "voice_volume": {
+        "name": "Spraakvolume"
+      },
+      "eco_mode": {
+        "name": "Super-ecomodus"
+      },
+      "water_gover_mode": {
+        "name": "Waterregelaarmodus"
+      },
+      "bottom_run_mode": {
+        "name": "Bodemlooproute-modus"
+      },
+      "little_water_mode": {
+        "name": "Weinig-water-modus"
+      },
+      "multi_bottom_mode": {
+        "name": "Multi-bodemmodus"
+      },
+      "surface_water_settings": {
+        "name": "Instellingen oppervlaktereiniging"
+      },
+      "airbag_status": {
+        "name": "Luchtkussenstatus"
+      },
+      "airbag_settings": {
+        "name": "Luchtkussentiming"
+      },
+      "speed_settings": {
+        "name": "Snelheidsinstellingen"
+      },
+      "motor_thresholds": {
+        "name": "Motordrempels"
+      },
+      "base_version": {
+        "name": "Firmware basisprint"
+      },
+      "computing_version": {
+        "name": "Firmware rekenprint"
+      },
+      "led_version": {
+        "name": "Firmware LED-print"
+      },
+      "power_version": {
+        "name": "Firmware voedingsprint"
       }
     },
     "binary_sensor": {
@@ -234,6 +306,24 @@
       },
       "running": {
         "name": "Actief"
+      },
+      "debris_basket_blocked": {
+        "name": "Vuilbak geblokkeerd"
+      },
+      "debris_basket_in_place": {
+        "name": "Vuilbak geplaatst"
+      },
+      "camera": {
+        "name": "Camera"
+      },
+      "schedule_weather": {
+        "name": "Planning weeroptie"
+      },
+      "schedule_adapt": {
+        "name": "Planning aanpassingsoptie"
+      },
+      "schedule_habit": {
+        "name": "Planning gewoonteoptie"
       }
     },
     "button": {

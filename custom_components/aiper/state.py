@@ -11,6 +11,7 @@ from .const import CLEAN_PATH_MAP, Status, mode_label, status_label, status_runn
 from .device_images import device_model_image_url
 from .profiles import (
     SCUBA_S1_2025_MODEL,
+    SCUBA_V3_ULTRA_MODEL,
     Capability,
     DeviceFamily,
     derive_device_profile,
@@ -397,10 +398,12 @@ def normalize_machine_update(
             current_running = _cleaner_running(rest, raw_status)
         updates["runtime"] = EntityState(_current_runtime_to_hours(rest, mqtt.get("run_time"), current_running))
     charging = raw_status is not None and _cleaner_charging(rest, status_value(raw_status))
-    if model_key(rest) == SCUBA_S1_2025_MODEL and charging:
+    if model_key(rest) in (SCUBA_S1_2025_MODEL, SCUBA_V3_ULTRA_MODEL) and charging:
         # Physically validated S1 charging reports can omit in_water or repeat
         # the stale submerged value from the completed run. Charging is stronger
         # evidence that the cleaner is dry, so it wins over either payload form.
+        # The Scuba V3 Ultra does the same: its last ``InwaterReport`` (inWater
+        # 1, sent as the run finished) stays in the shadow while it charges.
         updates["in_water"] = EntityState(False)
     elif mqtt.get("in_water") is not None:
         updates["in_water"] = EntityState(bool(mqtt.get("in_water")))
@@ -451,10 +454,13 @@ def normalize_opinfo_update(opinfo: dict[str, Any], current: DeviceState | None 
     online = _online_value(current)
     if online is False:
         return updates
-    if opinfo.get("wifi_name") or opinfo.get("wifi_rssi") is not None:
+    # Scuba V3 Ultra ``OpInfoReport`` uses camelCase (wifiName/wifiRssi).
+    wifi_name = opinfo.get("wifi_name") or opinfo.get("wifiName")
+    wifi_rssi = opinfo.get("wifi_rssi") if opinfo.get("wifi_rssi") is not None else opinfo.get("wifiRssi")
+    if wifi_name or wifi_rssi is not None:
         updates["wifi"] = EntityState(True)
-    if opinfo.get("wifi_rssi") is not None:
-        updates["wifi_signal"] = EntityState(opinfo.get("wifi_rssi"))
+    if wifi_rssi is not None:
+        updates["wifi_signal"] = EntityState(wifi_rssi)
     return updates
 
 

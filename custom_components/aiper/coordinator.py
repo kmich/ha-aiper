@@ -25,6 +25,8 @@ from .const import (
 from .coordinator_parsing import (
     _clean_path_value,
     _ensure_utc_aware,
+    _finished_task_summary,
+    _machine_from_reports,
     _merge_discovery_metadata,
     _parse_cleaning_history,
     _parse_consumables,
@@ -33,10 +35,12 @@ from .coordinator_parsing import (
 from .profiles import SCUBA_S1_2025_MODEL, Capability, derive_device_profile, has_capability, model_key
 from .redaction import redact_serial, redact_topic
 from .repairs import async_update_unknown_model_issues
+from .report_sections import report_entity_states
 from .s1_reconciliation import S1StateReconciler
 from .state import (
     DevicesState,
     DeviceState,
+    EntityState,
     RawDeviceData,
     merge_device_state,
     normalize_clean_path_update,
@@ -139,6 +143,9 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             else None
         )
         self._selected_mode_cache: dict[str, int] = {}
+        # Last running GetWorkModeReport task per device (Scuba V3 Ultra); its
+        # startTime dates the matching FinishTaskReport.
+        self._active_tasks: dict[str, dict[str, Any]] = {}
         # Scuba S1 lifecycle heuristics and their diagnostics state.
         self._s1 = S1StateReconciler()
         # Per-device, per-field record of which source (mqtt/rest) last supplied
@@ -731,6 +738,10 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 if parsed:
                     machine.update({key: value for key, value in parsed.items() if key != "records"})
 
+        report_machine = _machine_from_reports(payload)
+        if report_machine:
+            machine = {**report_machine, **machine}
+
         if machine:
             if model_key(raw_device) == SCUBA_S1_2025_MODEL:
                 machine = self._s1.apply_mqtt_machine(
@@ -758,7 +769,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         if curr_mqtt_online is not None:
             self._last_online[sn] = curr_mqtt_online
 
-        for key in ("OpInfo", "OtaStatus", "CycleWork", "GetWorkMode", "RubbishBoxStatus"):
+        for key in ("OpInfo", "OpInfoReport", "OtaStatus", "CycleWork", "GetWorkMode", "RubbishBoxStatus"):
             component = None
             if key in payload and isinstance(payload.get(key), dict):
                 component = payload.get(key) or {}
@@ -767,7 +778,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             if not isinstance(component, dict):
                 continue
             lower_key = key.lower()
-            if lower_key == "opinfo":
+            if lower_key in ("opinfo", "opinforeport"):
                 interim_state = merge_device_state(current_state, updates) if updates else current_state
                 updates = merge_device_state(updates, normalize_opinfo_update(component, interim_state))
             elif lower_key == "otastatus":
@@ -799,6 +810,21 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 updates = merge_device_state(updates, normalize_w2_sensor_status_update(component, interim_state))
             elif key == "W2AlarmMessage":
                 updates = merge_device_state(updates, normalize_w2_alarm_update(component))
+
+        work_mode = payload.get("GetWorkModeReport")
+        if (
+            isinstance(work_mode, dict)
+            and isinstance(work_mode.get("task"), dict)
+            and _coerce_bool(work_mode.get("working"))
+        ):
+            self._active_tasks[sn] = dict(work_mode["task"])
+        finish = payload.get("FinishTaskReport")
+        if isinstance(finish, dict):
+            summary = _finished_task_summary(finish, self._active_tasks.get(sn), dt_util.get_default_time_zone())
+            for key, value in summary.items():
+                updates[key] = EntityState(value)
+        if has_capability(raw_device, Capability.REPORT_SECTIONS):
+            updates.update(report_entity_states(payload, dt_util.now(), dt_util.get_default_time_zone()))
 
         # Update last-seen time on any MQTT activity.
         if sn in self._devices:

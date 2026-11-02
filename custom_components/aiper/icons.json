@@ -21,6 +21,21 @@
       },
       "linked": {
         "default": "mdi:link"
+      },
+      "debris_basket_in_place": {
+        "default": "mdi:basket-check"
+      },
+      "camera": {
+        "default": "mdi:camera"
+      },
+      "schedule_weather": {
+        "default": "mdi:weather-partly-cloudy"
+      },
+      "schedule_adapt": {
+        "default": "mdi:auto-fix"
+      },
+      "schedule_habit": {
+        "default": "mdi:calendar-sync"
       }
     },
     "button": {
@@ -149,6 +164,63 @@
       },
       "estimated_cleaning_time": {
         "default": "mdi:timer-sand"
+      },
+      "last_cleaning_result": {
+        "default": "mdi:check-circle-outline"
+      },
+      "battery_health": {
+        "default": "mdi:battery-heart-variant"
+      },
+      "debris_basket_health": {
+        "default": "mdi:basket"
+      },
+      "cleaning_estimates": {
+        "default": "mdi:timer-sand"
+      },
+      "voice_volume": {
+        "default": "mdi:volume-high"
+      },
+      "eco_mode": {
+        "default": "mdi:leaf"
+      },
+      "water_gover_mode": {
+        "default": "mdi:water-sync"
+      },
+      "bottom_run_mode": {
+        "default": "mdi:map-marker-path"
+      },
+      "little_water_mode": {
+        "default": "mdi:water-minus"
+      },
+      "multi_bottom_mode": {
+        "default": "mdi:layers-outline"
+      },
+      "surface_water_settings": {
+        "default": "mdi:waves"
+      },
+      "airbag_status": {
+        "default": "mdi:balloon"
+      },
+      "airbag_settings": {
+        "default": "mdi:balloon"
+      },
+      "speed_settings": {
+        "default": "mdi:speedometer"
+      },
+      "motor_thresholds": {
+        "default": "mdi:engine"
+      },
+      "base_version": {
+        "default": "mdi:chip"
+      },
+      "computing_version": {
+        "default": "mdi:chip"
+      },
+      "led_version": {
+        "default": "mdi:chip"
+      },
+      "power_version": {
+        "default": "mdi:chip"
       }
     }
   }

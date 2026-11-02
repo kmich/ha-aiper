@@ -202,6 +202,78 @@
       },
       "propeller": {
         "name": "螺旋桨"
+      },
+      "next_scheduled_clean": {
+        "name": "下次预定清洁"
+      },
+      "last_cleaning_result": {
+        "name": "上次清洁结果"
+      },
+      "battery_health": {
+        "name": "电池健康度"
+      },
+      "battery_temperature": {
+        "name": "电池温度"
+      },
+      "battery_voltage": {
+        "name": "电池电压"
+      },
+      "battery_current": {
+        "name": "电池电流"
+      },
+      "battery_power": {
+        "name": "电池功率"
+      },
+      "debris_basket_health": {
+        "name": "垃圾篮状态"
+      },
+      "cleaning_estimates": {
+        "name": "预计清洁时间"
+      },
+      "voice_volume": {
+        "name": "语音音量"
+      },
+      "eco_mode": {
+        "name": "超级节能模式"
+      },
+      "water_gover_mode": {
+        "name": "水流调节模式"
+      },
+      "bottom_run_mode": {
+        "name": "底部运行模式"
+      },
+      "little_water_mode": {
+        "name": "少水模式"
+      },
+      "multi_bottom_mode": {
+        "name": "多底模式"
+      },
+      "surface_water_settings": {
+        "name": "表面清洁设置"
+      },
+      "airbag_status": {
+        "name": "气囊状态"
+      },
+      "airbag_settings": {
+        "name": "气囊计时"
+      },
+      "speed_settings": {
+        "name": "速度设置"
+      },
+      "motor_thresholds": {
+        "name": "电机阈值"
+      },
+      "base_version": {
+        "name": "主板固件"
+      },
+      "computing_version": {
+        "name": "计算板固件"
+      },
+      "led_version": {
+        "name": "LED板固件"
+      },
+      "power_version": {
+        "name": "电源板固件"
       }
     },
     "binary_sensor": {
@@ -234,6 +306,24 @@
       },
       "running": {
         "name": "运行中"
+      },
+      "debris_basket_blocked": {
+        "name": "垃圾篮堵塞"
+      },
+      "debris_basket_in_place": {
+        "name": "垃圾篮已安装"
+      },
+      "camera": {
+        "name": "摄像头"
+      },
+      "schedule_weather": {
+        "name": "日程天气选项"
+      },
+      "schedule_adapt": {
+        "name": "日程自适应选项"
+      },
+      "schedule_habit": {
+        "name": "日程习惯选项"
       }
     },
     "button": {

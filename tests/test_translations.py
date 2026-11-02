@@ -57,8 +57,18 @@ def test_entity_translation_keys_exist() -> None:
     strings = json.loads((INTEGRATION_DIR / "strings.json").read_text(encoding="utf-8"))
     entity = strings["entity"]
     for platform, descriptions in (
-        ("sensor", (*sensor.SENSOR_DESCRIPTIONS, sensor.ESTIMATED_CLEANING_TIME_DESCRIPTION)),
-        ("binary_sensor", binary_sensor.BINARY_SENSOR_DESCRIPTIONS),
+        (
+            "sensor",
+            (
+                *sensor.SENSOR_DESCRIPTIONS,
+                *sensor.REPORT_SENSOR_DESCRIPTIONS,
+                sensor.ESTIMATED_CLEANING_TIME_DESCRIPTION,
+            ),
+        ),
+        (
+            "binary_sensor",
+            (*binary_sensor.BINARY_SENSOR_DESCRIPTIONS, *binary_sensor.REPORT_BINARY_SENSOR_DESCRIPTIONS),
+        ),
         ("button", button.BUTTON_DESCRIPTIONS),
     ):
         for description in descriptions:

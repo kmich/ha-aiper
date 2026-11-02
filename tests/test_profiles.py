@@ -153,6 +153,24 @@ def test_scuba_v3_ignores_stray_temp_evidence() -> None:
     assert Capability.WATER_TEMPERATURE not in profile.capabilities
 
 
+def test_scuba_v3_ultra_has_its_own_profile() -> None:
+    """``Scuba_V3_Ultra`` must not fall back to the generic Scuba profile.
+
+    It reports water temperature (WQSReport) and Roller Brush / MicroMesh /
+    Propeller consumables, but no charge type or caterpillar tread.
+    """
+    profile = derive_device_profile({"deviceModel": "Scuba_V3_Ultra"})
+
+    assert profile.family is DeviceFamily.SCUBA
+    assert Capability.WATER_TEMPERATURE in profile.capabilities
+    assert Capability.IN_WATER in profile.capabilities
+    assert Capability.MICROMESH_FILTER in profile.capabilities
+    assert Capability.ROLLER_BRUSH in profile.capabilities
+    assert Capability.PROPELLER in profile.capabilities
+    assert Capability.CHARGE_TYPE not in profile.capabilities
+    assert Capability.CATERPILLAR_TREAD not in profile.capabilities
+
+
 def test_scuba_s1_recognized_via_device_model_fallback() -> None:
     """A device known only by `deviceModel` (before the first successful
     get_device_info() call populates `model`) must still resolve to the
