@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-11-02
+
 ### Added
 - Support for the Scuba V3 Ultra (`Scuba_V3_Ultra`), whose firmware reports
   live state and settings through `*Report` shadow sections instead of a
