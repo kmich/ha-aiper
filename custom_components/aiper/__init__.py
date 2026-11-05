@@ -20,7 +20,7 @@ from homeassistant.helpers.event import async_track_time_interval
 
 from .api import AWS_CREDENTIALS_TTL_DEBUG_SECONDS, AiperAuthenticationError
 from .api import AiperApi as AiperApi
-from .config_flow import normalize_username
+from .config_flow import OPTIONS_FLOW_RELOADS, normalize_username
 from .const import (
     CONF_METADATA_REFRESH_HOURS,
     CONF_MQTT_DEBUG,
@@ -418,7 +418,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> boo
         coordinator=coordinator,
     )
 
-    entry.async_on_unload(entry.add_update_listener(_options_update_listener))
+    if not OPTIONS_FLOW_RELOADS:
+        # Older Home Assistant has no OptionsFlowWithReload. Newer versions
+        # reload from the options flow, and an update listener on top of that
+        # makes reauth and reconfigure log a deprecation (error from 2026.12).
+        entry.async_on_unload(entry.add_update_listener(_options_update_listener))
 
     # Register platforms before MQTT is even attempted. A slow or unreachable
     # broker must not delay entity availability: REST polling already

@@ -51,7 +51,11 @@ Reports welcome.
 
 Requires Home Assistant **2024.12** or newer.
 
-### HACS (Recommended)
+### Home Assistant Marketplace (2026.11 and newer)
+
+HACS is built into Home Assistant 2026.11 as the Marketplace. Open **Settings → Marketplace**, choose **Add from link**, enter `https://github.com/kmich/ha-aiper`, install **Aiper Pool Cleaner** and restart Home Assistant. The repository uses the same `hacs.json`, so an existing HACS install carries over.
+
+### HACS (Home Assistant 2026.10 and older)
 
 1. In HACS, open **Integrations**.
 2. Open the three-dot menu and choose **Custom repositories**.
@@ -183,8 +187,8 @@ Lovelace cards built for this integration:
 - **Aiper Water Quality Card** – water-quality score, pH / ORP / chlorine / TDS /
   EC gauges, temperature and sample age.
 
-Install it via HACS as a **Dashboard** custom repository
-(`https://github.com/kmich/ha-aiper-card`). Point a card at your Aiper device and
+Install it from the Marketplace (Home Assistant 2026.11 and newer) or via HACS as a
+**Dashboard** custom repository (`https://github.com/kmich/ha-aiper-card`). Point a card at your Aiper device and
 it wires up the entities itself.
 
 ### Plain YAML examples

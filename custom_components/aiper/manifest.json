@@ -1,6 +1,7 @@
 {
   "domain": "aiper",
   "name": "Aiper Pool Cleaner",
+  "categories": ["water.pools_spas"],
   "codeowners": [
     "@kmich"
   ],

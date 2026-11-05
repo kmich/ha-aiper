@@ -17,6 +17,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components import aiper
 from custom_components.aiper import AiperRuntimeData
 from custom_components.aiper.api import AiperApi
+from custom_components.aiper.config_flow import OPTIONS_FLOW_RELOADS
 from custom_components.aiper.const import DOMAIN
 from custom_components.aiper.controller import AiperDeviceController
 from custom_components.aiper.coordinator import AiperDataUpdateCoordinator
@@ -417,6 +418,9 @@ async def test_setup_with_mqtt_debug_and_s1_capability_refresh(
     assert api.mqtt_debug is True
     assert api.aws_credentials_ttl == AWS_CREDENTIALS_TTL_DEBUG_SECONDS
     assert refreshes == [None]
+    # With OptionsFlowWithReload the options flow reloads the entry, and a
+    # leftover update listener would make reauth/reconfigure fail from 2026.12.
+    assert bool(entry.update_listeners) is (not OPTIONS_FLOW_RELOADS)
 
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=6))
     await hass.async_block_till_done()
@@ -440,3 +444,16 @@ async def test_options_update_reloads_entry(hass: HomeAssistant, monkeypatch: py
     await aiper._options_update_listener(hass, cast(ConfigEntry, entry))
 
     assert reloaded == ["entry-opts"]
+
+
+def test_options_flow_reloads_the_entry_on_current_home_assistant() -> None:
+    """The options flow handles its own reload where Home Assistant supports it."""
+    from homeassistant.config_entries import OptionsFlow
+
+    from custom_components.aiper.config_flow import OptionsFlowHandler
+
+    assert issubclass(OptionsFlowHandler, OptionsFlow)
+    if OPTIONS_FLOW_RELOADS:
+        from homeassistant.config_entries import OptionsFlowWithReload
+
+        assert issubclass(OptionsFlowHandler, OptionsFlowWithReload)

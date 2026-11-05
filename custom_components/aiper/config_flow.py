@@ -27,6 +27,17 @@ from .const import (
     DOMAIN,
 )
 
+try:
+    from homeassistant.config_entries import OptionsFlowWithReload
+
+    # Home Assistant 2025.8 and newer reloads the entry when the options flow
+    # saves changes, so no update listener is needed.
+    OPTIONS_FLOW_RELOADS = True
+except ImportError:  # pragma: no cover - exercised only on older Home Assistant
+    OptionsFlowWithReload = config_entries.OptionsFlow  # type: ignore[misc,assignment]
+    OPTIONS_FLOW_RELOADS = False
+
+
 _LOGGER = logging.getLogger(__name__)
 
 CONF_REGION = "region"
@@ -204,7 +215,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return OptionsFlowHandler()
 
 
-class OptionsFlowHandler(config_entries.OptionsFlow):
+class OptionsFlowHandler(OptionsFlowWithReload):
     """Handle options for the integration."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> config_entries.ConfigFlowResult:

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+- The options flow now reloads the entry itself (`OptionsFlowWithReload`) on Home Assistant 2025.8 and newer, and the separate update listener is only registered on older versions. With both in place, reauth and reconfigure log a deprecation on 2026.11 and fail from 2026.12.
+- Manifest declares the integration category (`water.pools_spas`) used by the Home Assistant Marketplace in 2026.11.
+- README describes installing from the Marketplace on Home Assistant 2026.11 and newer.
+
 ## [1.9.0] - 2026-11-02
 
 ### Added
