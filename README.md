@@ -53,7 +53,7 @@ Requires Home Assistant **2024.12** or newer.
 
 ### Home Assistant Marketplace (2026.11 and newer)
 
-HACS is built into Home Assistant 2026.11 as the Marketplace. Open **Settings → Marketplace**, choose **Add from link**, enter `https://github.com/kmich/ha-aiper`, install **Aiper Pool Cleaner** and restart Home Assistant. The repository uses the same `hacs.json`, so an existing HACS install carries over.
+HACS is built into Home Assistant 2026.11 as the Marketplace. Open **Settings → Marketplace**, choose **Add from link**, enter `https://github.com/kmich/ha-aiper`, and install **Aiper Pool Cleaner**. For a fresh installation, the account setup opens automatically; follow the Configuration instructions below if you need to open it manually. Restart Home Assistant when the Marketplace requests it, such as after an update. The repository uses the same `hacs.json`, so an existing HACS install carries over.
 
 ### HACS (Home Assistant 2026.10 and older)
 
