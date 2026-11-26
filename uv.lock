@@ -919,7 +919,7 @@ wheels = [
 
 [[package]]
 name = "ha-aiper"
-version = "1.9.1"
+version = "2.0.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]

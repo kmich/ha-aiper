@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-26
+
 ### Added
 
 - Reconciled cleaning history across MQTT and REST, with a **Cleaning finished**
@@ -12,7 +14,7 @@
   the history timestamps and durations, run count, and saved schedule.
 - Built-in Home Assistant dashboards for cleaners, water monitors, and mixed
   accounts. They display the age of the cleaner's last device report and the
-  monitor's own sample. [Dashboard guide](lovelace/README.md)
+  monitor's own sample. [Dashboard guide](https://github.com/kmich/ha-aiper/blob/v2.0.0/lovelace/README.md)
 - Firmware-specific model evidence and an onboarding probe that captures
   cleaning history and MQTT reports with device identifiers redacted.
 
