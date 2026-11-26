@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -37,6 +38,26 @@ from .redaction import redact_topic
 _LOGGER = logging.getLogger(__name__)
 
 MessageCallback = Callable[[str, bytes], None]
+
+_URL_RE = re.compile(r"(?:wss?|https?)://\S+", re.IGNORECASE)
+_AMZ_QUERY_PARAM_RE = re.compile(r"X-Amz-[A-Za-z0-9_-]+=\S+", re.IGNORECASE)
+
+
+def _sanitize_error_detail(text: str) -> str:
+    """Scrub URLs and signed AWS query parameters from exception text."""
+    sanitized = _URL_RE.sub("<redacted-url>", text)
+    return _AMZ_QUERY_PARAM_RE.sub("X-Amz-***", sanitized)
+
+
+def format_transport_error(phase: str, err: BaseException) -> str:
+    """Return a diagnostic-safe transport error summary without URLs or credentials."""
+    err_name = type(err).__name__
+    if isinstance(err, aiohttp.ClientResponseError):
+        return f"{phase}: {err_name} (HTTP {err.status})"
+    if isinstance(err, aiohttp.ClientError):
+        return f"{phase}: {err_name}"
+    detail = _sanitize_error_detail(str(err)).strip()
+    return f"{phase}: {err_name}: {detail}" if detail else f"{phase}: {err_name}"
 
 
 class AwsIotMqttTransport:
@@ -104,12 +125,12 @@ class AwsIotMqttTransport:
             try:
                 creds = await self._async_credentials_resolver()
             except Exception as err:
-                _LOGGER.debug("Async MQTT credential resolver failed: %s", err)
+                _LOGGER.debug("Async MQTT credential resolver failed: %s", format_transport_error("credentials", err))
         elif self._credentials_resolver is not None:
             try:
                 creds = self._credentials_resolver()
             except Exception as err:
-                _LOGGER.debug("Sync MQTT credential resolver failed: %s", err)
+                _LOGGER.debug("Sync MQTT credential resolver failed: %s", format_transport_error("credentials", err))
 
         if creds is not None:
             self.credentials = creds
@@ -165,7 +186,13 @@ class AwsIotMqttTransport:
                 ):
                     raise ConnectionError("WebSocket closed before MQTT CONNACK")
                 elif msg.type == aiohttp.WSMsgType.ERROR:
-                    raise ConnectionError(f"WebSocket error before MQTT CONNACK: {ws.exception()}")
+                    ws_err = ws.exception()
+                    detail = (
+                        format_transport_error("handshake", ws_err)
+                        if isinstance(ws_err, BaseException)
+                        else "handshake: WebSocket error"
+                    )
+                    raise ConnectionError(f"WebSocket error before MQTT CONNACK ({detail})")
         except BaseException:
             with suppress(Exception):
                 await ws.close()
@@ -192,8 +219,9 @@ class AwsIotMqttTransport:
         except Exception as err:
             self._ws = None
             self._connected = False
-            self.last_error = f"{type(err).__name__}: {err}"
-            _LOGGER.error("AWS IoT MQTT connection failed: %s", err)
+            safe_err = format_transport_error("connect", err)
+            self.last_error = safe_err
+            _LOGGER.error("AWS IoT MQTT connection failed: %s", safe_err)
             return False
 
     async def _send_bytes(self, data: bytes) -> None:
@@ -264,7 +292,12 @@ class AwsIotMqttTransport:
                     self.last_error = f"WebSocket closed (code={msg.data})"
                 break
             elif msg.type == aiohttp.WSMsgType.ERROR:
-                self.last_error = str(ws.exception() or "WebSocket error")
+                ws_err = ws.exception()
+                self.last_error = (
+                    format_transport_error("read", ws_err)
+                    if isinstance(ws_err, BaseException)
+                    else "read: WebSocket error"
+                )
                 break
 
     async def _keepalive_loop(self, ws: aiohttp.ClientWebSocketResponse) -> None:
@@ -280,7 +313,7 @@ class AwsIotMqttTransport:
             raise
         except Exception as err:
             if not self._closing and self._ws is ws:
-                self.last_error = f"{type(err).__name__}: {err}"
+                self.last_error = format_transport_error("keepalive", err)
                 with suppress(Exception):
                     await ws.close()
 
@@ -299,7 +332,7 @@ class AwsIotMqttTransport:
                 except asyncio.CancelledError:
                     raise
                 except Exception as err:
-                    self.last_error = f"{type(err).__name__}: {err}"
+                    self.last_error = format_transport_error("read", err)
                 finally:
                     keepalive.cancel()
                     with suppress(asyncio.CancelledError, Exception):
@@ -327,8 +360,9 @@ class AwsIotMqttTransport:
                 except asyncio.CancelledError:
                     raise
                 except Exception as err:
-                    self.last_error = f"{type(err).__name__}: {err}"
-                    _LOGGER.warning("AWS IoT MQTT reconnect failed: %s", self.last_error)
+                    safe_err = format_transport_error("reconnect", err)
+                    self.last_error = safe_err
+                    _LOGGER.warning("AWS IoT MQTT reconnect failed: %s", safe_err)
                     delay = min(delay * 2.0, max(delay, self.reconnect_max_timeout_secs))
                     continue
 
@@ -364,8 +398,9 @@ class AwsIotMqttTransport:
                 await asyncio.wait_for(ws.send_bytes(encode_disconnect()), timeout=self.operation_timeout)
                 await asyncio.wait_for(ws.close(), timeout=self.operation_timeout)
             except Exception as err:
-                self.last_error = f"{type(err).__name__}: {err}"
-                _LOGGER.debug("AWS IoT MQTT disconnect failed: %s", err)
+                safe_err = format_transport_error("disconnect", err)
+                self.last_error = safe_err
+                _LOGGER.debug("AWS IoT MQTT disconnect failed: %s", safe_err)
 
         lifecycle = self._lifecycle_task
         self._lifecycle_task = None
@@ -400,8 +435,9 @@ class AwsIotMqttTransport:
             return True
         except Exception as err:
             self._pending_subacks.pop(packet_id, None)
-            self.last_error = f"{type(err).__name__}: {err}"
-            _LOGGER.error("AWS IoT MQTT subscribe failed for %s: %s", redact_topic(topic), err)
+            safe_err = format_transport_error("subscribe", err)
+            self.last_error = safe_err
+            _LOGGER.error("AWS IoT MQTT subscribe failed for %s: %s", redact_topic(topic), safe_err)
             return False
 
     async def async_publish(self, topic: str, payload: str | bytes, qos: int = 1) -> bool:
@@ -426,6 +462,7 @@ class AwsIotMqttTransport:
         except Exception as err:
             if packet_id is not None:
                 self._pending_pubacks.pop(packet_id, None)
-            self.last_error = f"{type(err).__name__}: {err}"
-            _LOGGER.error("AWS IoT MQTT publish failed for %s: %s", redact_topic(topic), err)
+            safe_err = format_transport_error("publish", err)
+            self.last_error = safe_err
+            _LOGGER.error("AWS IoT MQTT publish failed for %s: %s", redact_topic(topic), safe_err)
             return False

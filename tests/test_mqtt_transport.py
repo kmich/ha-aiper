@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from typing import Any, cast
 
 import aiohttp
 import pytest
+from aiohttp import web
 
-from custom_components.aiper.mqtt import AwsIotCredentials, AwsIotMqttTransport
+from custom_components.aiper.mqtt import (
+    AwsIotCredentials,
+    AwsIotMqttTransport,
+    format_transport_error,
+)
 from custom_components.aiper.mqtt_codec import (
     PACKET_CONNACK,
     PACKET_CONNECT,
@@ -377,3 +383,161 @@ async def test_ws_error_and_disconnect_fails_pending_and_handles_close_error() -
     transport._ws = cast(Any, ws2_bad)
     await transport.async_disconnect()
     assert "RuntimeError" in (transport.last_error or "")
+
+
+def test_format_transport_error_scrubs_urls_and_preserves_context() -> None:
+    """Error formatting keeps phase, type and HTTP status while dropping URLs."""
+    handshake_err = aiohttp.WSServerHandshakeError(
+        cast(Any, SimpleRequestInfo("wss://host.example/mqtt?X-Amz-Signature=deadbeef")),
+        (),
+        status=403,
+        message="Forbidden",
+    )
+    assert format_transport_error("connect", handshake_err) == "connect: WSServerHandshakeError (HTTP 403)"
+    assert format_transport_error("connect", aiohttp.ClientError("bad url")) == "connect: ClientError"
+    scrubbed = format_transport_error(
+        "read",
+        ConnectionError("failed at wss://host.example/mqtt?X-Amz-Signature=deadbeef"),
+    )
+    assert scrubbed == "read: ConnectionError: failed at <redacted-url>"
+    assert "deadbeef" not in scrubbed
+    assert format_transport_error("publish", TimeoutError()) == "publish: TimeoutError"
+
+
+class SimpleRequestInfo:
+    """Minimal request_info double for WSServerHandshakeError tests."""
+
+    def __init__(self, real_url: str) -> None:
+        self.real_url = real_url
+
+
+class _LoopbackMqttTransport(AwsIotMqttTransport):
+    """Test transport that signs the real AWS URL and targets a loopback peer."""
+
+    def __init__(self, *, port: int, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._port = port
+
+    def _signed_websocket_url(self, credentials: AwsIotCredentials) -> str:
+        signed = super()._signed_websocket_url(credentials)
+        return signed.replace(f"wss://{self.endpoint}", f"ws://127.0.0.1:{self._port}", 1)
+
+
+def _assert_no_signed_url_leak(text: str) -> None:
+    for secret_fragment in (
+        "AKIA_SYNTHETIC_KEY",
+        "SYNTHETIC_SECRET_KEY",
+        "SYNTHETIC_SESSION_TOKEN_VALUE",
+        "X-Amz-Credential",
+        "X-Amz-Signature",
+        "X-Amz-Security-Token",
+        "127.0.0.1",
+        "ws://",
+        "wss://",
+    ):
+        assert secret_fragment not in text
+
+
+@pytest.mark.asyncio
+async def test_loopback_initial_handshake_rejection_redacts_signed_url(caplog: pytest.LogCaptureFixture) -> None:
+    """An HTTP 403 WebSocket upgrade rejection must not leak the signed query string."""
+    seen_queries: list[dict[str, str]] = []
+
+    async def handle_mqtt(request: web.Request) -> web.StreamResponse:
+        seen_queries.append(dict(request.query))
+        return web.Response(status=403, text="Forbidden")
+
+    app = web.Application()
+    app.router.add_get("/mqtt", handle_mqtt)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = cast(Any, site._server).sockets[0].getsockname()[1]
+
+    caplog.set_level(logging.DEBUG, logger="custom_components.aiper.mqtt")
+    async with aiohttp.ClientSession() as session:
+        transport = _LoopbackMqttTransport(
+            port=port,
+            endpoint="example.iot.eu-central-1.amazonaws.com",
+            region="eu-central-1",
+            client_id="client-1",
+            credentials=AwsIotCredentials(
+                access_key_id="AKIA_SYNTHETIC_KEY",
+                secret_access_key="SYNTHETIC_SECRET_KEY",
+                session_token="SYNTHETIC_SESSION_TOKEN_VALUE",
+            ),
+            session=session,
+        )
+        try:
+            assert await transport.async_connect() is False
+            assert transport.last_error == "connect: WSServerHandshakeError (HTTP 403)"
+            assert seen_queries and "X-Amz-Signature" in seen_queries[0]
+            assert "X-Amz-Security-Token" in seen_queries[0]
+            _assert_no_signed_url_leak(transport.last_error)
+            _assert_no_signed_url_leak(caplog.text)
+            assert "WSServerHandshakeError" in caplog.text
+            assert "HTTP 403" in caplog.text
+        finally:
+            await transport.async_disconnect()
+            await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_loopback_reconnect_handshake_rejection_redacts_signed_url(caplog: pytest.LogCaptureFixture) -> None:
+    """A rejected upgrade during reconnect logs phase and HTTP status without query secrets."""
+    attempt = 0
+
+    async def handle_mqtt(request: web.Request) -> web.StreamResponse:
+        nonlocal attempt
+        attempt += 1
+        if attempt == 1:
+            ws = web.WebSocketResponse(protocols=("mqtt",))
+            await ws.prepare(request)
+            msg = await ws.receive()
+            if msg.type == aiohttp.WSMsgType.BINARY:
+                await ws.send_bytes(_connack())
+            await asyncio.sleep(0.02)
+            await ws.close(code=1001)
+            return ws
+        return web.Response(status=403, text="Forbidden")
+
+    app = web.Application()
+    app.router.add_get("/mqtt", handle_mqtt)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = cast(Any, site._server).sockets[0].getsockname()[1]
+
+    caplog.set_level(logging.DEBUG, logger="custom_components.aiper.mqtt")
+    async with aiohttp.ClientSession() as session:
+        transport = _LoopbackMqttTransport(
+            port=port,
+            endpoint="example.iot.eu-central-1.amazonaws.com",
+            region="eu-central-1",
+            client_id="client-2",
+            credentials=AwsIotCredentials(
+                access_key_id="AKIA_SYNTHETIC_KEY",
+                secret_access_key="SYNTHETIC_SECRET_KEY",
+                session_token="SYNTHETIC_SESSION_TOKEN_VALUE",
+            ),
+            session=session,
+            reconnect_min_timeout_secs=0.05,
+            reconnect_max_timeout_secs=0.1,
+        )
+        try:
+            assert await transport.async_connect() is True
+            for _ in range(60):
+                if transport.last_error == "reconnect: WSServerHandshakeError (HTTP 403)":
+                    break
+                await asyncio.sleep(0.02)
+
+            assert transport.last_error == "reconnect: WSServerHandshakeError (HTTP 403)"
+            _assert_no_signed_url_leak(transport.last_error)
+            _assert_no_signed_url_leak(caplog.text)
+            assert "WSServerHandshakeError" in caplog.text
+            assert "HTTP 403" in caplog.text
+        finally:
+            await transport.async_disconnect()
+            await runner.cleanup()
