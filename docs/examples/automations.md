@@ -22,6 +22,36 @@ action:
 
 > **Note:** Active cleaning reports as `"Cleaning"` across models. The destination state depends on your cleaner and dock setup—for example, `"Idle"`, `"Parked"` (such as Scuba V3 Ultra after a run), `"Docked"`, or `"Charging"`.
 
+### Preferred: the "Cleaning finished" event (Scuba V3 Ultra)
+
+Models that confirm completions expose an **event** entity (`event.<name>_cleaning_finished`). It fires for each newly confirmed run. The integration records announced runs so repeated MQTT reports, history refreshes, and normal restarts stay quiet. The initial history load seeds the ledger silently.
+
+```yaml
+alias: "Pool: Aiper finished a cleaning run"
+trigger:
+  - platform: state
+    entity_id: event.scuba_v3_ultra_cleaning_finished
+    attribute: session_id
+condition:
+  - condition: template
+    value_template: >-
+      {{ trigger.from_state is not none and trigger.to_state is not none
+         and trigger.to_state.attributes.event_type == 'cleaning_finished'
+         and as_timestamp(trigger.to_state.state, 0)
+             >= as_timestamp(trigger.from_state.last_changed) - 0.001 }}
+action:
+  - service: notify.notify
+    data:
+      title: "Pool Cleaner Finished"
+      message: >-
+        {{ trigger.to_state.attributes.mode | default('Cleaning') }} run finished
+        {% if trigger.to_state.attributes.duration_min is defined %}
+        after {{ trigger.to_state.attributes.duration_min | round(0) }} minutes
+        {% endif %}.
+```
+
+Event attributes (each is present only when known): `finished_at`, `duration_min`, `mode`, `result` (the device's raw result code), `sources` (`mqtt` and/or `rest`) and `session_id`. Other models keep the state-based example above; the event is added to a model only once its completion reports are confirmed on real devices.
+
 ## 2. Low Battery Alert
 
 ```yaml

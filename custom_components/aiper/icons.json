@@ -222,6 +222,11 @@
       "power_version": {
         "default": "mdi:chip"
       }
+    },
+    "event": {
+      "cleaning_finished": {
+        "default": "mdi:check-circle-outline"
+      }
     }
   }
 }

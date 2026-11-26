@@ -354,6 +354,7 @@ def test_history_baseline_is_quiet_then_new_rest_run_is_announceable() -> None:
 async def test_restore_without_store_and_with_store() -> None:
     coordinator = make_coordinator(BaseFakeApi())
     await coordinator.async_restore_cleaning_sessions()
+    await coordinator.async_flush_cleaning_sessions()
     coordinator._save_sessions()  # no store: no-op
 
     class _Store:

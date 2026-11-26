@@ -3,24 +3,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components import aiper
 from custom_components.aiper import AiperRuntimeData
 from custom_components.aiper.api import AiperApi
+from custom_components.aiper.cleaning_sessions import CleaningSession
 from custom_components.aiper.config_flow import OPTIONS_FLOW_RELOADS
+from custom_components.aiper.connection import ConnectionStatus
 from custom_components.aiper.const import DOMAIN
 from custom_components.aiper.controller import AiperDeviceController
 from custom_components.aiper.coordinator import AiperDataUpdateCoordinator
+from tests.coordinator_factory import BaseFakeApi
 
 
 @dataclass
@@ -72,6 +78,70 @@ class FakeApi:
 
     async def disconnect(self) -> None:
         self.disconnected = True
+
+
+@pytest.mark.usefixtures("enable_custom_integrations")
+async def test_completion_platform_publishes_each_session_and_survives_reload(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Write every event to HA and restore the announcement ledger on reload."""
+    sn = "SN123"
+
+    class UltraApi(FakeApi, BaseFakeApi):
+        connection = ConnectionStatus()
+
+        async def get_devices(self) -> list[dict[str, Any]]:
+            return [{"sn": sn, "model": "Scuba_V3_Ultra", "name": "Pool Robot", "battLevel": 80}]
+
+    monkeypatch.setattr(aiper, "AiperApi", UltraApi)
+    monkeypatch.setattr(aiper, "async_get_clientsession", lambda hass: "session")
+    entry = MockConfigEntry(domain=DOMAIN, data={"username": "user@example.com", "password": "secret"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    registry = er.async_get(hass)
+    event_id = registry.async_get_entity_id("event", DOMAIN, f"{sn}_cleaning_finished")
+    assert event_id is not None
+    assert registry.async_get_entity_id("sensor", DOMAIN, f"{sn}_battery") is not None
+    completions: list[str] = []
+
+    @callback
+    def _record_completion(event: Any) -> None:
+        old_state, new_state = event.data["old_state"], event.data["new_state"]
+        if (
+            new_state is not None
+            and (session_id := new_state.attributes.get("session_id"))
+            and (old_state is None or old_state.attributes.get("session_id") != session_id)
+        ):
+            completions.append(session_id)
+
+    unsubscribe = async_track_state_change_event(hass, [event_id], _record_completion)
+    coordinator = entry.runtime_data.coordinator
+    now = dt_util.utcnow()
+    sessions = [
+        CleaningSession.create(sn, source="mqtt", finish=now + timedelta(hours=offset), run_id=f"run_{offset}")
+        for offset in (1, 2)
+    ]
+    for session in sessions:
+        coordinator._session_ledger.ingest(sn, session)
+    coordinator.last_update_success = False
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    assert completions == [session.session_id for session in sessions]
+    assert coordinator.pending_completions() == []
+    unsubscribe()
+
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    reloaded = entry.runtime_data.coordinator
+    assert reloaded is not coordinator
+    assert [session.session_id for session in reloaded._session_ledger.sessions(sn)] == [
+        session.session_id for session in reversed(sessions)
+    ]
+    assert reloaded.pending_completions() == []
+    assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 @pytest.mark.asyncio

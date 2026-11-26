@@ -40,6 +40,7 @@ PLATFORMS: list[Platform] = [
     Platform.BUTTON,
     Platform.SELECT,
     Platform.SWITCH,
+    Platform.EVENT,
 ]
 
 
@@ -485,5 +486,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: AiperConfigEntry) -> bo
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         await entry.runtime_data.api.disconnect()
+        await entry.runtime_data.coordinator.async_flush_cleaning_sessions()
 
     return unload_ok

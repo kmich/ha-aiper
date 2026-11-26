@@ -80,6 +80,7 @@ def test_entity_translation_keys_exist() -> None:
     assert {"mode_selection", "clean_path"} <= set(entity["select"])
     assert {"connection_state", "last_cloud_update"} <= set(entity["sensor"])
     assert "cloud_connected" in entity["binary_sensor"]
+    assert "cleaning_finished" in entity["event"]
 
     source = "".join(p.read_text(encoding="utf-8") for p in INTEGRATION_DIR.glob("*.py"))
     used = (
