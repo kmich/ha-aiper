@@ -1270,7 +1270,7 @@ async def test_s1_forced_charging_preserves_fresh_mqtt_battery_over_cached_rest(
     coordinator._last_metadata_fetch = {"device": dt_util.utcnow()}
     coordinator.data = {"device": normalize_device_state(raw)}
 
-    coordinator._on_shadow_update("device", {"Machine": {"cap": 82, "status": 1, "in_water": 1}})
+    coordinator._on_shadow_update("device", {"Machine": {"cap": 82}})
     assert coordinator.data["device"]["battery"].value == 82
 
     updated = await coordinator._async_update_data()
