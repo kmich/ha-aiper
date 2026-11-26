@@ -1,8 +1,10 @@
-"""Exercise the Android N30 cloud response contract with synthetic records."""
+"""Exercise the Android N30 cloud response contract."""
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -13,7 +15,7 @@ from homeassistant.util import dt as dt_util
 from custom_components.aiper import sensor
 from custom_components.aiper.api import AiperApi
 from custom_components.aiper.coordinator_parsing import _parse_scuba_s3_cleaning_history
-from custom_components.aiper.report_sections import scuba_s3_schedule_state
+from custom_components.aiper.report_sections import next_scheduled_clean, scuba_s3_schedule_state
 from custom_components.aiper.state import EntityState
 from tests.coordinator_factory import BaseFakeApi, make_coordinator
 from tests.test_platform_entities import _entity_by_key, _hass_with_device, _setup_platform
@@ -23,6 +25,37 @@ ZONE = ZoneInfo("Asia/Singapore")
 START = datetime(2026, 11, 26, 7, tzinfo=ZONE)
 START_STAMP = int(START.timestamp() * 1000)
 NOW = datetime(2026, 11, 26, 8, tzinfo=ZONE)
+
+
+def test_live_s3_capture_matches_reported_times_and_schedule() -> None:
+    path = Path(__file__).parent / "fixtures" / "scuba_s3_cloud_issue_59.json"
+    calls = json.loads(path.read_text(encoding="utf-8"))["calls"]
+    assert all(AiperApi._is_success(call["response"]) for call in calls.values())
+
+    history = _parse_scuba_s3_cleaning_history(
+        calls["history_page"]["response"], calls["history_statistics"]["response"]
+    )
+    assert history is not None
+    count, hours, records = history
+    assert (count, hours) == (2, 4.281)
+    sydney = ZoneInfo("Australia/Sydney")
+    assert [row["start"].astimezone(sydney) for row in records] == [
+        datetime(2026, 11, 26, 7, 0, 26, tzinfo=sydney),
+        datetime(2026, 11, 25, 7, 53, 41, tzinfo=sydney),
+    ]
+    assert [round(row["duration_min"]) for row in records] == [65, 191]
+    assert [row["mode"] for row in records] == ["Scheduled", "Auto"]
+
+    state = scuba_s3_schedule_state(calls["cycle_schedule"]["response"], sydney.key)
+    assert state is not None
+    schedule = state.attributes["schedule"]
+    assert [(row["weekday_name"], row["start_time"], row["duration_minutes"]) for row in schedule] == [
+        ("Tuesday", "07:00", 60),
+        ("Thursday", "07:00", 60),
+        ("Saturday", "07:00", 60),
+    ]
+    now = datetime(2026, 11, 27, 7, 40, tzinfo=sydney)
+    assert next_scheduled_clean(schedule, now, sydney)[0] == datetime(2026, 11, 28, 7, tzinfo=sydney)
 
 
 def test_history_page_uses_seconds_and_current_app_modes() -> None:

@@ -38,14 +38,14 @@
     },
     {
       "feature": "Cloud history",
-      "support": "App route identified",
-      "detail": "The legacy history returned zero rows. The app maps S3 to N30 and uses `/equipmentCleanRecord/gen4/n30n31t30/page` for N30 history.",
+      "support": "Observed",
+      "detail": "The N30 history page and statistics returned the reported run times, durations, and count.",
       "source": "[#59](https://github.com/kmich/ha-aiper/issues/59) and Aiper Android 3.8.0"
     },
     {
       "feature": "Schedule",
-      "support": "App route identified",
-      "detail": "The S3 cycle-cleaning screen reads a cloud plan at `/deviceCleanPlan/getCleanPlanByDeviceSn`. A matching S3 response is pending.",
+      "support": "Observed",
+      "detail": "The cloud cycle-cleaning plan matched the saved weekdays, start time, and duration.",
       "source": "[#59](https://github.com/kmich/ha-aiper/issues/59) and Aiper Android 3.8.0",
       "capability": "report_sections",
       "exposed": false

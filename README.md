@@ -33,9 +33,9 @@ been verified on hardware by the maintainer. Reports welcome.
 `machineStatus` 2/3 map to Charging/Charged, `runTime` is reported in minutes
 and suppressed while charging, and water temperature, charge type, and propeller
 entities are dropped while Roller Brush, Caterpillar Tread, and MicroMesh
-Filter are kept. The cleaning-mode options remain the generic Scuba set, and
-cloud cleaning history and schedule entities are not yet available. Reports
-welcome.
+Filter are kept. The cleaning-mode options use the generic Scuba set. Cloud
+cleaning history and the read-only **Next Scheduled Clean** sensor were
+confirmed on firmware V1.0.0. [Scuba S3 model guide](docs/device-models/scuba.md#scuba-s3-history-and-schedules)
 
 🧪 **Scuba V3** support is onboarded from community reports (issues #38, #49):
 `machineStatus` 2/3 map to Charging/Charged as on the S3, and the

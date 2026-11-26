@@ -1,0 +1,53 @@
+{
+  "source": "https://github.com/kmich/ha-aiper/issues/59#issuecomment-7203015536",
+  "calls": {
+    "cycle_schedule": {
+      "ok": true,
+      "response": {
+        "code": "200",
+        "data": {"cleanDuration": 2, "cleanTime": "07:00", "cleanWeekList": [2, 4, 6]},
+        "successful": true
+      }
+    },
+    "history_page": {
+      "ok": true,
+      "response": {
+        "code": "200",
+        "data": {
+          "list": [
+            {
+              "cleanResult": 1,
+              "cleanTime": 3924,
+              "taskCleanArea": 75.0,
+              "taskType": 5,
+              "utcEndTimeStamp": 1795640750000,
+              "utcStartTimeStamp": 1795636826000
+            },
+            {
+              "cleanResult": 1,
+              "cleanTime": 11487,
+              "taskCleanArea": 225.0,
+              "taskType": 1,
+              "utcEndTimeStamp": 1795565108000,
+              "utcStartTimeStamp": 1795553621000
+            }
+          ],
+          "pageNum": 1,
+          "pageSize": 5,
+          "total": 2
+        },
+        "successful": true
+      }
+    },
+    "history_statistics": {
+      "ok": true,
+      "response": {
+        "code": "200",
+        "data": {"cleanAreaSum": 300.0, "cleanCount": 2},
+        "successful": true
+      }
+    }
+  },
+  "captured_at": "2026-11-26T20:40:22+00:00",
+  "model": "Scuba_S3"
+}
