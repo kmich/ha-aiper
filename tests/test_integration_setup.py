@@ -22,9 +22,11 @@ from custom_components.aiper import AiperRuntimeData
 from custom_components.aiper.api import AiperApi
 from custom_components.aiper.cleaning_sessions import CleaningSession
 from custom_components.aiper.config_flow import OPTIONS_FLOW_RELOADS
+from custom_components.aiper.connection import ConnectionStatus
 from custom_components.aiper.const import DOMAIN
 from custom_components.aiper.controller import AiperDeviceController
 from custom_components.aiper.coordinator import AiperDataUpdateCoordinator
+from tests.coordinator_factory import BaseFakeApi
 
 
 @dataclass
@@ -86,11 +88,14 @@ async def test_completion_platform_publishes_each_session_and_survives_reload(
     """Write every event to HA and restore the announcement ledger on reload."""
     sn = "SN123"
 
-    class UltraApi(FakeApi):
+    class UltraApi(FakeApi, BaseFakeApi):
+        connection = ConnectionStatus()
+
         async def get_devices(self) -> list[dict[str, Any]]:
             return [{"sn": sn, "model": "Scuba_V3_Ultra", "name": "Pool Robot", "battLevel": 80}]
 
     monkeypatch.setattr(aiper, "AiperApi", UltraApi)
+    monkeypatch.setattr(aiper, "async_get_clientsession", lambda hass: "session")
     entry = MockConfigEntry(domain=DOMAIN, data={"username": "user@example.com", "password": "secret"})
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
