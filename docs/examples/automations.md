@@ -12,13 +12,15 @@ trigger:
   - platform: state
     entity_id: sensor.scuba_x1_status
     to: "Idle"
-    from: "Running"
+    from: "Cleaning"
 action:
   - service: notify.notify
     data:
       title: "Pool Cleaner Finished"
       message: "The Aiper has finished its cleaning cycle and is now idle."
 ```
+
+> **Note:** Active cleaning reports as `"Cleaning"` across models. The destination state depends on your cleaner and dock setup—for example, `"Idle"`, `"Parked"` (such as Scuba V3 Ultra after a run), `"Docked"`, or `"Charging"`.
 
 ## 2. Low Battery Alert
 

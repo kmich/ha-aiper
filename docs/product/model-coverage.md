@@ -9,10 +9,12 @@
 | Model / Family | Status | Entities | Controls | Known Gaps | Risk Level |
 |---|---|---|---|---|---|
 | **Scuba S1 (2025/2026)** | **Verified** | Status, Battery, Charging, In Water, Mode, Clean Path, History, MicroMesh, Estimated Cleaning Time | Mode Select, Clean Path Select | Wi-Fi and cloud updates are intermittent while submerged | Medium |
+| **Scuba S3** | Expected | Status, Battery, Charging, In Water, Mode, Clean Path, Cleaning Time, Roller Brush, MicroMesh, Tread | Mode Select, Clean Path Select | Minute-based `running_time` counter (resets while charging); status 2/3 = Charging/Charged; no water temperature, schedule, or REST history observed | Medium |
 | **Scuba X1** | **Verified** | Status, Battery, Charging, Warning, Mode, Clean Path, History, Consumables | Mode Select, Clean Path Select | Charging state occasionally flips depending on firmware | Low |
 | **Scuba X1 Pro** | Expected | Same as X1 | Same as X1 | Needs real-world verification | Medium |
 | **Scuba P1 Pro** | Experimental | Status, Battery, Charging, In Water, Mode, Clean Path, History, Roller Brush, MicroMesh | Mode Select, Clean Path Select | Onboarded from one community bundle; no water temperature; status encoding and mode map unverified | Medium |
 | **Scuba V3** | Experimental | Status, Battery, Charging, In Water, Mode, Clean Path, History, MicroMesh | Mode Select, Clean Path Select | `status` 2/3 = Charging/Charged (S3-style, corroborated by two reports); no water temperature; app only offers Auto / AI Patrol / Floor but the command IDs are uncaptured, so the mode map is still generic | Medium |
+| **Scuba V3 Ultra** | Experimental | Status, Battery, Charging, In Water, Water Temp, Mode, Clean Path, History, Roller Brush, MicroMesh, Propeller, Report Sensors | Mode Select, Clean Path Select | Uses `*Report` shadow sections rather than `Machine`; observed on firmware V1.1.16.4 (`status` 2 = Charging, `status` 7 = Parked after `FinishTaskReport`) | Medium |
 | **Surfer S2** | Expected | Status, Battery, Solar Charging, Warning, Mode, Consumables | Start/Stop (Running) | Clean path preference via app may not sync perfectly with MQTT | Medium |
 | **Shark** | Verified | Status, Battery, Charging, Warning, Consumables | Mode Select (if explicit) | Profile is heavily guessed; controls may fail | High |
 | **HydroComm** | **Verified** | pH, ORP, EC, TDS, Chlorine, Score, Probes, Battery, Charging, Alarms | *None* (Read-only monitor) | None known | Low |
