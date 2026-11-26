@@ -14,7 +14,7 @@ from contextlib import suppress
 from typing import Any
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -26,7 +26,7 @@ from .const import (
 )
 from .controller import AiperDeviceController
 from .coordinator import AiperDataUpdateCoordinator
-from .entity import AiperControlEntity, device_online
+from .entity import AiperControlEntity, async_setup_dynamic_device_entities, device_online
 from .helpers import supports_clean_path, supports_mode_control
 from .state import DeviceState
 from .state_common import _coerce_int as coerce_int
@@ -92,21 +92,46 @@ class AiperCleaningModeSelect(AiperSelectBase):
             mqtt_required=False,
             enabled_default=True,
         )
-        # Build options list from supported IDs.
-        self._mode_ids: list[int] = []
-        self._mode_map = {}
+        self._baseline_mode_options = (self.device_data or {}).get("mode_options")
+        self._mode_ids, self._mode_map, self._attr_options = self._build_mode_config(supported_mode_ids, mode_map)
+
+    @staticmethod
+    def _build_mode_config(
+        supported_mode_ids: list[int], mode_map: dict[Any, Any] | None
+    ) -> tuple[list[int], dict[int, str], list[str]]:
+        clean_map: dict[int, str] = {}
         for key, value in (mode_map or {}).items():
             try:
-                self._mode_map[int(key)] = str(value)
+                clean_map[int(key)] = str(value)
             except Exception:
                 continue
+        mode_ids: list[int] = []
         options: list[str] = []
         for mid in supported_mode_ids:
-            label = self._mode_map.get(mid) or mode_label(mid)
+            mid_int = int(mid)
+            label = clean_map.get(mid_int) or mode_label(mid_int)
             if label and label not in options:
-                self._mode_ids.append(int(mid))
+                mode_ids.append(mid_int)
                 options.append(label)
-        self._attr_options = options
+        return mode_ids, clean_map, options
+
+    def _current_mode_config(self) -> tuple[list[int], dict[int, str], list[str]]:
+        current_mo = (self.device_data or {}).get("mode_options")
+        if (
+            current_mo is not None
+            and current_mo != self._baseline_mode_options
+            and isinstance(current_mo.value, list)
+            and current_mo.value
+        ):
+            supported_ids = [int(mid) for mid in current_mo.value]
+            mode_map = current_mo.attributes.get("mode_map")
+            return self._build_mode_config(supported_ids, mode_map if isinstance(mode_map, dict) else None)
+        return self._mode_ids, self._mode_map, list(self._attr_options or [])
+
+    @property
+    def options(self) -> list[str]:
+        """Return currently supported cleaning mode labels."""
+        return self._current_mode_config()[2]
 
     def _mode_id_for_label(self, label: Any) -> int | None:
         if label is None:
@@ -114,53 +139,51 @@ class AiperCleaningModeSelect(AiperSelectBase):
         label_text = str(label).strip()
         if not label_text:
             return None
-        for mid, known_label in self._mode_map.items():
+        mode_ids, mode_map, _ = self._current_mode_config()
+        for mid, known_label in mode_map.items():
             if known_label == label_text:
                 return int(mid)
-        for mid in self._mode_ids:
+        for mid in mode_ids:
             if mode_label(mid) == label_text:
                 return int(mid)
         return None
 
     def _get_current_mode_id(self) -> int | None:
         dev = self.device_data or {}
+        mode_ids, _, _ = self._current_mode_config()
         mode_state = dev.get("mode")
         reported = coerce_int(mode_state.attributes.get("code")) if mode_state is not None else None
-        if reported in self._mode_ids:
+        if reported in mode_ids:
             return reported
 
         mode_options = dev.get("mode_options")
         selected = coerce_int(mode_options.attributes.get("selected_mode")) if mode_options is not None else None
-        if selected in self._mode_ids:
+        if selected in mode_ids:
             return selected
 
         pending = coerce_int(self.coordinator.get_pending_command_target(self._sn, "mode"))
-        if pending in self._mode_ids:
+        if pending in mode_ids:
             return pending
 
         last_mode = dev.get("last_cleaning_mode")
         history_mode = self._mode_id_for_label(last_mode.value if last_mode else None)
-        if history_mode in self._mode_ids:
+        if history_mode in mode_ids:
             return history_mode
 
         return reported
 
     @property
     def current_option(self) -> str | None:
+        mode_ids, mode_map, _ = self._current_mode_config()
         mid = self._get_current_mode_id()
-        if mid is None or mid not in self._mode_ids:
+        if mid is None or mid not in mode_ids:
             return None
-        return self._mode_map.get(mid) or mode_label(mid)
+        return mode_map.get(mid) or mode_label(mid)
 
     async def async_select_option(self, option: str) -> None:
         self._raise_if_control_blocked()
 
-        # Map label -> id
-        mode_id = None
-        for mid, label in self._mode_map.items():
-            if label == option:
-                mode_id = int(mid)
-                break
+        mode_id = self._mode_id_for_label(option)
         if mode_id is None:
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
@@ -203,17 +226,22 @@ class AiperCleanPathSelect(AiperSelectBase):
         self._attr_options = list(CLEAN_PATH_MAP.values())
 
     @property
+    def options(self) -> list[str]:
+        """Return clean-path options, including any device-reported non-standard label."""
+        opts = list(CLEAN_PATH_MAP.values())
+        clean_path = self.entity_state("clean_path")
+        label = clean_path.value if clean_path is not None else None
+        if isinstance(label, str) and label and label not in opts:
+            opts.append(label)
+        return opts
+
+    @property
     def current_option(self) -> str | None:
         pending = coerce_int(self.coordinator.get_pending_command_target(self._sn, "clean_path"))
         if pending in CLEAN_PATH_MAP:
             return CLEAN_PATH_MAP[pending]
         clean_path = self.entity_state("clean_path")
         label = clean_path.value if clean_path is not None else None
-        if label is not None and label not in CLEAN_PATH_MAP.values():
-            # Surface firmware-specific paths (e.g. "Path 2") as selectable options.
-            opts = list(self._attr_options or [])
-            if label not in opts:
-                self._attr_options = [*opts, label]
         return str(label) if label is not None else None
 
     async def async_select_option(self, option: str) -> None:
@@ -278,45 +306,20 @@ async def async_setup_entry(
     """Set up select entities from a config entry."""
     coordinator: AiperDataUpdateCoordinator = entry.runtime_data.coordinator
     controller: AiperDeviceController = entry.runtime_data.controller
-    known_devices: set[str] = set()
 
     def _create_device_entities(sn: str, dev: DeviceState) -> list[SelectEntity]:
-        mode_options = dev.get("mode_options")
-        if mode_options is None:
-            return []
-        supported = mode_options.value
-        if not isinstance(supported, list) or not supported:
-            return []
-        supported_ids = [int(mode_id) for mode_id in supported]
-        mode_map = mode_options.attributes.get("mode_map")
-        if not isinstance(mode_map, dict):
-            mode_map = {mode_id: mode_label(mode_id) for mode_id in supported_ids}
-
         dev_entities: list[SelectEntity] = []
         if supports_clean_path(dev):
             dev_entities.append(AiperCleanPathSelect(coordinator, controller, sn))
-        if supports_mode_control(dev):
+
+        mode_options = dev.get("mode_options")
+        supported = mode_options.value if mode_options is not None else None
+        if supports_mode_control(dev) and isinstance(supported, list) and supported:
+            supported_ids = [int(mode_id) for mode_id in supported]
+            mode_map = mode_options.attributes.get("mode_map") if mode_options is not None else None
+            if not isinstance(mode_map, dict):
+                mode_map = {mode_id: mode_label(mode_id) for mode_id in supported_ids}
             dev_entities.append(AiperCleaningModeSelect(coordinator, controller, sn, supported_ids, mode_map))
         return dev_entities
 
-    @callback
-    def _async_add_new_devices() -> None:
-        if not coordinator.data:
-            return
-        new_entities: list[SelectEntity] = []
-        for sn, dev in coordinator.data.items():
-            if sn not in known_devices:
-                known_devices.add(sn)
-                new_entities.extend(_create_device_entities(sn, dev))
-        if new_entities:
-            async_add_entities(new_entities)
-
-    initial_entities: list[SelectEntity] = []
-    if coordinator.data:
-        for sn, dev in coordinator.data.items():
-            known_devices.add(sn)
-            initial_entities.extend(_create_device_entities(sn, dev))
-
-    async_add_entities(initial_entities)
-    if hasattr(entry, "async_on_unload"):
-        entry.async_on_unload(coordinator.async_add_listener(_async_add_new_devices))
+    async_setup_dynamic_device_entities(entry, coordinator, async_add_entities, _create_device_entities)

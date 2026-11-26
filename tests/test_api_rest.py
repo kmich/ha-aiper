@@ -78,24 +78,26 @@ async def test_malformed_decrypted_responses_raise_response_error(monkeypatch: p
 
 
 @pytest.mark.asyncio
-async def test_session_conflict_relogin_failure_enters_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_session_conflict_enters_cooldown_without_immediate_relogin(monkeypatch: pytest.MonkeyPatch) -> None:
     api = _api()
     _responder(api, monkeypatch, {"getEquipment": [{"code": "402", "msg": "in use"}]})
 
-    async def broken_login() -> bool:
-        raise RuntimeError("network")
+    async def unexpected_login() -> bool:
+        raise AssertionError("login() must not be called immediately on 402")
 
-    monkeypatch.setattr(api, "login", broken_login)
+    monkeypatch.setattr(api, "login", unexpected_login)
 
     with pytest.raises(AiperSessionConflict, match="in use"):
         await api._call_encrypted("POST", "/equipment/getEquipment", {})
     assert api._session_conflict_until > time.time()
+    assert api._session_conflict_pending_reauth is True
 
 
 @pytest.mark.asyncio
-async def test_session_conflict_during_relogin_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_session_conflict_during_post_cooldown_relogin_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
     api = _api()
-    _responder(api, monkeypatch, {"getEquipment": [{"code": "402"}]})
+    api._session_conflict_pending_reauth = True
+    api._session_conflict_until = time.time() - 1
 
     async def conflicting_login() -> bool:
         raise AiperSessionConflict("still in use")

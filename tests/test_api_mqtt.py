@@ -215,6 +215,34 @@ async def test_on_reconnected_schedules_resubscribe(monkeypatch: pytest.MonkeyPa
 
     assert calls == [None]
 
+    async def failing_resubscribe() -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(api, "_resubscribe_all_devices", failing_resubscribe)
+    api._on_mqtt_reconnected(False)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_resubscribe_all_devices_is_serialized() -> None:
+    api, transport = _connected_api()
+    api._register_shadow_callback(SN, lambda sn, data: None)
+    active = 0
+    max_active = 0
+
+    async def slow_subscribe(topic: str, callback: Any, qos: int = 1) -> bool:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return True
+
+    transport.async_subscribe = slow_subscribe  # type: ignore[method-assign]
+    await asyncio.gather(api._resubscribe_all_devices(), api._resubscribe_all_devices())
+    assert max_active <= len(api._subscription_topics_for_sn(SN))
+
 
 def test_connection_tracker_follows_transport_state() -> None:
     api, transport = _connected_api()

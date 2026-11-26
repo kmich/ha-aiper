@@ -104,6 +104,8 @@ async def test_operation_failures_return_false_and_record_error(failing_op: str)
         connection.fail = "connect"
         assert await transport.async_connect() is False
         assert transport.is_connected() is False
+        assert transport._connection is None
+        assert connection.disconnected is True
     else:
         await transport.async_connect()
         if failing_op == "subscribe":

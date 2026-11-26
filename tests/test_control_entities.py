@@ -317,9 +317,20 @@ async def test_mode_select_label_resolution_and_current_mode_sources(hass: HomeA
     data.pop("last_cleaning_mode")
     assert select.current_option is None
 
+    # Selecting a fallback-labelled option (e.g. Mode 9) succeeds via _mode_id_for_label.
+    data["mode"] = EntityState("Smart", {"code": 1})
+    await select.async_select_option("Mode 9")
+    assert ("mode", 9) in controller.api.commands
+
+    # Updating mode_options in coordinator data refreshes options dynamically.
+    data["mode_options"] = EntityState([1, 3], {"mode_map": {1: "Smart", 3: "Wall"}})
+    coordinator.data = {SN: data}
+    assert select.options == ["Smart", "Wall"]
+
     # Selecting the mode the device already reports is a no-op.
-    data["mode"] = EntityState("Floor", {"code": 2})
-    await select.async_select_option("Floor")
+    controller.api.commands.clear()
+    data["mode"] = EntityState("Wall", {"code": 3})
+    await select.async_select_option("Wall")
     assert controller.api.commands == []
 
 
@@ -361,8 +372,10 @@ async def test_select_platform_builds_default_mode_map(hass: HomeAssistant) -> N
     await select_platform.async_setup_entry(hass, entry, lambda entities: added.extend(entities))  # type: ignore[arg-type]
 
     mode_select = next(entity for entity in added if isinstance(entity, AiperCleaningModeSelect))
+    clean_paths = [entity for entity in added if isinstance(entity, AiperCleanPathSelect)]
     assert mode_select.options == ["Smart", "Floor"]
-    assert len(added) == 2
+    assert len(clean_paths) == 2
+    assert len(added) == 3
 
 
 def test_cloud_sensors_report_connection_health() -> None:

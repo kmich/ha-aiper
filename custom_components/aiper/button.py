@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
 from homeassistant.const import EntityCategory
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -15,13 +15,8 @@ from . import AiperConfigEntry
 from .const import DOMAIN
 from .controller import AiperDeviceController
 from .coordinator import AiperDataUpdateCoordinator
-from .entity import AiperEntity
+from .entity import AiperEntity, async_setup_dynamic_device_entities
 from .state import DeviceState
-
-
-async def _noop_press(entity: AiperButton) -> None:
-    """Default button press handler."""
-
 
 # Button presses hit the cloud; don't fan out in parallel.
 PARALLEL_UPDATES = 1
@@ -31,7 +26,7 @@ PARALLEL_UPDATES = 1
 class AiperButtonEntityDescription(ButtonEntityDescription):
     """Describes an Aiper button entity."""
 
-    press_fn: Callable[[AiperButton], Awaitable[None]] = _noop_press
+    press_fn: Callable[[AiperButton], Awaitable[None]]
     enabled_default: bool = True
     requires_mqtt: bool = False
 
@@ -79,7 +74,6 @@ async def async_setup_entry(
     """Set up Aiper buttons based on a config entry."""
     coordinator: AiperDataUpdateCoordinator = entry.runtime_data.coordinator
     controller: AiperDeviceController = entry.runtime_data.controller
-    known_devices: set[str] = set()
 
     def _create_device_entities(sn: str, device_data: DeviceState) -> list[ButtonEntity]:
         return [
@@ -93,27 +87,7 @@ async def async_setup_entry(
             for description in BUTTON_DESCRIPTIONS
         ]
 
-    @callback
-    def _async_add_new_devices() -> None:
-        if not coordinator.data:
-            return
-        new_entities: list[ButtonEntity] = []
-        for sn, dev in coordinator.data.items():
-            if sn not in known_devices:
-                known_devices.add(sn)
-                new_entities.extend(_create_device_entities(sn, dev))
-        if new_entities:
-            async_add_entities(new_entities)
-
-    initial_entities: list[ButtonEntity] = []
-    if coordinator.data:
-        for sn, dev in coordinator.data.items():
-            known_devices.add(sn)
-            initial_entities.extend(_create_device_entities(sn, dev))
-
-    async_add_entities(initial_entities)
-    if hasattr(entry, "async_on_unload"):
-        entry.async_on_unload(coordinator.async_add_listener(_async_add_new_devices))
+    async_setup_dynamic_device_entities(entry, coordinator, async_add_entities, _create_device_entities)
 
 
 class AiperButton(AiperEntity, ButtonEntity):

@@ -309,3 +309,86 @@ async def test_metadata_refresh_survives_unparseable_history(hass: HomeAssistant
     await coordinator._async_update_data()
 
     assert coordinator._history_cache[SN]["records"] == []
+
+
+def test_scuba_s3_charging_status_does_not_confirm_pending_running_command() -> None:
+    """Status 2 means Charging on Scuba_S3, so it must not confirm a pending running=True."""
+    coordinator = _coordinator(model="Scuba_S3")
+    coordinator.note_command_sent(SN, "running", True)
+
+    coordinator._confirm_pending_commands(SN, {"status": 2})
+
+    assert coordinator.get_command_state(SN)["pending"]["running"]["target"] is True
+
+
+@pytest.mark.asyncio
+async def test_mqtt_getworkmode_mode_list_survives_rest_poll_without_modes(hass: HomeAssistant) -> None:
+    """Mode IDs learned from MQTT GetWorkMode persist across REST polls lacking modeList."""
+
+    class Api(BaseFakeApi):
+        async def get_devices(self) -> list[dict[str, Any]]:
+            return [{"sn": SN, "name": "Shark", "model": "Shark_Pro", "online": True}]
+
+        async def get_device_info(self, sn: str) -> dict[str, Any]:
+            return {"model": "Shark_Pro"}
+
+    coordinator = make_coordinator(Api(), hass=hass)
+    await coordinator._async_update_data()
+
+    coordinator._on_shadow_update(SN, {"GetWorkMode": {"modeList": [1, 5]}})
+    assert coordinator.data[SN]["mode_options"].value == [1, 5]
+
+    coordinator._last_metadata_fetch.pop(SN, None)
+    data = await coordinator._async_update_data()
+    assert data[SN]["mode_options"].value == [1, 5]
+
+
+@pytest.mark.asyncio
+async def test_fresh_mqtt_battery_runtime_temperature_preserved_until_ttl(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Fresh MQTT battery/runtime/temperature resist stale REST values until TTL expires."""
+    import logging
+
+    class Api(BaseFakeApi):
+        async def get_devices(self) -> list[dict[str, Any]]:
+            return [
+                {
+                    "sn": SN,
+                    "name": "Robot",
+                    "model": "Scuba_X1",
+                    "online": True,
+                    "battLevel": 40,
+                    "runTime": 100,
+                    "temp": 18,
+                }
+            ]
+
+    now = dt_util.utcnow()
+    coordinator = make_coordinator(Api(), hass=hass)
+    coordinator._devices = {SN: {"sn": SN, "name": "Robot", "model": "Scuba_X1", "online": True}}
+    coordinator._last_metadata_fetch = {SN: now}
+    coordinator.data = {
+        SN: normalize_device_state(
+            {"sn": SN, "name": "Robot", "model": "Scuba_X1", "online": True, "battLevel": 82, "runTime": 50, "temp": 25}
+        )
+    }
+    coordinator._record_live_field_sources(
+        SN, "mqtt", ("battery", "runtime", "temperature"), observed_at=now - timedelta(minutes=1)
+    )
+
+    caplog.set_level(logging.DEBUG, logger="custom_components.aiper.coordinator")
+    data = await coordinator._async_update_data()
+    assert data[SN]["battery"].value == 82
+    assert data[SN]["runtime"].value == 0.5
+    assert data[SN]["temperature"].value == 25
+    assert SN not in caplog.text
+
+    # After TTL expires, fresh REST values take over.
+    coordinator._record_live_field_sources(
+        SN, "mqtt", ("battery", "runtime", "temperature"), observed_at=now - timedelta(minutes=20)
+    )
+    data = await coordinator._async_update_data()
+    assert data[SN]["battery"].value == 40
+    assert data[SN]["runtime"].value == 1.0
+    assert data[SN]["temperature"].value == 18

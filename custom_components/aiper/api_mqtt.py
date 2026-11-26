@@ -71,6 +71,8 @@ class AiperMqttClient(AiperRestClient):
 
         # Serialize command sends per device SN so that ack correlation is reliable.
         self._cmd_locks: dict[str, asyncio.Lock] = {}
+        # Serialize topic re-subscriptions across overlapping reconnect callbacks.
+        self._resubscribe_lock = asyncio.Lock()
 
     def _encrypt(self, data: str) -> str:
         """Encrypt message using XOR + Base64."""
@@ -143,7 +145,8 @@ class AiperMqttClient(AiperRestClient):
             except Exception as err:
                 _LOGGER.debug("Background MQTT credential refresh failed: %s", err)
             finally:
-                self._mqtt_credentials_refreshing = False
+                with self._lock:
+                    self._mqtt_credentials_refreshing = False
 
         try:
             loop.call_soon_threadsafe(lambda: loop.create_task(_refresh()))
@@ -154,7 +157,8 @@ class AiperMqttClient(AiperRestClient):
             # here instead, or the opportunistic refresh path stays silently
             # disabled for the rest of this AiperApi instance's life.
             _LOGGER.debug("Could not schedule MQTT credential refresh: %s", err)
-            self._mqtt_credentials_refreshing = False
+            with self._lock:
+                self._mqtt_credentials_refreshing = False
 
     def _current_mqtt_credentials(self) -> AwsIotCredentials | None:
         """Return the credentials the MQTT transport should sign with.
@@ -282,34 +286,44 @@ class AiperMqttClient(AiperRestClient):
         loop = self._async_loop
         if loop is None or not loop.is_running():
             return
-        asyncio.run_coroutine_threadsafe(self._resubscribe_all_devices(), loop)
+        future = asyncio.run_coroutine_threadsafe(self._resubscribe_all_devices(), loop)
+
+        def _log_error(done: Any) -> None:
+            if done.cancelled():
+                return
+            exc = done.exception()
+            if exc is not None:
+                _LOGGER.debug("MQTT reconnect re-subscribe failed: %s", exc)
+
+        future.add_done_callback(_log_error)
 
     async def _resubscribe_all_devices(self) -> None:
         """Re-subscribe to all device topics after an MQTT reconnect."""
-        if not self.is_mqtt_connected():
-            return
-        with self._lock:
-            sns = list(self._shadow_callbacks.keys())
-        for sn in sns:
-            _LOGGER.debug("Re-subscribing MQTT topics for %s after reconnect", redact_serial(sn))
+        async with self._resubscribe_lock:
+            if not self.is_mqtt_connected():
+                return
+            with self._lock:
+                sns = list(self._shadow_callbacks.keys())
+            for sn in sns:
+                _LOGGER.debug("Re-subscribing MQTT topics for %s after reconnect", redact_serial(sn))
 
-            def on_message(topic: str, payload_bytes: bytes, _sn: str = sn) -> None:
-                self._handle_device_message(_sn, topic, payload_bytes)
+                def on_message(topic: str, payload_bytes: bytes, _sn: str = sn) -> None:
+                    self._handle_device_message(_sn, topic, payload_bytes)
 
-            async def _subscribe_one(topic: str, _sn: str = sn, _cb: Any = on_message) -> None:
-                try:
-                    await self._mqtt_client.async_subscribe(topic, _cb, 1)
-                except Exception as err:
-                    _LOGGER.debug(
-                        "Re-subscribe failed for %s topic %s: %s", redact_serial(_sn), redact_topic(topic), err
-                    )
+                async def _subscribe_one(topic: str, _sn: str = sn, _cb: Any = on_message) -> None:
+                    try:
+                        await self._mqtt_client.async_subscribe(topic, _cb, 1)
+                    except Exception as err:
+                        _LOGGER.debug(
+                            "Re-subscribe failed for %s topic %s: %s", redact_serial(_sn), redact_topic(topic), err
+                        )
 
-            # Topics for one device are independent of each other, so
-            # subscribe them concurrently instead of paying N sequential
-            # round trips per device.
-            await asyncio.gather(*(_subscribe_one(topic) for topic in self._subscription_topics_for_sn(sn)))
-            with suppress(Exception):
-                await self.request_shadow(sn)
+                # Topics for one device are independent of each other, so
+                # subscribe them concurrently instead of paying N sequential
+                # round trips per device.
+                await asyncio.gather(*(_subscribe_one(topic) for topic in self._subscription_topics_for_sn(sn)))
+                with suppress(Exception):
+                    await self.request_shadow(sn)
 
     async def request_shadow(self, sn: str) -> bool:
         """Request the current AWS IoT thing shadow."""

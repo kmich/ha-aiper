@@ -100,6 +100,8 @@ async def test_diagnostics_redacts_sensitive_runtime_data(hass: HomeAssistant) -
     assert "top-secret" not in str(diagnostics)
     assert diagnostics["api"]["identity_id"] == "***"
     assert diagnostics["api"]["iot_endpoint"] == "abc...com"
+    assert diagnostics["api"]["aws_credentials_ttl"] == api.aws_credentials_ttl
+    assert diagnostics["api"]["connection"]["credential_refresh_count"] == 0
     assert "SN1234567890" not in str(diagnostics)
 
 

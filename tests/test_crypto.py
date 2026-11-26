@@ -46,6 +46,32 @@ def test_non_rsa_public_key_is_rejected(monkeypatch) -> None:
 
     from custom_components.aiper import crypto
 
-    monkeypatch.setattr(crypto, "load_der_public_key", lambda der: object())
-    with pytest.raises(TypeError):
+    crypto._load_public_key.cache_clear()
+    try:
+        monkeypatch.setattr(crypto, "load_der_public_key", lambda der: object())
+        with pytest.raises(TypeError):
+            AiperEncryption()
+    finally:
+        crypto._load_public_key.cache_clear()
+
+
+def test_public_key_is_cached(monkeypatch) -> None:
+    from cryptography.hazmat.primitives.serialization import load_der_public_key as real_loader
+
+    from custom_components.aiper import crypto
+
+    crypto._load_public_key.cache_clear()
+    calls = 0
+
+    def counting_loader(der: bytes):
+        nonlocal calls
+        calls += 1
+        return real_loader(der)
+
+    try:
+        monkeypatch.setattr(crypto, "load_der_public_key", counting_loader)
         AiperEncryption()
+        AiperEncryption()
+        assert calls == 1
+    finally:
+        crypto._load_public_key.cache_clear()

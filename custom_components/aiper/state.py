@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
-from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
 
 from .const import CLEAN_PATH_MAP, Status, mode_label, status_label, status_running, status_value
@@ -19,28 +16,67 @@ from .profiles import (
     status_semantics,
 )
 from .state_common import (
+    DevicesState as DevicesState,
+)
+from .state_common import (
+    DeviceState as DeviceState,
+)
+from .state_common import (
+    EntityState as EntityState,
+)
+from .state_common import (
+    RawDeviceData as RawDeviceData,
+)
+from .state_common import (
     _centihours_to_hours,
     _coerce_bool,
     _coerce_float,
     _coerce_int,
     _hours,
+    _round_number,
 )
-
-
-@dataclass(frozen=True)
-class EntityState:
-    """Normalized state value plus Home Assistant entity attributes."""
-
-    value: Any
-    attributes: dict[str, Any] = field(default_factory=dict)
-
-
-# Raw REST/cache payload assembled by the coordinator before translation.
-RawDeviceData = dict[str, Any]
-# Normalized Home Assistant-facing entity states for one device, keyed by entity key.
-DeviceState = dict[str, EntityState]
-# Data exposed by AiperDataUpdateCoordinator.data, keyed first by device serial number.
-DevicesState = dict[str, DeviceState]
+from .state_common import (
+    _state_attrs as _state_attrs,
+)
+from .state_common import (
+    _state_value as _state_value,
+)
+from .w2_state import (
+    HYDROCOMM_ALARM_MESSAGES as HYDROCOMM_ALARM_MESSAGES,
+)
+from .w2_state import (
+    _charge_type_text as _charge_type_text,
+)
+from .w2_state import (
+    _charging_value as _charging_value,
+)
+from .w2_state import (
+    _hydrocomm_alarm_codes as _hydrocomm_alarm_codes,
+)
+from .w2_state import (
+    _hydrocomm_status_text as _hydrocomm_status_text,
+)
+from .w2_state import (
+    _hydrocomm_warning_text as _hydrocomm_warning_text,
+)
+from .w2_state import (
+    _probe_status_text as _probe_status_text,
+)
+from .w2_state import (
+    normalize_w2_alarm_update as normalize_w2_alarm_update,
+)
+from .w2_state import (
+    normalize_w2_info_update as normalize_w2_info_update,
+)
+from .w2_state import (
+    normalize_w2_lifetime_update as normalize_w2_lifetime_update,
+)
+from .w2_state import (
+    normalize_w2_sensor_status_update as normalize_w2_sensor_status_update,
+)
+from .w2_state import (
+    normalize_w2_wqs_update as normalize_w2_wqs_update,
+)
 
 
 def _runtime_to_hours(device: RawDeviceData, value: Any, *, key: str | None = None) -> float | None:
@@ -87,20 +123,6 @@ def _clean_path_text(value: Any) -> str | None:
     if value_id is not None:
         return CLEAN_PATH_MAP.get(value_id, str(value_id))
     return str(value)
-
-
-def _state_value(state: DeviceState | None, key: str) -> Any:
-    if not state:
-        return None
-    entity = state.get(key)
-    return entity.value if entity else None
-
-
-def _state_attrs(state: DeviceState | None, key: str) -> dict[str, Any]:
-    if not state:
-        return {}
-    entity = state.get(key)
-    return dict(entity.attributes) if entity else {}
 
 
 def merge_device_state(current: DeviceState | None, updates: DeviceState, *, ignore_none: bool = False) -> DeviceState:
@@ -208,25 +230,6 @@ def _is_hydrocomm(device: dict[str, Any]) -> bool:
     return derive_device_profile(device).family is DeviceFamily.HYDROCOMM
 
 
-def _hydrocomm_status_text(status: int | None) -> str | None:
-    """Return a W2/HydroComm station status label from APK-observed states."""
-    if status is None:
-        return None
-    if status == 0:
-        return "Idle"
-    if status == 1:
-        return "Active"
-    if status in (2, 3):
-        return "Charging"
-    if status == 4:
-        return "Updating"
-    if status == 5:
-        return "Sleeping"
-    if status == 7:
-        return "Deep Sleep"
-    return f"Status {status}"
-
-
 def _cleaner_status_text(device: dict[str, Any], status_code: int | None) -> str:
     """Return the status label for a cleaner, honouring model-specific codes."""
     semantics = status_semantics(device)
@@ -254,71 +257,6 @@ def _cleaner_charging(device: dict[str, Any], status_code: int | None) -> bool |
     if semantics is not None:
         return status_code in semantics.charging
     return status_code == int(Status.CHARGING)
-
-
-def _charge_type_text(value: Any) -> str | None:
-    charge_type = _coerce_int(value)
-    if charge_type is None:
-        return None
-    if charge_type == 0:
-        return "Not charging"
-    if charge_type == 1:
-        return "Charging"
-    if charge_type == 2:
-        return "Solar charging"
-    return f"Charge type {charge_type}"
-
-
-def _charging_value(status: int | None, charge_type: Any = None) -> bool | None:
-    ctype = _coerce_int(charge_type)
-    if status in (2, 3) or ctype in (1, 2):
-        return True
-    if status is not None or ctype is not None:
-        return False
-    return None
-
-
-HYDROCOMM_ALARM_MESSAGES = {
-    1: "All probes uninstalled",
-    2: "Probe repeat install",
-    4: "Probe installed but no data",
-    8: "Probe not fully installed",
-    16: "Sensor 1 damaged",
-    32: "Sensor 2 damaged",
-    64: "Sensor 3 damaged",
-    128: "Temperature constant value",
-    256: "pH constant value",
-    512: "ORP constant value",
-    1024: "EC constant value",
-    2048: "Chlorine constant value",
-    4096: "Temperature out of range",
-    8192: "Battery low",
-}
-
-
-def _hydrocomm_alarm_codes(value: Any) -> list[int]:
-    alarm = _coerce_int(value)
-    if alarm is None or alarm <= 0:
-        return []
-    return [code for code in HYDROCOMM_ALARM_MESSAGES if alarm & code]
-
-
-def _hydrocomm_warning_text(value: Any) -> str:
-    codes = _hydrocomm_alarm_codes(value)
-    if not codes:
-        return "No active warnings"
-    return ", ".join(HYDROCOMM_ALARM_MESSAGES.get(code, f"Alarm {code}") for code in codes)
-
-
-def _probe_status_text(value: Any) -> str | None:
-    status = _coerce_int(value)
-    if status is None:
-        return None
-    if status == 1:
-        return "Installed"
-    if status == 0:
-        return "Not installed"
-    return f"Status {status}"
 
 
 def supported_mode_ids_from_payload(payload: dict[str, Any]) -> list[int]:
@@ -474,138 +412,6 @@ def normalize_ota_update(ota: dict[str, Any]) -> DeviceState:
     if any(key in ota for key in ("state", "status", "otaState", "ota_status")):
         updates["ota_state"] = EntityState(_ota_state_text(ota))
     return updates
-
-
-def normalize_w2_info_update(w2_info: dict[str, Any]) -> DeviceState:
-    """Translate one HydroComm W2Info payload into normalized entity updates."""
-    updates: DeviceState = {}
-    if w2_info.get("bal_cal") is not None:
-        updates["battery"] = EntityState(_coerce_int(w2_info.get("bal_cal")))
-
-    charge_type = w2_info.get("chargeType")
-    if charge_type is not None:
-        updates["charge_type"] = EntityState(
-            _charge_type_text(charge_type),
-            {"code": _coerce_int(charge_type)} if _coerce_int(charge_type) is not None else {},
-        )
-        updates["charging"] = EntityState(_charging_value(None, charge_type))
-        updates["solar_charging"] = EntityState(_coerce_int(charge_type) == 2)
-
-    for raw_key, state_key in (
-        ("vcvol", "supply_voltage"),
-        ("sunvol", "solar_voltage"),
-        ("lux", "light_level"),
-        ("workCur", "work_current"),
-        ("chargeCur", "charge_current"),
-    ):
-        if w2_info.get(raw_key) is not None:
-            updates[state_key] = EntityState(_coerce_int(w2_info.get(raw_key)))
-
-    if w2_info.get("calStatus") is not None:
-        status = _coerce_int(w2_info.get("calStatus"))
-        updates["calibration_status"] = EntityState(
-            "In progress" if status == 1 else "Idle",
-            {"code": status} if status is not None else {},
-        )
-
-    return updates
-
-
-def normalize_w2_wqs_update(w2_wqs: dict[str, Any]) -> DeviceState:
-    """Translate one HydroComm W2WQS water-quality payload into sensor updates."""
-    updates: DeviceState = {}
-    if w2_wqs.get("result") is not None:
-        result = _coerce_int(w2_wqs.get("result"))
-        updates["water_quality_result"] = EntityState(
-            "Ready" if result == 0 else f"Result {result}",
-            {"code": result} if result is not None else {},
-        )
-        if result is not None and result != 0:
-            return updates
-
-    for raw_key, state_key in (
-        ("temp", "temperature"),
-        ("ph", "ph"),
-        ("orp", "orp"),
-        ("ec", "ec"),
-        ("tds", "tds"),
-        ("rcl", "rcl"),
-        ("swpi", "water_quality_score"),
-    ):
-        if w2_wqs.get(raw_key) is not None:
-            updates[state_key] = EntityState(_coerce_float(w2_wqs.get(raw_key)))
-
-    if w2_wqs.get("manual") is not None:
-        updates["water_quality_manual"] = EntityState(_coerce_int(w2_wqs.get("manual")) == 1)
-
-    sampled_at = w2_wqs.get("time")
-    if sampled_at is not None:
-        for key in ("temperature", "ph", "orp", "ec", "tds", "rcl", "water_quality_score"):
-            if key in updates:
-                updates[key] = EntityState(updates[key].value, {"sample_time": sampled_at})
-        sample_dt: datetime | None = None
-        with contextlib.suppress(TypeError, ValueError):
-            sample_dt = datetime.fromisoformat(sampled_at.replace("Z", "+00:00"))
-        updates["wqs_sample_time"] = EntityState(sample_dt)
-
-    return updates
-
-
-def normalize_w2_sensor_status_update(
-    sensor_status: dict[str, Any],
-    current: DeviceState | None = None,
-) -> DeviceState:
-    """Translate one HydroComm W2SensorStatus payload into probe status updates."""
-    updates: DeviceState = {}
-    for raw_key, state_key in (
-        ("sensor1", "probe_1_status"),
-        ("sensor2", "probe_2_status"),
-        ("sensor3", "probe_3_status"),
-        ("ulsound", "ultrasonic_status"),
-    ):
-        if sensor_status.get(raw_key) is None:
-            continue
-        code = _coerce_int(sensor_status.get(raw_key))
-        updates[state_key] = EntityState(
-            _probe_status_text(code),
-            {**_state_attrs(current, state_key), **({"code": code} if code is not None else {})},
-        )
-    return updates
-
-
-def normalize_w2_lifetime_update(
-    lifetime: dict[str, Any],
-    current: DeviceState | None = None,
-) -> DeviceState:
-    """Translate one HydroComm W2LifeTime payload into probe attributes."""
-    updates: DeviceState = {}
-    for idx in (1, 2, 3):
-        state_key = f"probe_{idx}_status"
-        attrs = _state_attrs(current, state_key)
-        for raw_key, attr_key in (
-            (f"sn{idx}", "probe_serial"),
-            (f"usetime{idx}", "usage_time"),
-            (f"ctime{idx}", "calibration_time"),
-        ):
-            if lifetime.get(raw_key) is not None:
-                attrs[attr_key] = lifetime.get(raw_key)
-        if attrs:
-            updates[state_key] = EntityState(_state_value(current, state_key), attrs)
-    return updates
-
-
-def normalize_w2_alarm_update(alarm: dict[str, Any]) -> DeviceState:
-    """Translate one HydroComm W2AlarmMessage payload into warning state."""
-    if alarm.get("Alarm") is None:
-        return {}
-    code = _coerce_int(alarm.get("Alarm"))
-    attrs: dict[str, Any] = {}
-    if code is not None:
-        attrs["code"] = code
-        attrs["codes"] = _hydrocomm_alarm_codes(code)
-    if alarm.get("time") is not None:
-        attrs["time"] = alarm.get("time")
-    return {"warning": EntityState(_hydrocomm_warning_text(code), attrs)}
 
 
 def normalize_mode_options_update(raw: RawDeviceData, payload: dict[str, Any]) -> DeviceState:
@@ -784,32 +590,20 @@ def normalize_device_state(raw: RawDeviceData) -> DeviceState:
     runtime = _current_runtime_to_hours(raw, raw.get("runTime"), running)
     state["runtime"] = EntityState(runtime)
 
-    total_cleanings = raw.get("total_cleanings") if "total_cleanings" in raw else raw.get("_ha_total_cleanings")
-    total_cleaning_hours = (
-        raw.get("total_cleaning_hours") if "total_cleaning_hours" in raw else raw.get("_ha_total_cleaning_hours")
-    )
-    total_cleaning_minutes = (
-        raw.get("total_cleaning_minutes") if "total_cleaning_minutes" in raw else raw.get("_ha_total_cleaning_minutes")
-    )
-    last_cleaning_mode = (
-        raw.get("last_cleaning_mode") if "last_cleaning_mode" in raw else raw.get("_ha_last_cleaning_mode")
-    )
+    total_cleanings = raw.get("total_cleanings")
+    total_cleaning_hours = raw.get("total_cleaning_hours")
+    total_cleaning_minutes = raw.get("total_cleaning_minutes")
+    last_cleaning_mode = raw.get("last_cleaning_mode")
     if model_key(raw) == SCUBA_S1_2025_MODEL and str(last_cleaning_mode).strip().lower() == "smart":
         last_cleaning_mode = "Auto"
-    last_cleaning_start = (
-        raw.get("last_cleaning_start") if "last_cleaning_start" in raw else raw.get("_ha_last_cleaning_start")
-    )
-    last_cleaning_duration = (
-        raw.get("last_cleaning_duration_min")
-        if "last_cleaning_duration_min" in raw
-        else raw.get("_ha_last_cleaning_duration_min")
-    )
+    last_cleaning_start = raw.get("last_cleaning_start")
+    last_cleaning_duration = raw.get("last_cleaning_duration_min")
     state["total_cleanings"] = EntityState(_coerce_int(total_cleanings))
     state["total_cleaning_time"] = EntityState(_hours(total_cleaning_hours))
     state["total_cleaning_time_minutes"] = EntityState(_coerce_int(total_cleaning_minutes))
     state["last_cleaning_mode"] = EntityState(last_cleaning_mode)
     state["last_cleaning_start"] = EntityState(last_cleaning_start)
-    state["last_cleaning_duration"] = EntityState(_hours(last_cleaning_duration))
+    state["last_cleaning_duration"] = EntityState(_round_number(last_cleaning_duration))
 
     state["in_water"] = EntityState(_coerce_bool(raw.get("in_water")))
 
