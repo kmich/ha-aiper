@@ -20,6 +20,7 @@ from .state_common import _coerce_bool, _coerce_float, _coerce_int
 __all__ = [
     "next_scheduled_clean",
     "report_entity_states",
+    "scuba_s3_schedule_state",
 ]
 
 # ``AutomationTaskReport.autoTasks[].weekday`` counts from Sunday: captured
@@ -122,6 +123,43 @@ def _schedule_state(report: dict[str, Any], now: datetime, tz: tzinfo) -> Entity
     schedule = [_schedule_entry(task) for task in tasks if isinstance(task, dict)]
     start, _entry = next_scheduled_clean(schedule, now, tz)
     return EntityState(start, {"schedule": schedule})
+
+
+def scuba_s3_schedule_state(response: dict[str, Any], zone_name: str | None) -> EntityState | None:
+    """Normalize the N30 cycle-clean plan without inventing a time for a cleared plan."""
+    plan = response.get("data")
+    attributes: dict[str, Any] = {"schedule": []}
+    if zone_name is not None:
+        attributes["time_zone"] = zone_name
+    if plan is None and "data" in response:
+        return EntityState(None, attributes)
+    if not isinstance(plan, dict) or not isinstance(days := plan.get("cleanWeekList"), list):
+        return None
+    if not days:
+        return EntityState(None, attributes)
+    if any(type(day) is not int or not 0 <= day <= 7 for day in days):
+        return None
+    try:
+        start = time.fromisoformat(str(plan.get("cleanTime") or ""))
+    except ValueError:
+        return None
+    if start.tzinfo is not None:
+        return None
+
+    # The app receives a duration code in its cloud cache. Its device
+    # readback converts 45, 60 and 90 minutes to codes 1, 2 and 3.
+    duration_code = plan.get("cleanDuration")
+    duration = {1: 45, 2: 60, 3: 90}.get(duration_code) if type(duration_code) is int else None
+    attributes["schedule"] = [
+        {
+            "weekday": day,
+            "weekday_name": _WEEKDAY_NAMES[day],
+            "start_time": start.isoformat(timespec="minutes"),
+            "duration_minutes": duration,
+        }
+        for day in sorted({day % 7 for day in days})
+    ]
+    return EntityState(None, attributes)
 
 
 def report_entity_states(payload: dict[str, Any], now: datetime, tz: tzinfo) -> dict[str, EntityState]:

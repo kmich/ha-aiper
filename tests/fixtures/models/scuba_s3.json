@@ -44,8 +44,8 @@
     },
     {
       "feature": "Schedule",
-      "support": "Unconfirmed",
-      "detail": "The online shadow lacked a schedule section. The app's `/poolRobot/getTimedTask` is a candidate for read-only validation.",
+      "support": "App route identified",
+      "detail": "The S3 cycle-cleaning screen reads a cloud plan at `/deviceCleanPlan/getCleanPlanByDeviceSn`. A matching S3 response is pending.",
       "source": "[#59](https://github.com/kmich/ha-aiper/issues/59) and Aiper Android 3.8.0",
       "capability": "report_sections",
       "exposed": false

@@ -18,7 +18,6 @@ import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
-from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -252,17 +251,13 @@ def _scuba_s3_evidence(value: Any) -> Any:
 async def capture_scuba_s3_cloud(api: AiperApi, sn: str) -> dict[str, Any]:
     """Collect history and the cached cycle-cleaning schedule for one Scuba S3."""
     calls: dict[str, Any] = {}
-    for name, route, body in (
-        (
-            "history_page",
-            "/equipmentCleanRecord/gen4/n30n31t30/page",
-            {"deviceSn": sn, "pageNum": 1, "pageSize": 5},
-        ),
-        ("history_statistics", "/equipmentCleanRecord/gen4/n30n31t30/statistic", {"deviceSn": sn}),
-        ("cycle_schedule", "/deviceCleanPlan/getCleanPlanByDeviceSn", {"deviceSn": sn}),
+    for name, read in (
+        ("history_page", lambda: api.get_scuba_s3_history_page(sn, page_size=5)),
+        ("history_statistics", lambda: api.get_scuba_s3_history_statistics(sn)),
+        ("cycle_schedule", lambda: api.get_scuba_s3_cycle_schedule(sn)),
     ):
         try:
-            response = await api._call_with_zoneid(sn, partial(api._call_encrypted, "POST", route, body))
+            response = await read()
         except Exception as err:
             calls[name] = {"error": type(err).__name__}
         else:

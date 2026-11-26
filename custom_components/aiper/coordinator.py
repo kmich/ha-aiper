@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from contextlib import suppress
 from datetime import datetime, timedelta
 from typing import Any
@@ -42,11 +42,12 @@ from .coordinator_parsing import (
     _parse_cleaning_history,
     _parse_consumables,
     _parse_dt,
+    _parse_scuba_s3_cleaning_history,
 )
-from .profiles import SCUBA_S1_2025_MODEL, Capability, derive_device_profile, has_capability, model_key
+from .profiles import SCUBA_S1_2025_MODEL, SCUBA_S3_MODEL, Capability, derive_device_profile, has_capability, model_key
 from .redaction import redact_serial, redact_topic
 from .repairs import async_update_unknown_model_issues
-from .report_sections import report_entity_states
+from .report_sections import report_entity_states, scuba_s3_schedule_state
 from .s1_reconciliation import S1_FORCED_LIFECYCLE_FIELDS, S1StateReconciler
 from .state import (
     DevicesState,
@@ -386,6 +387,42 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 self._async_maintain_mqtt(), "aiper_mqtt_maintenance"
             )
 
+    async def _read_s3_metadata(
+        self, sn: str, read: Callable[[str], Awaitable[dict[str, Any]]]
+    ) -> dict[str, Any] | None:
+        try:
+            response = await read(sn)
+        except AiperAuthenticationError:
+            raise
+        except Exception as err:
+            _LOGGER.debug("Scuba S3 metadata read failed for %s: %s", redact_serial(sn), type(err).__name__)
+            return None
+        return response if self.api._is_success(response) else None
+
+    async def _async_refresh_scuba_s3_metadata(self, sn: str) -> bool:
+        """Refresh the cycle schedule and Gen 4 history independently."""
+        if (schedule := await self._read_s3_metadata(sn, self.api.get_scuba_s3_cycle_schedule)) is not None and (
+            state := scuba_s3_schedule_state(schedule, self.api.device_zone_name(sn))
+        ) is not None:
+            self._devices[sn]["scuba_s3_schedule"] = state
+
+        page = await self._read_s3_metadata(sn, self.api.get_scuba_s3_history_page)
+        if page is not None:
+            statistics = await self._read_s3_metadata(sn, self.api.get_scuba_s3_history_statistics)
+            if (history := _parse_scuba_s3_cleaning_history(page, statistics)) is not None:
+                total, hours, records = history
+                self._history_cache[sn] = {
+                    "total_count": total,
+                    "total_hours": hours,
+                    "records": records,
+                    "scuba_s3": True,
+                }
+                self._ingest_history_sessions(sn, records)
+                return True
+        # A transient error on the new endpoint must never replace valid
+        # previously fetched history with the empty legacy response.
+        return bool(self._history_cache.get(sn, {}).get("scuba_s3"))
+
     async def _async_update_data(self) -> DevicesState:
         """Fetch data from API."""
         try:
@@ -501,11 +538,15 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     if isinstance(info, dict):
                         self._devices[sn]["info"] = info
 
+                    using_s3_history = model_key(self._devices[sn]) == SCUBA_S3_MODEL and (
+                        await self._async_refresh_scuba_s3_metadata(sn)
+                    )
                     raw_hist = None
-                    try:
-                        raw_hist = await self.api.get_cleaning_history(sn)
-                    except Exception as err:
-                        _LOGGER.debug("Cleaning history fetch failed for %s: %s", redact_serial(sn), err)
+                    if not using_s3_history:
+                        try:
+                            raw_hist = await self.api.get_cleaning_history(sn)
+                        except Exception as err:
+                            _LOGGER.debug("Cleaning history fetch failed for %s: %s", redact_serial(sn), err)
                     if raw_hist is not None:
                         try:
                             total_count, total_hours, records = _parse_cleaning_history(raw_hist)
@@ -553,6 +594,10 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     self._devices[sn]["last_cleaning_mode"] = last_record.get("mode")
                     self._devices[sn]["last_cleaning_start"] = last_record.get("start")
                     self._devices[sn]["last_cleaning_duration_min"] = last_record.get("duration_min")
+                elif hist.get("scuba_s3"):
+                    self._devices[sn]["last_cleaning_mode"] = None
+                    self._devices[sn]["last_cleaning_start"] = None
+                    self._devices[sn]["last_cleaning_duration_min"] = None
 
                 # Derive supported modes only from observed info metadata (or
                 # MQTT GetWorkMode when info omits them). Family profiles
@@ -620,6 +665,19 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 else:
                     self._record_live_field_sources(sn, "rest", rest_live_fields.get(sn, set()), observed_at=now)
                     result[sn] = normalized
+                if model_key(device) == SCUBA_S3_MODEL:
+                    if isinstance(schedule_state := device.get("scuba_s3_schedule"), EntityState):
+                        result[sn]["next_scheduled_clean"] = schedule_state
+                    if self._history_cache.get(sn, {}).get("scuba_s3"):
+                        for field in (
+                            "total_cleanings",
+                            "total_cleaning_time",
+                            "total_cleaning_time_minutes",
+                            "last_cleaning_mode",
+                            "last_cleaning_start",
+                            "last_cleaning_duration",
+                        ):
+                            result[sn][field] = normalized[field]
 
             _LOGGER.debug("Coordinator updated devices=%s", [redact_serial(sn) for sn in result])
             if rest_refreshed:

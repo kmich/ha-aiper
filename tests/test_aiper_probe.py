@@ -219,16 +219,13 @@ async def test_scuba_s3_cloud_capture_uses_app_reads_and_omits_private_data() ->
     sn = "SYNTHETIC-S3-NOT-A-REAL-SERIAL"
     calls: list[tuple[str, str, dict[str, Any]]] = []
 
-    class FakeApi:
-        _is_success = staticmethod(lambda payload: payload.get("code") == 0)
-
-        async def _call_with_zoneid(self, serial: str, request: Any) -> dict[str, Any]:
-            assert serial == sn
-            return cast(dict[str, Any], await request())
-
-        async def _call_encrypted(self, method: str, route: str, body: dict[str, Any]) -> dict[str, Any]:
-            calls.append((method, route, body))
-            if route.endswith("/page"):
+    class FakeApi(aiper_probe.AiperApi):
+        async def _call_encrypted(
+            self, method: str, path: str, body: dict[str, Any] | None = None, **_kwargs: Any
+        ) -> dict[str, Any]:
+            assert body is not None
+            calls.append((method, path, body))
+            if path.endswith("/page"):
                 return {
                     "code": 0,
                     "data": {
@@ -244,7 +241,7 @@ async def test_scuba_s3_cloud_capture_uses_app_reads_and_omits_private_data() ->
                         ],
                     },
                 }
-            if route.endswith("/statistic"):
+            if path.endswith("/statistic"):
                 raise RuntimeError(f"private error content with {sn}")
             return {
                 "code": 0,
@@ -256,7 +253,9 @@ async def test_scuba_s3_cloud_capture_uses_app_reads_and_omits_private_data() ->
                 },
             }
 
-    capture = await aiper_probe.capture_scuba_s3_cloud(cast(Any, FakeApi()), sn)
+    capture = await aiper_probe.capture_scuba_s3_cloud(
+        FakeApi("test@example.com", "test-password", "asia", async_session=cast(Any, object())), sn
+    )
     assert calls == [
         ("POST", "/equipmentCleanRecord/gen4/n30n31t30/page", {"deviceSn": sn, "pageNum": 1, "pageSize": 5}),
         ("POST", "/equipmentCleanRecord/gen4/n30n31t30/statistic", {"deviceSn": sn}),
