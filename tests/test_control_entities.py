@@ -432,36 +432,42 @@ async def test_shark_late_getworkmode_creates_single_select_and_survives_poll_re
     await select_platform.async_setup_entry(hass, entry, added.extend)  # type: ignore[arg-type]
     assert not any(isinstance(entity, AiperCleaningModeSelect) for entity in added)
 
-    # Late GetWorkMode arrives -> publishes updated capabilities and adds one select dynamically.
-    coordinator._on_shadow_update(shark_sn, {"GetWorkMode": {"modeList": [1, 5]}})
-    assert supports_mode_control(coordinator.data[shark_sn])
-    mode_selects = [entity for entity in added if isinstance(entity, AiperCleaningModeSelect)]
-    assert len(mode_selects) == 1
-    assert mode_selects[0].unique_id == f"{shark_sn}_mode"
-    assert mode_selects[0].options == ["Mode 1", "Mode 5"]
+    try:
+        # Late GetWorkMode arrives -> publishes updated capabilities and adds one select dynamically.
+        coordinator._on_shadow_update(shark_sn, {"GetWorkMode": {"modeList": [1, 5]}})
+        assert supports_mode_control(coordinator.data[shark_sn])
+        mode_selects = [entity for entity in added if isinstance(entity, AiperCleaningModeSelect)]
+        assert len(mode_selects) == 1
+        assert mode_selects[0].unique_id == f"{shark_sn}_mode_selection"
+        assert mode_selects[0].options == ["Mode 1", "Mode 5"]
 
-    # Replay + REST poll must not add duplicate selects and must preserve unique ID and options.
-    coordinator._on_shadow_update(shark_sn, {"GetWorkMode": {"modeList": [1, 5]}})
-    coordinator.async_set_push_data(await coordinator._async_update_data())
-    assert len([entity for entity in added if isinstance(entity, AiperCleaningModeSelect)]) == 1
-    assert mode_selects[0].options == ["Mode 1", "Mode 5"]
+        # Replay + REST poll must not add duplicate selects and must preserve unique ID and options.
+        coordinator._on_shadow_update(shark_sn, {"GetWorkMode": {"modeList": [1, 5]}})
+        coordinator.async_set_push_data(await coordinator._async_update_data())
+        assert len([entity for entity in added if isinstance(entity, AiperCleaningModeSelect)]) == 1
+        assert mode_selects[0].options == ["Mode 1", "Mode 5"]
 
-    for unload in unloaders:
-        unload()
+        for unload in unloaders:
+            unload()
+        unloaders.clear()
 
-    # Simulated reload creates one select with the identical unique ID.
-    reloaded: list[Any] = []
-    reload_unloaders: list[Any] = []
-    reload_entry = SimpleNamespace(
-        runtime_data=SimpleNamespace(coordinator=coordinator, controller=controller),
-        async_on_unload=reload_unloaders.append,
-    )
-    await select_platform.async_setup_entry(hass, reload_entry, reloaded.extend)  # type: ignore[arg-type]
-    reloaded_selects = [entity for entity in reloaded if isinstance(entity, AiperCleaningModeSelect)]
-    assert len(reloaded_selects) == 1
-    assert reloaded_selects[0].unique_id == f"{shark_sn}_mode"
-    for unload in reload_unloaders:
-        unload()
+        # Simulated reload creates one select with the identical unique ID.
+        reloaded: list[Any] = []
+        reload_unloaders: list[Any] = []
+        reload_entry = SimpleNamespace(
+            runtime_data=SimpleNamespace(coordinator=coordinator, controller=controller),
+            async_on_unload=reload_unloaders.append,
+        )
+        await select_platform.async_setup_entry(hass, reload_entry, reloaded.extend)  # type: ignore[arg-type]
+        reloaded_selects = [entity for entity in reloaded if isinstance(entity, AiperCleaningModeSelect)]
+        assert len(reloaded_selects) == 1
+        assert reloaded_selects[0].unique_id == f"{shark_sn}_mode_selection"
+        for unload in reload_unloaders:
+            unload()
+    finally:
+        for unload in unloaders:
+            unload()
+        await coordinator.async_shutdown()
 
 
 @pytest.mark.asyncio
@@ -492,8 +498,11 @@ async def test_shark_without_modes_never_creates_mode_select(hass: HomeAssistant
         async_on_unload=unloaders.append,
     )
 
-    await select_platform.async_setup_entry(hass, entry, added.extend)  # type: ignore[arg-type]
-    coordinator.async_set_push_data(await coordinator._async_update_data())
-    assert not any(isinstance(entity, AiperCleaningModeSelect) for entity in added)
-    for unload in unloaders:
-        unload()
+    try:
+        await select_platform.async_setup_entry(hass, entry, added.extend)  # type: ignore[arg-type]
+        coordinator.async_set_push_data(await coordinator._async_update_data())
+        assert not any(isinstance(entity, AiperCleaningModeSelect) for entity in added)
+    finally:
+        for unload in unloaders:
+            unload()
+        await coordinator.async_shutdown()
