@@ -79,7 +79,7 @@ class AiperApi(AiperCommandClient):
             "mqtt_last_connected_at": getattr(client, "last_connected_at", None),
             "mqtt_last_disconnected_at": getattr(client, "last_disconnected_at", None),
             "mqtt_reconnect_count": getattr(client, "reconnect_count", None),
-            # Non-zero and rising across reconnects means the SDK really is
+            # Non-zero and rising across reconnects means the transport really is
             # re-asking us to sign, which is what keeps a reconnect from
             # retrying forever with expired Cognito credentials.
             "mqtt_credential_signing_count": getattr(client, "credential_signing_count", None),
