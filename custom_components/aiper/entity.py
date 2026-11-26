@@ -26,31 +26,31 @@ def async_setup_dynamic_device_entities[EntityT: Entity](
     create_device_entities: Callable[[str, DeviceState], list[EntityT]],
     extra_entities: Sequence[Entity] = (),
 ) -> None:
-    """Create entities for current coordinator devices and listen for new ones."""
-    known_devices: set[str] = set()
+    """Create entities for current coordinator devices and reconcile new capabilities."""
+    known_entity_keys: set[str] = set()
 
-    @callback
-    def _async_add_new_devices() -> None:
+    def _collect_new_entities() -> list[EntityT]:
         if not coordinator.data:
-            return
+            return []
         new_entities: list[EntityT] = []
         for sn, device_data in coordinator.data.items():
-            if sn not in known_devices:
-                known_devices.add(sn)
-                new_entities.extend(create_device_entities(sn, device_data))
+            for entity in create_device_entities(sn, device_data):
+                entity_key = entity.unique_id or f"{sn}:{type(entity).__name__}"
+                if entity_key not in known_entity_keys:
+                    known_entity_keys.add(entity_key)
+                    new_entities.append(entity)
+        return new_entities
+
+    @callback
+    def _async_add_new_entities() -> None:
+        new_entities = _collect_new_entities()
         if new_entities:
             async_add_entities(new_entities)
 
-    initial_entities: list[Entity] = []
-    if coordinator.data:
-        for sn, device_data in coordinator.data.items():
-            known_devices.add(sn)
-            initial_entities.extend(create_device_entities(sn, device_data))
-
-    initial_entities.extend(extra_entities)
+    initial_entities: list[Entity] = [*_collect_new_entities(), *extra_entities]
     async_add_entities(initial_entities)
     if hasattr(entry, "async_on_unload"):
-        entry.async_on_unload(coordinator.async_add_listener(_async_add_new_devices))
+        entry.async_on_unload(coordinator.async_add_listener(_async_add_new_entities))
 
 
 def device_info_for(sn: str, device_data: DeviceState | None) -> DeviceInfo:

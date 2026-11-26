@@ -398,3 +398,102 @@ def test_cloud_sensors_report_connection_health() -> None:
     assert state_sensor.extra_state_attributes["connect_attempts"] == 1
     assert state_sensor.available is True
     assert updated_sensor.native_value == datetime(2026, 9, 1, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_shark_late_getworkmode_creates_single_select_and_survives_poll_reload(hass: HomeAssistant) -> None:
+    """Late Shark mode capabilities create one select dynamically without duplicates on replay/reload."""
+    from types import SimpleNamespace
+
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.aiper import select as select_platform
+    from custom_components.aiper.helpers import supports_mode_control
+
+    shark_sn = "SHK123"
+
+    class SharkApi(CommandApi):
+        async def get_devices(self) -> list[dict[str, Any]]:
+            return [{"sn": shark_sn, "model": "Shark_Pro", "name": "Shark", "online": True}]
+
+    api = SharkApi()
+    coordinator = make_coordinator(api, hass=hass)
+    coordinator._last_metadata_fetch = {shark_sn: dt_util.utcnow()}
+    coordinator.data = await coordinator._async_update_data()
+    controller = AiperDeviceController(cast(Any, api), coordinator)
+
+    unloaders: list[Any] = []
+    added: list[Any] = []
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(coordinator=coordinator, controller=controller),
+        async_on_unload=unloaders.append,
+    )
+
+    await select_platform.async_setup_entry(hass, entry, added.extend)  # type: ignore[arg-type]
+    assert not any(isinstance(entity, AiperCleaningModeSelect) for entity in added)
+
+    # Late GetWorkMode arrives -> publishes updated capabilities and adds one select dynamically.
+    coordinator._on_shadow_update(shark_sn, {"GetWorkMode": {"modeList": [1, 5]}})
+    assert supports_mode_control(coordinator.data[shark_sn])
+    mode_selects = [entity for entity in added if isinstance(entity, AiperCleaningModeSelect)]
+    assert len(mode_selects) == 1
+    assert mode_selects[0].unique_id == f"{shark_sn}_mode"
+    assert mode_selects[0].options == ["Mode 1", "Mode 5"]
+
+    # Replay + REST poll must not add duplicate selects and must preserve unique ID and options.
+    coordinator._on_shadow_update(shark_sn, {"GetWorkMode": {"modeList": [1, 5]}})
+    coordinator.async_set_push_data(await coordinator._async_update_data())
+    assert len([entity for entity in added if isinstance(entity, AiperCleaningModeSelect)]) == 1
+    assert mode_selects[0].options == ["Mode 1", "Mode 5"]
+
+    for unload in unloaders:
+        unload()
+
+    # Simulated reload creates one select with the identical unique ID.
+    reloaded: list[Any] = []
+    reload_unloaders: list[Any] = []
+    reload_entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(coordinator=coordinator, controller=controller),
+        async_on_unload=reload_unloaders.append,
+    )
+    await select_platform.async_setup_entry(hass, reload_entry, reloaded.extend)  # type: ignore[arg-type]
+    reloaded_selects = [entity for entity in reloaded if isinstance(entity, AiperCleaningModeSelect)]
+    assert len(reloaded_selects) == 1
+    assert reloaded_selects[0].unique_id == f"{shark_sn}_mode"
+    for unload in reload_unloaders:
+        unload()
+
+
+@pytest.mark.asyncio
+async def test_shark_without_modes_never_creates_mode_select(hass: HomeAssistant) -> None:
+    """A Shark that never advertises supported mode IDs never gains a mode select."""
+    from types import SimpleNamespace
+
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.aiper import select as select_platform
+
+    shark_sn = "SHKNOMODE"
+
+    class SharkApi(CommandApi):
+        async def get_devices(self) -> list[dict[str, Any]]:
+            return [{"sn": shark_sn, "model": "Shark_Pro", "name": "Shark", "online": True}]
+
+    api = SharkApi()
+    coordinator = make_coordinator(api, hass=hass)
+    coordinator._last_metadata_fetch = {shark_sn: dt_util.utcnow()}
+    coordinator.data = await coordinator._async_update_data()
+    controller = AiperDeviceController(cast(Any, api), coordinator)
+
+    unloaders: list[Any] = []
+    added: list[Any] = []
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(coordinator=coordinator, controller=controller),
+        async_on_unload=unloaders.append,
+    )
+
+    await select_platform.async_setup_entry(hass, entry, added.extend)  # type: ignore[arg-type]
+    coordinator.async_set_push_data(await coordinator._async_update_data())
+    assert not any(isinstance(entity, AiperCleaningModeSelect) for entity in added)
+    for unload in unloaders:
+        unload()
