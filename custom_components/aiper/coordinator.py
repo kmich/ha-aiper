@@ -17,6 +17,12 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .api import AiperApi, AiperAuthenticationError
+from .cleaning_sessions import (
+    CleaningSession,
+    SessionLedger,
+    candidate_from_finish,
+    candidate_from_record,
+)
 from .command_tracker import (
     CLEAN_PATH_PENDING_TIMEOUT_SECONDS,
     PENDING_TIMEOUT_SECONDS,
@@ -74,6 +80,12 @@ S1_CAPABILITY_REFRESH_INTERVAL = timedelta(minutes=5)
 MAX_CACHED_REST_FAILURES = 3
 CLEAN_PATH_STORE_VERSION = 1
 LEARNED_ROUTES_STORE_VERSION = 1
+CLEANING_SESSIONS_STORE_VERSION = 1
+# Newest REST history rows offered to the session ledger on each metadata refresh.
+SESSION_HISTORY_ROWS = 5
+# Completions older than this before startup (retained MQTT, backfilled history)
+# are recorded but never announced.
+SESSION_QUIET_MARGIN = timedelta(minutes=5)
 # Coalesce clean-path cache writes (seconds).
 CLEAN_PATH_SAVE_DELAY = 5
 
@@ -150,6 +162,19 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             if config_entry is not None
             else None
         )
+        self._sessions_store: Store[dict[str, Any]] | None = (
+            Store(
+                hass,
+                CLEANING_SESSIONS_STORE_VERSION,
+                f"{DOMAIN}.cleaning_sessions.{config_entry.entry_id}",
+            )
+            if config_entry is not None
+            else None
+        )
+        # Reconciled cleaning runs from MQTT reports and REST history, and
+        # which completions were already announced.
+        self._session_ledger = SessionLedger()
+        self._session_quiet_before = dt_util.utcnow() - SESSION_QUIET_MARGIN
         self._selected_mode_cache: dict[str, int] = {}
         self._mqtt_mode_ids_cache: dict[str, list[int]] = {}
         # Last running GetWorkModeReport task per device (Scuba V3 Ultra); its
@@ -502,6 +527,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                             "records": records,
                             "raw": raw_hist,
                         }
+                        self._ingest_history_sessions(sn, records)
 
                     raw_cons = None
                     try:
@@ -853,6 +879,10 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             summary = _finished_task_summary(finish, self._active_tasks.get(sn), dt_util.get_default_time_zone())
             for key, value in summary.items():
                 updates[key] = EntityState(value)
+            candidate = candidate_from_finish(sn, finish, summary)
+            if candidate is not None:
+                self._session_ledger.ingest(sn, candidate, quiet_before=self._session_quiet_before)
+                self._save_sessions()
         if has_capability(raw_device, Capability.REPORT_SECTIONS):
             updates.update(report_entity_states(payload, dt_util.now(), dt_util.get_default_time_zone()))
 
@@ -932,6 +962,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             "field_sources": self.diagnostic_field_sources,
             "state_reconciliation": self._s1.reconciliation,
             "mqtt_replay_suppressions": self._s1.replay_suppressions,
+            "cleaning_sessions": self._session_ledger.summary(),
             "device_model_images": image_urls,
             "command_state": self._command_state,
         }
@@ -1039,6 +1070,52 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             normalized = _clean_path_value(value)
             if isinstance(sn, str) and normalized in (0, 1):
                 self._clean_path_cache[sn] = normalized
+
+    # -----------------
+    # Cleaning sessions
+    # -----------------
+
+    async def async_restore_cleaning_sessions(self) -> None:
+        """Restore recognized sessions before any history or retained MQTT is processed."""
+        store = self._sessions_store
+        if store is None:
+            return
+        try:
+            restored = await store.async_load()
+        except Exception as err:
+            _LOGGER.debug("Cleaning-session restore failed: %s", err)
+            return
+        self._session_ledger = SessionLedger.from_store(restored)
+
+    def _save_sessions(self) -> None:
+        """Persist the ledger, coalescing bursts of writes."""
+        if self._sessions_store is not None:
+            self._sessions_store.async_delay_save(self._session_ledger.to_store, CLEAN_PATH_SAVE_DELAY)
+
+    def _ingest_history_sessions(self, sn: str, records: list[dict[str, Any]]) -> None:
+        """Offer the newest REST history rows to the ledger.
+
+        The first history seen for a device seeds the ledger quietly so that
+        installing or upgrading never announces old runs.
+        """
+        ledger = self._session_ledger
+        first = not ledger.is_baselined(sn)
+        for record in records[:SESSION_HISTORY_ROWS]:
+            candidate = candidate_from_record(sn, record)
+            if candidate is not None:
+                ledger.ingest(sn, candidate, quiet_before=self._session_quiet_before)
+        if first:
+            ledger.baseline(sn)
+        self._save_sessions()
+
+    def pending_completions(self) -> list[tuple[str, CleaningSession]]:
+        """Return confirmed completions that have not been announced yet."""
+        return self._session_ledger.pending()
+
+    def mark_completion_announced(self, sn: str, session_id: str) -> None:
+        """Record (and persist) that a completion was announced."""
+        if self._session_ledger.mark_announced(sn, session_id):
+            self._save_sessions()
 
     async def async_restore_learned_routes(self) -> None:
         """Restore learned per-model command routes and persist future changes.
