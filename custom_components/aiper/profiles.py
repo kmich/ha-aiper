@@ -56,6 +56,7 @@ class Capability(StrEnum):
 SURFER_MODEL_MARKERS = (DeviceFamily.SURFER.value,)
 SHARK_MODEL_MARKERS = (DeviceFamily.SHARK.value,)
 SCUBA_S1_2025_MODEL = "scuba_s1_2025"
+SCUBA_S3_MODEL = "scuba_s3"
 SCUBA_P1_PRO_MODEL = "scuba_p1_pro"
 SCUBA_V3_MODEL = "scuba_v3"
 SCUBA_V3_ULTRA_MODEL = "scuba_v3_ultra"
@@ -115,6 +116,19 @@ SCUBA_P1_PRO_CAPABILITIES = SCUBA_CAPABILITIES - frozenset(
         Capability.WATER_TEMPERATURE,
         Capability.CHARGE_TYPE,
         Capability.CATERPILLAR_TREAD,
+        Capability.PROPELLER,
+    }
+)
+
+# The Scuba S3 identifies itself as ``Scuba_S3``. Two independent field
+# reports (issues #29 and #59) show an MQTT Machine shadow with no ``temp``
+# field and a consumables list of Roller Brush, Caterpillar Tread, and
+# Replaceable MicroMesh Ultra-fine Filter. Charge-type and propeller data
+# are absent, so those entities stay off; clean-path queries succeed.
+SCUBA_S3_CAPABILITIES = SCUBA_CAPABILITIES - frozenset(
+    {
+        Capability.WATER_TEMPERATURE,
+        Capability.CHARGE_TYPE,
         Capability.PROPELLER,
     }
 )
@@ -291,9 +305,9 @@ SCUBA_V3_ULTRA_STATUS_SEMANTICS = StatusSemantics(
 
 MODEL_STATUS_SEMANTICS: dict[str, StatusSemantics] = {
     SCUBA_S1_2025_MODEL: SCUBA_S1_2025_STATUS_SEMANTICS,
+    SCUBA_S3_MODEL: SCUBA_S3_STATUS_SEMANTICS,
     SCUBA_V3_MODEL: SCUBA_V3_STATUS_SEMANTICS,
     SCUBA_V3_ULTRA_MODEL: SCUBA_V3_ULTRA_STATUS_SEMANTICS,
-    "scuba_s3": SCUBA_S3_STATUS_SEMANTICS,
 }
 
 
@@ -395,6 +409,8 @@ def derive_device_profile(device: dict[str, Any]) -> DeviceProfile:
     if family == DeviceFamily.SCUBA:
         if key == SCUBA_S1_2025_MODEL:
             capabilities = set(SCUBA_S1_2025_CAPABILITIES)
+        elif key == SCUBA_S3_MODEL:
+            capabilities = set(SCUBA_S3_CAPABILITIES)
         elif key == SCUBA_P1_PRO_MODEL:
             capabilities = set(SCUBA_P1_PRO_CAPABILITIES)
         elif key == SCUBA_V3_MODEL:
@@ -423,6 +439,7 @@ def derive_device_profile(device: dict[str, Any]) -> DeviceProfile:
     if device.get("temp") is not None and key not in (
         SCUBA_S1_2025_MODEL,
         SCUBA_P1_PRO_MODEL,
+        SCUBA_S3_MODEL,
         SCUBA_V3_MODEL,
     ):
         capabilities.add(Capability.WATER_TEMPERATURE)

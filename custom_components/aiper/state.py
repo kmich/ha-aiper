@@ -8,6 +8,7 @@ from .const import CLEAN_PATH_MAP, Status, mode_label, status_label, status_runn
 from .device_images import device_model_image_url
 from .profiles import (
     SCUBA_S1_2025_MODEL,
+    SCUBA_S3_MODEL,
     SCUBA_V3_ULTRA_MODEL,
     Capability,
     DeviceFamily,
@@ -78,10 +79,12 @@ from .w2_state import (
     normalize_w2_wqs_update as normalize_w2_wqs_update,
 )
 
+_MINUTE_RUNTIME_MODELS = (SCUBA_S1_2025_MODEL, SCUBA_S3_MODEL)
+
 
 def _runtime_to_hours(device: RawDeviceData, value: Any, *, key: str | None = None) -> float | None:
     """Normalize model-specific current-cycle runtime units to hours."""
-    if (key if key is not None else model_key(device)) == SCUBA_S1_2025_MODEL:
+    if (key if key is not None else model_key(device)) in _MINUTE_RUNTIME_MODELS:
         minutes = _coerce_float(value)
         return round(minutes / 60.0, 2) if minutes is not None else None
     return _centihours_to_hours(value)
@@ -92,14 +95,15 @@ def _current_runtime_to_hours(
     value: Any,
     running: bool | None,
 ) -> float | None:
-    """Return cleaning runtime without exposing the S1's state timer.
+    """Return cleaning runtime without exposing S1/S3 state timers.
 
-    Scuba_S1_2025 firmware V2.0.1 reuses ``runTime`` for time spent in its
-    current machine state. It resets when charging begins and then increments
-    while charging, so it is a cleaning timer only while status is running.
+    Both ``Scuba_S1_2025`` (firmware V2.0.1) and ``Scuba_S3`` (issues #29 and
+    #59) reuse ``runTime`` / ``run_time`` for time spent in the current machine
+    state, resetting when charging starts and incrementing once per minute while
+    charging. Expose it as cleaning runtime only when running is not False.
     """
     key = model_key(device)
-    if key == SCUBA_S1_2025_MODEL and running is False:
+    if key in _MINUTE_RUNTIME_MODELS and running is False:
         return 0.0
     return _runtime_to_hours(device, value, key=key)
 
