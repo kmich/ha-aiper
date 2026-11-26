@@ -77,7 +77,7 @@ LEARNED_ROUTES_STORE_VERSION = 1
 # Coalesce clean-path cache writes (seconds).
 CLEAN_PATH_SAVE_DELAY = 5
 
-# How long MQTT must stay down before we stop trusting the AWS CRT SDK's own
+# How long MQTT must stay down before we stop waiting on the transport's own
 # reconnect loop and rebuild the connection ourselves.
 MQTT_RECONNECT_GRACE_SECONDS = 180
 
@@ -302,11 +302,9 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
 
         Runs on every poll, as a backgrounded task (see _async_update_data) so
         a slow reconnect attempt never delays the REST fetch that's supposed
-        to keep working while MQTT is down. Refreshing the credential
-        snapshot from here is what lets the AWS CRT's reconnect loop sign
-        with valid credentials instead of the ones it captured at first
-        connect -- the signing delegate itself must never block, so it can
-        only read a snapshot somebody else keeps current.
+        to keep working while MQTT is down. Refreshing credentials from here
+        keeps the cached Cognito credentials warm ahead of expiry alongside the
+        transport's async reconnect credential resolver.
         """
         with suppress(Exception):
             await self.api.async_refresh_mqtt_credentials()
@@ -621,9 +619,10 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
     def handle_shadow_update(self, sn: str, data: dict[str, Any]) -> None:
         """Handle a normalized MQTT payload for one device.
 
-        The AWS IoT SDK invokes subscription callbacks on a background thread,
-        so the update is handed to the Home Assistant event loop. During
-        shutdown the loop may already be closed; late messages are dropped.
+        The MQTT transport invokes subscription callbacks on the event loop
+        (and ``call_soon_threadsafe`` safely decouples callback execution into
+        Home Assistant's loop). During shutdown the loop may already be
+        closed; late messages are dropped.
         """
         with suppress(RuntimeError):
             self.hass.loop.call_soon_threadsafe(self._apply_shadow_update, str(sn), data)

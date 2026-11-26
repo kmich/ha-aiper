@@ -30,15 +30,13 @@ from .redaction import redact_serial, redact_topic
 
 _LOGGER = logging.getLogger(__name__)
 
-# Refresh the MQTT signing snapshot once the credentials are within this
-# window of expiring. Comfortably larger than the coordinator poll interval
-# so a refresh is never missed.
+# Retained as an exported compatibility constant alongside api.py.
 MQTT_CREDENTIALS_REFRESH_MARGIN_SECONDS = 600
 MQTT_SUBSCRIBE_RETRY_BASE_SECONDS = 30.0
 MQTT_SUBSCRIBE_RETRY_MAX_SECONDS = 1800.0
 MQTT_SUBSCRIBE_MAX_RETRIES = 5
 
-# MQTT payload callback: called as ``callback(sn, payload)`` from an AWS CRT thread.
+# MQTT payload callback: called as ``callback(sn, payload)`` from the asyncio MQTT transport.
 ShadowCallback = Callable[[str, dict[str, Any]], None]
 
 
@@ -58,8 +56,6 @@ class AiperMqttClient(AiperRestClient):
         super().__init__(username, password, region, async_session=async_session, time_zone=time_zone)
         self._mqtt_client: Any = None
         self._mqtt_first_disconnected_at: datetime | None = None
-        self._mqtt_credentials_snapshot: AwsIotCredentials | None = None
-        self._mqtt_credentials_refreshing = False
         self._mqtt_last_rebuild_at: float | None = None
         self.mqtt_debug = False
         self._shadow_callbacks: dict[str, list[ShadowCallback]] = {}
@@ -74,8 +70,10 @@ class AiperMqttClient(AiperRestClient):
 
         # Serialize command sends per device SN so that ack correlation is reliable.
         self._cmd_locks: dict[str, asyncio.Lock] = {}
-        # Serialize topic re-subscriptions across overlapping reconnect callbacks.
+        # Serialize topic re-subscriptions across overlapping reconnect callbacks and
+        # track background tasks so disconnect_mqtt() can cancel and await them.
         self._resubscribe_lock = asyncio.Lock()
+        self._resubscribe_tasks: set[asyncio.Task[None]] = set()
         # Connection-scoped broker acknowledgement tracking for subscriptions.
         self._mqtt_connection_generation = 0
         self._acked_topics_by_sn: dict[str, set[str]] = {}
@@ -115,73 +113,8 @@ class AiperMqttClient(AiperRestClient):
             secret_access_key=creds["SecretKey"],
             session_token=creds.get("SessionToken", ""),
         )
-        self._mqtt_credentials_snapshot = snapshot
         self.connection.mark_credentials_refreshed()
         return snapshot
-
-    def _mqtt_credentials_due_for_refresh(self) -> bool:
-        """Whether the cached AWS credentials are close enough to expiry to renew."""
-        if self._aws_credentials_exp is None:
-            return True
-        # Cap the margin at half the configured TTL so a short debug-mode TTL
-        # (which can be smaller than the production margin) still produces a
-        # clean periodic due/not-due cycle instead of being "due" constantly.
-        margin = min(MQTT_CREDENTIALS_REFRESH_MARGIN_SECONDS, self.aws_credentials_ttl // 2)
-        return (self._aws_credentials_exp - time.time()) < margin
-
-    def _schedule_mqtt_credentials_refresh(self) -> None:
-        """Kick off a credential refresh without waiting for it.
-
-        Safe to call from the AWS CRT's threads: it only hands work to the
-        event loop and returns immediately. Never await this from inside the
-        signing delegate -- see `_current_mqtt_credentials`.
-        """
-        loop = self._async_loop
-        if loop is None or not loop.is_running():
-            return
-
-        # Guard the check-then-set with the same lock used elsewhere for
-        # cross-thread state: this can be invoked from multiple AWS CRT
-        # threads (not just the event loop thread) per _current_mqtt_credentials's
-        # docstring, and an unguarded check-then-set could let two callers
-        # both pass the guard and schedule duplicate refreshes.
-        with self._lock:
-            if self._mqtt_credentials_refreshing:
-                return
-            self._mqtt_credentials_refreshing = True
-
-        async def _refresh() -> None:
-            try:
-                await self.async_refresh_mqtt_credentials()
-            except Exception as err:
-                _LOGGER.debug("Background MQTT credential refresh failed: %s", err)
-            finally:
-                with self._lock:
-                    self._mqtt_credentials_refreshing = False
-
-        try:
-            loop.call_soon_threadsafe(lambda: loop.create_task(_refresh()))
-        except RuntimeError as err:
-            # The loop can be closing/closed if this races with Home
-            # Assistant shutdown. If scheduling itself fails, _refresh()
-            # never runs, so its `finally` never resets the flag -- reset it
-            # here instead, or the opportunistic refresh path stays silently
-            # disabled for the rest of this AiperApi instance's life.
-            _LOGGER.debug("Could not schedule MQTT credential refresh: %s", err)
-            with self._lock:
-                self._mqtt_credentials_refreshing = False
-
-    def _current_mqtt_credentials(self) -> AwsIotCredentials | None:
-        """Return the credentials the MQTT transport should sign with.
-
-        Called synchronously by the AWS CRT, sometimes on the Home Assistant
-        event loop thread, so this must return immediately. It reads the
-        snapshot and, if that snapshot is getting old, schedules a refresh
-        for next time rather than waiting for one now.
-        """
-        if self._mqtt_credentials_due_for_refresh():
-            self._schedule_mqtt_credentials_refresh()
-        return self._mqtt_credentials_snapshot
 
     async def connect_mqtt(self) -> bool:
         """Connect to AWS IoT MQTT broker."""
@@ -212,7 +145,6 @@ class AiperMqttClient(AiperRestClient):
                 connect_timeout=10.0,
                 operation_timeout=5.0,
                 on_reconnected=self._on_mqtt_reconnected,
-                credentials_resolver=self._current_mqtt_credentials,
                 async_credentials_resolver=self.async_refresh_mqtt_credentials,
             )
 
@@ -236,10 +168,10 @@ class AiperMqttClient(AiperRestClient):
     async def reconnect_mqtt(self) -> bool:
         """Tear down and rebuild the MQTT connection with fresh credentials.
 
-        Backstop for when the SDK's own reconnect loop cannot recover -- a
-        wedged socket, or credentials that went stale before the delegate
-        was consulted. Rebuilding is heavier than letting the SDK retry, so
-        the coordinator only calls this after a long outage.
+        Backstop for when the transport's own reconnect loop cannot recover --
+        a wedged socket, or credentials that went stale before the async
+        resolver ran. Rebuilding is heavier than letting the transport retry,
+        so the coordinator only calls this after a long outage.
         """
         _LOGGER.warning("Rebuilding AWS IoT MQTT connection after prolonged disconnect")
         self._mqtt_last_rebuild_at = time.time()
@@ -279,9 +211,9 @@ class AiperMqttClient(AiperRestClient):
         else:
             if self._mqtt_first_disconnected_at is None:
                 self._mqtt_first_disconnected_at = datetime.now(UTC)
-            # Sync the tracker when a drop is first observed here (e.g. via a
-            # CRT-thread interruption we don't otherwise see), but don't stomp
-            # a more specific state like RECONNECTING / CREDENTIALS_STALE.
+            # Sync the tracker when a transport drop is first observed here,
+            # without stomping a more specific state like RECONNECTING /
+            # CREDENTIALS_STALE.
             if self.connection.state in (ConnectionState.CONNECTED, ConnectionState.CONNECTING):
                 self.connection.mark_disconnected()
         return connected
@@ -304,16 +236,18 @@ class AiperMqttClient(AiperRestClient):
         loop = self._async_loop
         if loop is None or not loop.is_running():
             return
-        future = asyncio.run_coroutine_threadsafe(self._resubscribe_all_devices(), loop)
+        task = loop.create_task(self._resubscribe_all_devices())
+        self._resubscribe_tasks.add(task)
 
-        def _log_error(done: Any) -> None:
+        def _on_done(done: asyncio.Task[None]) -> None:
+            self._resubscribe_tasks.discard(done)
             if done.cancelled():
                 return
             exc = done.exception()
             if exc is not None:
                 _LOGGER.debug("MQTT reconnect re-subscribe failed: %s", exc)
 
-        future.add_done_callback(_log_error)
+        task.add_done_callback(_on_done)
 
     def _reset_mqtt_subscription_state(self) -> None:
         """Clear connection-scoped broker subscription acknowledgements and retry state."""
@@ -780,6 +714,12 @@ class AiperMqttClient(AiperRestClient):
         client = self._mqtt_client
         self._mqtt_client = None
         self._reset_mqtt_subscription_state()
+        pending = list(self._resubscribe_tasks)
+        self._resubscribe_tasks.clear()
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
         if client is None:
             return
         with suppress(Exception):

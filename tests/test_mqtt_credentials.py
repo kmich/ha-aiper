@@ -1,16 +1,9 @@
-"""Tests for AWS IoT MQTT credential refresh and reconnection.
-
-These cover the invariants behind the fix for the connection never coming
-back after AWS_ERROR_MQTT_UNEXPECTED_HANGUP (issue #27). The signing
-delegate running on the event loop thread is the subtle one: an earlier
-attempt at this fix blocked there and deadlocked Home Assistant on startup.
-"""
+"""Tests for AWS IoT MQTT credential refresh and transport signing resolution."""
 
 from __future__ import annotations
 
 import asyncio
 import json
-import threading
 import time
 from typing import Any, cast
 
@@ -19,7 +12,6 @@ from aiohttp import ClientResponseError
 
 from custom_components.aiper.api import (
     AWS_CREDENTIALS_TTL_DEBUG_SECONDS,
-    MQTT_CREDENTIALS_REFRESH_MARGIN_SECONDS,
     AiperApi,
 )
 from custom_components.aiper.mqtt import AwsIotCredentials, AwsIotMqttTransport
@@ -33,100 +25,32 @@ def _creds(key: str = "AKIAFIRST") -> AwsIotCredentials:
     return AwsIotCredentials(access_key_id=key, secret_access_key="secret", session_token="token")
 
 
-def test_credential_delegate_returns_snapshot_without_blocking() -> None:
-    """The signer must answer immediately from the cached snapshot."""
+@pytest.mark.asyncio
+async def test_async_refresh_mqtt_credentials_builds_snapshot_and_handles_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """async_refresh_mqtt_credentials() converts Cognito creds and updates metrics."""
     api = _api()
-    api._mqtt_credentials_snapshot = _creds()
-    api._aws_credentials_exp = time.time() + 3300
+    creds_payloads: list[dict[str, Any] | None] = [
+        None,
+        {"AccessKeyId": "AKIAFRESH", "SecretKey": "secret", "SessionToken": "token"},
+    ]
 
-    started = time.monotonic()
-    resolved = api._current_mqtt_credentials()
-    elapsed = time.monotonic() - started
+    async def fake_get_aws_credentials() -> dict[str, Any] | None:
+        return creds_payloads.pop(0)
 
-    assert resolved is not None
-    assert resolved.access_key_id == "AKIAFIRST"
-    # Anything slow here means we reintroduced blocking work in the delegate.
-    assert elapsed < 0.05
+    monkeypatch.setattr(api, "get_aws_credentials", fake_get_aws_credentials)
 
+    assert await api.async_refresh_mqtt_credentials() is None
+    assert api.connection.credential_refresh_count == 0
 
-def test_credential_delegate_never_blocks_on_the_event_loop() -> None:
-    """Regression guard for the deadlock that made v1.2.5 unable to connect.
-
-    The AWS CRT calls the delegate synchronously on the thread driving the
-    connection, which during initial connect is the Home Assistant event
-    loop. If the delegate waits on a coroutine scheduled onto that same
-    loop, that thread -- which IS the loop -- blocks waiting on itself and
-    never comes back.
-
-    To actually reproduce that shape, this test runs its own event loop in a
-    dedicated thread and calls the delegate directly from inside that loop's
-    running coroutine (not via asyncio.to_thread, which would call it from a
-    *worker* thread and leave the loop thread free -- that variant would
-    pass even with a reintroduced blocking delegate, since the free loop
-    thread could still service it). A `Thread.join(timeout=...)` from the
-    main test thread gives a hard, OS-level bound: if the delegate really
-    deadlocks the loop thread, this test fails cleanly instead of hanging
-    the whole suite forever.
-    """
-    api = _api()
-    api._mqtt_credentials_snapshot = _creds()
-    # Deliberately stale, so the refresh path is exercised too.
-    api._aws_credentials_exp = time.time() + 1
-
-    refreshes: list[str] = []
-
-    async def fake_refresh() -> AwsIotCredentials | None:
-        refreshes.append("called")
-        return _creds("AKIASECOND")
-
-    api.async_refresh_mqtt_credentials = fake_refresh  # type: ignore[method-assign]
-
-    results: list[AwsIotCredentials | None] = []
-    errors: list[BaseException] = []
-
-    def _run_loop_and_call_delegate_on_it() -> None:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        api._async_loop = loop
-
-        async def _drive() -> None:
-            # A plain synchronous call executing on the thread currently
-            # running this loop -- exactly how the AWS CRT invokes it.
-            results.append(api._current_mqtt_credentials())
-            # Let the loop run one more iteration so the scheduled refresh
-            # task (proof it wasn't awaited inline) gets a chance to run.
-            await asyncio.sleep(0)
-
-        try:
-            loop.run_until_complete(_drive())
-        except BaseException as err:  # noqa: BLE001 - capture anything for the assertion below
-            errors.append(err)
-        finally:
-            loop.close()
-
-    thread = threading.Thread(target=_run_loop_and_call_delegate_on_it, daemon=True)
-    thread.start()
-    thread.join(timeout=2.0)
-
-    assert not thread.is_alive(), (
-        "Calling the credentials delegate on the event loop thread hung -- "
-        "it must never block waiting on that same loop."
+    snapshot = await api.async_refresh_mqtt_credentials()
+    assert snapshot == AwsIotCredentials(
+        access_key_id="AKIAFRESH",
+        secret_access_key="secret",
+        session_token="token",
     )
-    assert not errors
-    assert results and results[0] is not None
-    assert refreshes == ["called"]
-
-
-def test_stale_credentials_schedule_a_refresh() -> None:
-    """A snapshot near expiry should trigger a background renewal."""
-    api = _api()
-    api._mqtt_credentials_snapshot = _creds()
-
-    api._aws_credentials_exp = time.time() + MQTT_CREDENTIALS_REFRESH_MARGIN_SECONDS - 10
-    assert api._mqtt_credentials_due_for_refresh() is True
-
-    api._aws_credentials_exp = time.time() + MQTT_CREDENTIALS_REFRESH_MARGIN_SECONDS + 600
-    assert api._mqtt_credentials_due_for_refresh() is False
+    assert api.connection.credential_refresh_count == 1
 
 
 @pytest.mark.asyncio
@@ -317,28 +241,6 @@ async def test_concurrent_credential_fetches_are_serialized(monkeypatch: pytest.
     assert result2 is result1
 
 
-def test_refresh_margin_scales_down_for_a_short_ttl() -> None:
-    """A debug-mode TTL shorter than the production margin must still
-    produce a clean due/not-due cycle instead of being 'due' immediately
-    and permanently after every fetch.
-
-    Regression test: MQTT_CREDENTIALS_REFRESH_MARGIN_SECONDS (600) is larger
-    than AWS_CREDENTIALS_TTL_DEBUG_SECONDS (300), so an unscaled margin would
-    make _mqtt_credentials_due_for_refresh() always True in debug mode.
-    """
-    api = _api()
-    api._mqtt_credentials_snapshot = _creds()
-    api.aws_credentials_ttl = AWS_CREDENTIALS_TTL_DEBUG_SECONDS
-
-    # Freshly minted: comfortably not due yet.
-    api._aws_credentials_exp = time.time() + AWS_CREDENTIALS_TTL_DEBUG_SECONDS
-    assert api._mqtt_credentials_due_for_refresh() is False
-
-    # Past the halfway point of the short TTL: due.
-    api._aws_credentials_exp = time.time() + (AWS_CREDENTIALS_TTL_DEBUG_SECONDS // 2) - 1
-    assert api._mqtt_credentials_due_for_refresh() is True
-
-
 def test_credential_fetch_uses_whatever_ttl_is_set_at_fetch_time() -> None:
     """get_aws_credentials() must stamp the expiry from the *current* TTL.
 
@@ -370,47 +272,6 @@ def test_credential_fetch_uses_whatever_ttl_is_set_at_fetch_time() -> None:
         <= api._aws_credentials_exp
         <= before + AWS_CREDENTIALS_TTL_DEBUG_SECONDS + 5
     )
-
-
-def test_scheduling_a_refresh_resets_the_flag_if_scheduling_itself_fails() -> None:
-    """If call_soon_threadsafe raises, the in-progress flag must not stick.
-
-    Regression test: the flag is set True before the refresh task is
-    actually scheduled. If scheduling fails (e.g. the event loop is closing
-    during Home Assistant shutdown, racing a live CRT signing callback), the
-    scheduled coroutine never runs, so its `finally` never resets the flag --
-    permanently disabling the opportunistic background refresh path for the
-    rest of that AiperApi instance's life unless the failure path resets it.
-    """
-    api = _api()
-    api._mqtt_credentials_snapshot = _creds()
-
-    class _ClosingLoop:
-        def is_running(self) -> bool:
-            return True
-
-        def call_soon_threadsafe(self, *args: Any, **kwargs: Any) -> None:
-            raise RuntimeError("Event loop is closed")
-
-    api._async_loop = cast(Any, _ClosingLoop())
-
-    api._schedule_mqtt_credentials_refresh()
-
-    assert api._mqtt_credentials_refreshing is False
-    # And a subsequent, successful attempt must still be possible -- i.e.
-    # the guard doesn't stay tripped from the failed one.
-    scheduled: list[str] = []
-
-    class _WorkingLoop:
-        def is_running(self) -> bool:
-            return True
-
-        def call_soon_threadsafe(self, cb: Any) -> None:
-            scheduled.append("scheduled")
-
-    api._async_loop = cast(Any, _WorkingLoop())
-    api._schedule_mqtt_credentials_refresh()
-    assert scheduled == ["scheduled"]
 
 
 def test_resolve_aws_region_prefers_reported_region_then_endpoint_then_default() -> None:

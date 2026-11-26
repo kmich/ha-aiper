@@ -78,9 +78,8 @@ async def test_openid_without_token_duration_does_not_crash_and_refreshes_on_rej
     assert api._openid_token == "openid-token-eu-nodur-1"
     # No expiry hint anywhere: the client cannot proactively refresh the token.
     assert api._openid_token_exp is None
-    # No AWS credentials fetched yet + no expiry hint => derived MQTT
-    # credentials are treated as due for refresh.
-    assert api._mqtt_credentials_due_for_refresh() is True
+    # No AWS credentials fetched yet and no expiry hint recorded.
+    assert api._aws_credentials is None
 
     devices = await api.get_devices()
     assert [d["sn"] for d in devices] == ["1000000000000009"]

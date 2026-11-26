@@ -92,28 +92,6 @@ async def test_refresh_mqtt_credentials_builds_snapshot(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
-async def test_background_refresh_is_single_flight_and_survives_errors(monkeypatch: pytest.MonkeyPatch) -> None:
-    api = _api()
-    calls: list[None] = []
-
-    async def failing_refresh() -> None:
-        calls.append(None)
-        raise RuntimeError("cognito down")
-
-    monkeypatch.setattr(api, "async_refresh_mqtt_credentials", failing_refresh)
-
-    api._schedule_mqtt_credentials_refresh()  # no loop captured yet: no-op
-    api._async_loop = asyncio.get_running_loop()
-    api._schedule_mqtt_credentials_refresh()
-    api._schedule_mqtt_credentials_refresh()  # already refreshing: ignored
-    for _ in range(3):
-        await asyncio.sleep(0)
-
-    assert calls == [None]
-    assert api._mqtt_credentials_refreshing is False
-
-
-@pytest.mark.asyncio
 async def test_connect_mqtt_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     api = _api()
     assert await api.connect_mqtt() is False  # no identity/endpoint yet
@@ -147,14 +125,16 @@ async def test_connect_mqtt_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     assert api.connection.state is ConnectionState.CONNECTED
     assert transports[-1].kwargs["client_id"] == "eu-central-1:abc"
     assert transports[-1].kwargs["region"] == "eu-central-1"
+    assert "credentials_resolver" not in transports[-1].kwargs
+    assert transports[-1].kwargs["async_credentials_resolver"] == api.async_refresh_mqtt_credentials
 
     def exploding(**kwargs: Any) -> Any:
-        raise RuntimeError("crt init failed")
+        raise RuntimeError("transport init failed")
 
     monkeypatch.setattr(api_mqtt, "AwsIotMqttTransport", exploding)
     snapshots.append(creds)
     assert await api.connect_mqtt() is False
-    assert "crt init failed" in (api.connection.last_error or "")
+    assert "transport init failed" in (api.connection.last_error or "")
 
 
 @pytest.mark.asyncio
@@ -222,6 +202,37 @@ async def test_on_reconnected_schedules_resubscribe(monkeypatch: pytest.MonkeyPa
     api._on_mqtt_reconnected(False)
     await asyncio.sleep(0)
     await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_disconnect_mqtt_cancels_pending_resubscribe_tasks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api, transport = _connected_api()
+    started = asyncio.Event()
+    cancelled = False
+
+    async def slow_resubscribe() -> None:
+        nonlocal cancelled
+        started.set()
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+
+    monkeypatch.setattr(api, "_resubscribe_all_devices", slow_resubscribe)
+    api._async_loop = asyncio.get_running_loop()
+    api._on_mqtt_reconnected(False)
+    await started.wait()
+
+    assert len(api._resubscribe_tasks) == 1
+
+    await api.disconnect_mqtt()
+
+    assert cancelled is True
+    assert not api._resubscribe_tasks
+    assert transport.connected is False
 
 
 @pytest.mark.asyncio

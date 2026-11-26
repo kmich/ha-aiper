@@ -125,9 +125,9 @@ class AiperRestClient:
         self._aws_credentials_exp: float | None = None
         self._aws_credentials_cooldown_until: float = 0.0
         # Serializes get_aws_credentials(): it can be entered concurrently
-        # from the coordinator's poll-driven refresh and the MQTT signing
-        # delegate's CRT-triggered background refresh, which otherwise race
-        # on self._identity_id/_openid_token/_aws_credentials and duplicate
+        # from the coordinator's poll-driven refresh and the MQTT transport's
+        # async reconnect credential resolver, which otherwise race on
+        # self._identity_id/_openid_token/_aws_credentials and duplicate
         # Cognito/Aiper network calls.
         self._aws_credentials_lock = asyncio.Lock()
         self._iot_endpoint: str | None = None
@@ -563,10 +563,10 @@ class AiperRestClient:
         """Exchange the OpenID token for temporary AWS credentials asynchronously.
 
         Serialized by _aws_credentials_lock: this can be entered concurrently
-        from the coordinator's poll-driven refresh and the MQTT signing
-        delegate's CRT-triggered background refresh, and without a lock they
-        can interleave awaits and duplicate network calls, or clobber each
-        other's writes to self._identity_id/_openid_token.
+        from the coordinator's poll-driven refresh and the MQTT transport's
+        async reconnect credential resolver, and without a lock they can
+        interleave awaits and duplicate network calls, or clobber each other's
+        writes to self._identity_id/_openid_token.
         """
         async with self._aws_credentials_lock:
             return await self._get_aws_credentials_locked()

@@ -49,10 +49,9 @@ DOWN_STATES = frozenset(
 class ConnectionStatus:
     """Mutable, in-memory record of MQTT connection health.
 
-    Instances are owned by a single :class:`AiperApi` and mutated from both the
-    event loop and AWS CRT callback threads; every mutation is a single
-    attribute write or counter bump, which CPython executes atomically, so no
-    lock is taken here.
+    Instances are owned by a single :class:`AiperApi` and mutated on the event
+    loop by ``AiperApi`` and ``AwsIotMqttTransport``; every mutation is a
+    single attribute write or counter bump.
     """
 
     state: ConnectionState = ConnectionState.INITIALIZING
