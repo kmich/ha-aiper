@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+import socket
+from collections.abc import Callable, Iterator
 from typing import Any, cast
 
 import aiohttp
@@ -438,8 +439,28 @@ def _assert_no_signed_url_leak(text: str) -> None:
         assert secret_fragment not in text
 
 
+@pytest.fixture
+def loopback_socket() -> Iterator[None]:
+    """Allow 127.0.0.1 loopback sockets while keeping external hosts blocked."""
+    import pytest_socket
+
+    was_guarded = socket.socket is not pytest_socket._true_socket
+    pytest_socket.enable_socket()
+    pytest_socket.socket_allow_hosts(["127.0.0.1"])
+    try:
+        yield
+    finally:
+        if was_guarded:
+            pytest_socket.disable_socket(allow_unix_socket=True)
+        else:
+            pytest_socket._remove_restrictions()
+
+
 @pytest.mark.asyncio
-async def test_loopback_initial_handshake_rejection_redacts_signed_url(caplog: pytest.LogCaptureFixture) -> None:
+async def test_loopback_initial_handshake_rejection_redacts_signed_url(
+    caplog: pytest.LogCaptureFixture,
+    loopback_socket: None,
+) -> None:
     """An HTTP 403 WebSocket upgrade rejection must not leak the signed query string."""
     seen_queries: list[dict[str, str]] = []
 
@@ -484,7 +505,10 @@ async def test_loopback_initial_handshake_rejection_redacts_signed_url(caplog: p
 
 
 @pytest.mark.asyncio
-async def test_loopback_reconnect_handshake_rejection_redacts_signed_url(caplog: pytest.LogCaptureFixture) -> None:
+async def test_loopback_reconnect_handshake_rejection_redacts_signed_url(
+    caplog: pytest.LogCaptureFixture,
+    loopback_socket: None,
+) -> None:
     """A rejected upgrade during reconnect logs phase and HTTP status without query secrets."""
     attempt = 0
 
