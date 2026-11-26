@@ -437,11 +437,12 @@ def test_resolve_aws_region_prefers_reported_region_then_endpoint_then_default()
     assert api._resolve_aws_region() == "eu-central-1"
 
 
-def test_transport_asks_the_resolver_on_every_signing(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+async def test_transport_asks_the_resolver_on_every_signing() -> None:
     """Each signing must consult the resolver, not a value captured at build time.
 
-    This is what makes the SDK's reconnect loop pick up refreshed
-    credentials instead of retrying forever with expired ones.
+    This is what makes the reconnect loop pick up refreshed credentials
+    instead of retrying forever with expired ones.
     """
     handed_out = [_creds("AKIAONE"), _creds("AKIATWO")]
     calls: list[int] = []
@@ -458,31 +459,18 @@ def test_transport_asks_the_resolver_on_every_signing(monkeypatch: pytest.Monkey
         credentials_resolver=resolver,
     )
 
-    class _FakeAwsCredentials:
-        def __init__(self, access_key_id: str, secret_access_key: str, session_token: str | None) -> None:
-            self.access_key_id = access_key_id
-
-    import sys
-    import types
-
-    fake_auth = types.ModuleType("awscrt.auth")
-    fake_auth.AwsCredentials = _FakeAwsCredentials  # type: ignore[attr-defined]
-    fake_awscrt = types.ModuleType("awscrt")
-    fake_awscrt.auth = fake_auth  # type: ignore[attr-defined]
-    # monkeypatch restores the real modules afterwards; popping them instead
-    # would leave later tests with a half re-imported awscrt package.
-    monkeypatch.setitem(sys.modules, "awscrt", fake_awscrt)
-    monkeypatch.setitem(sys.modules, "awscrt.auth", fake_auth)
-    first = transport._sign_with_current_credentials()
-    second = transport._sign_with_current_credentials()
+    first = await transport._resolve_credentials()
+    second = await transport._resolve_credentials()
 
     assert first.access_key_id == "AKIAONE"
     assert second.access_key_id == "AKIATWO"
     assert transport.credential_signing_count == 2
+    assert "X-Amz-Credential=AKIATWO" in transport._signed_websocket_url(second)
 
 
-def test_transport_falls_back_to_last_known_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A resolver returning None must not break signing outright."""
+@pytest.mark.asyncio
+async def test_transport_falls_back_to_last_known_credentials() -> None:
+    """A resolver returning None or raising must not break signing outright."""
     transport = AwsIotMqttTransport(
         endpoint="example.iot.eu-central-1.amazonaws.com",
         region="eu-central-1",
@@ -491,24 +479,20 @@ def test_transport_falls_back_to_last_known_credentials(monkeypatch: pytest.Monk
         credentials_resolver=lambda: None,
     )
 
-    class _FakeAwsCredentials:
-        def __init__(self, access_key_id: str, secret_access_key: str, session_token: str | None) -> None:
-            self.access_key_id = access_key_id
-
-    import sys
-    import types
-
-    fake_auth = types.ModuleType("awscrt.auth")
-    fake_auth.AwsCredentials = _FakeAwsCredentials  # type: ignore[attr-defined]
-    fake_awscrt = types.ModuleType("awscrt")
-    fake_awscrt.auth = fake_auth  # type: ignore[attr-defined]
-    # monkeypatch restores the real modules afterwards; popping them instead
-    # would leave later tests with a half re-imported awscrt package.
-    monkeypatch.setitem(sys.modules, "awscrt", fake_awscrt)
-    monkeypatch.setitem(sys.modules, "awscrt.auth", fake_auth)
-    signed = transport._sign_with_current_credentials()
-
+    signed = await transport._resolve_credentials()
     assert signed.access_key_id == "AKIAINITIAL"
+
+    async def broken_async_resolver() -> AwsIotCredentials | None:
+        raise RuntimeError("cognito timeout")
+
+    async_transport = AwsIotMqttTransport(
+        endpoint="example.iot.eu-central-1.amazonaws.com",
+        region="eu-central-1",
+        client_id="client",
+        credentials=_creds("AKIAFALLBACK"),
+        async_credentials_resolver=broken_async_resolver,
+    )
+    assert (await async_transport._resolve_credentials()).access_key_id == "AKIAFALLBACK"
 
 
 @pytest.mark.asyncio

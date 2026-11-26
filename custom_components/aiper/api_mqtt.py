@@ -196,16 +196,18 @@ class AiperMqttClient(AiperRestClient):
                 region=region,
                 client_id=client_id,
                 credentials=initial_credentials,
+                session=self._async_session,
                 connect_timeout=10.0,
                 operation_timeout=5.0,
                 on_reconnected=self._on_mqtt_reconnected,
                 credentials_resolver=self._current_mqtt_credentials,
+                async_credentials_resolver=self.async_refresh_mqtt_credentials,
             )
 
             if await self._mqtt_client.async_connect():
                 self._mqtt_first_disconnected_at = None
                 self.connection.mark_connected()
-                _LOGGER.debug("Connected to AWS IoT MQTT using AWS IoT Device SDK v2")
+                _LOGGER.debug("Connected to AWS IoT MQTT over WebSockets (asyncio)")
                 return True
 
             self.connection.mark_disconnected("MQTT transport did not establish a session")

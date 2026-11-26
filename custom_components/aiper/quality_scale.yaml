@@ -66,7 +66,7 @@ rules:
 
   # Platinum
   async-dependency:
-    status: todo
-    comment: awsiotsdk is callback/thread based; the integration bridges it to asyncio.
+    status: done
+    comment: Uses a pure-asyncio aiohttp WebSocket MQTT 3.1.1 client with SigV4 query signing.
   inject-websession: done
   strict-typing: done
