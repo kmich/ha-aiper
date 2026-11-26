@@ -275,3 +275,14 @@ def test_identity_metadata_is_normalized_at_boundary() -> None:
     assert device_info.attributes["model"] == "Surfer_S2"
     assert device_info.attributes["sw_version"] == "V7.1.0"
     assert state["device_family"].value == "surfer"
+
+
+def test_x1_cleaning_finish_transition_matches_documented_automation() -> None:
+    """Scuba X1 status transitions from 'Cleaning' to 'Idle' as documented in automations.md."""
+    cleaning = normalize_device_state({"model": "Scuba_X1", "machineStatus": 1})
+    idle = normalize_device_state({"model": "Scuba_X1", "machineStatus": 0})
+
+    assert cleaning["status"].value == "Cleaning"
+    assert cleaning["running"].value is True
+    assert idle["status"].value == "Idle"
+    assert idle["running"].value is False
