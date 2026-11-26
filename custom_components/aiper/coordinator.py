@@ -809,6 +809,12 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     raw_device["supported_mode_ids"] = mode_ids
                     raw_device["supported_modes_explicit"] = True
                     self._apply_device_profile(sn)
+                    capabilities = list(raw_device.get("capabilities") or [])
+                    updates["capabilities"] = EntityState(capabilities)
+                    updates["device_family"] = EntityState(
+                        raw_device.get("profile_family"),
+                        {"capabilities": capabilities},
+                    )
                 updates = merge_device_state(updates, normalize_mode_options_update(raw_device, component))
                 updates = merge_device_state(updates, normalize_clean_path_update(component))
             else:
