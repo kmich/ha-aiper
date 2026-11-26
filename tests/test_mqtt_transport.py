@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterator
 from typing import Any, cast
 
 import aiohttp
+import aiohttp.abc
 import pytest
 from aiohttp import web
 
@@ -439,6 +440,27 @@ def _assert_no_signed_url_leak(text: str) -> None:
         assert secret_fragment not in text
 
 
+class _LoopbackResolver(aiohttp.abc.AbstractResolver):
+    """In-memory loopback resolver avoiding pycares/DNS worker threads."""
+
+    async def resolve(
+        self, host: str, port: int = 0, family: socket.AddressFamily = socket.AF_INET
+    ) -> list[aiohttp.abc.ResolveResult]:
+        return [
+            {
+                "hostname": host,
+                "host": "127.0.0.1",
+                "port": port,
+                "family": socket.AF_INET,
+                "proto": 0,
+                "flags": socket.AI_NUMERICHOST,
+            }
+        ]
+
+    async def close(self) -> None:
+        return None
+
+
 @pytest.fixture
 def loopback_socket() -> Iterator[None]:
     """Allow 127.0.0.1 loopback sockets while keeping external hosts blocked."""
@@ -477,7 +499,7 @@ async def test_loopback_initial_handshake_rejection_redacts_signed_url(
     port = cast(Any, site._server).sockets[0].getsockname()[1]
 
     caplog.set_level(logging.DEBUG, logger="custom_components.aiper")
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(resolver=_LoopbackResolver())) as session:
         transport = _LoopbackMqttTransport(
             port=port,
             endpoint="example.iot.eu-central-1.amazonaws.com",
@@ -538,7 +560,7 @@ async def test_loopback_reconnect_handshake_rejection_redacts_signed_url(
     port = cast(Any, site._server).sockets[0].getsockname()[1]
 
     caplog.set_level(logging.DEBUG, logger="custom_components.aiper")
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(resolver=_LoopbackResolver())) as session:
         transport = _LoopbackMqttTransport(
             port=port,
             endpoint="example.iot.eu-central-1.amazonaws.com",
