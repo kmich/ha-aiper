@@ -109,6 +109,9 @@ class AiperRestClient:
         self._async_session = async_session
         self._session_conflict_until = 0.0
         self._session_conflict_pending_reauth = False
+        # Serializes post-cooldown and expired-token login recovery so concurrent
+        # callers share one login rather than kicking each other's new session.
+        self._login_recovery_lock = asyncio.Lock()
 
         self._token: str | None = None
         self._token_expires: Any = None
@@ -185,6 +188,26 @@ class AiperRestClient:
         self._session_conflict_until = time.time() + SESSION_CONFLICT_COOLDOWN_SECONDS
         raise AiperSessionConflict(self._payload_message(payload))
 
+    async def _recover_session_login(self, *, failed_token: str | None = None, from_conflict: bool = False) -> bool:
+        """Coordinate session re-authentication across concurrent callers."""
+        async with self._login_recovery_lock:
+            self._raise_if_session_conflict_active("/recovery")
+            if from_conflict:
+                if not self._session_conflict_pending_reauth:
+                    return True
+                _LOGGER.debug("Session conflict cooldown elapsed; re-authenticating before resuming requests")
+                try:
+                    ok = await self.login()
+                except AiperAuthenticationError:
+                    self._session_conflict_pending_reauth = False
+                    raise
+                if ok:
+                    self._session_conflict_pending_reauth = False
+                return ok
+            if failed_token and self._token and self._token != failed_token:
+                return True
+            return await self.login()
+
     def _device_family_for_sn(self, sn: str) -> DeviceFamily:
         """Return the discovered family for a device serial number."""
         return device_family(self._devices.get(sn) or {})
@@ -203,15 +226,7 @@ class AiperRestClient:
         """Call an Aiper REST endpoint using the AES/RSA envelope."""
         self._raise_if_session_conflict_active(path)
         if retry_login and path != "/login" and self._session_conflict_pending_reauth:
-            self._session_conflict_pending_reauth = False
-            _LOGGER.debug("Session conflict cooldown elapsed; re-authenticating before resuming requests")
-            try:
-                await self.login()
-            except AiperAuthenticationError:
-                raise
-            except Exception:
-                self._session_conflict_pending_reauth = True
-                raise
+            await self._recover_session_login(from_conflict=True)
             token = self._token
 
         enc = AiperEncryption()
@@ -248,6 +263,7 @@ class AiperRestClient:
         # the credentials are bad, and re-entering login() would recurse until
         # RecursionError while hammering the login endpoint.
         if retry_login and path != "/login" and str(payload.get("code")) in ("401", "403"):
+            attempted_token = token or self._token
             _LOGGER.debug("Token appears expired; attempting refresh")
             try:
                 if await self.refresh_token():
@@ -260,11 +276,13 @@ class AiperRestClient:
                         timeout=timeout,
                         retry_login=False,
                     )
+            except AiperSessionConflict:
+                raise
             except Exception:
                 pass
 
             _LOGGER.debug("Token refresh failed; re-authenticating")
-            if await self.login():
+            if await self._recover_session_login(failed_token=attempted_token):
                 return await self._call_encrypted(
                     method,
                     path,
@@ -475,6 +493,8 @@ class AiperRestClient:
                 "Token refresh failed (code=%s, message=%s)", payload.get("code"), self._payload_message(payload)
             )
             return False
+        except AiperSessionConflict:
+            raise
         except Exception as err:
             _LOGGER.error("Token refresh error: %s", err)
             return False
