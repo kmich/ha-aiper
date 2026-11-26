@@ -99,6 +99,15 @@ SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
         suggested_display_precision=1,
         include_fn=is_not_hydrocomm,
     ),
+    AiperSensorEntityDescription(
+        key="last_device_report",
+        translation_key="last_device_report",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        enabled_default=True,
+        capability=Capability.MQTT_SHADOW,
+        include_fn=is_not_hydrocomm,
+    ),
     # --- Cleaning history (REST) ---
     AiperSensorEntityDescription(
         key="total_cleanings",

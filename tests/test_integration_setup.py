@@ -23,7 +23,7 @@ from custom_components.aiper.api import AiperApi
 from custom_components.aiper.cleaning_sessions import CleaningSession
 from custom_components.aiper.config_flow import OPTIONS_FLOW_RELOADS
 from custom_components.aiper.connection import ConnectionStatus
-from custom_components.aiper.const import DOMAIN
+from custom_components.aiper.const import CONF_METADATA_REFRESH_HOURS, DOMAIN
 from custom_components.aiper.controller import AiperDeviceController
 from custom_components.aiper.coordinator import AiperDataUpdateCoordinator
 from tests.coordinator_factory import BaseFakeApi
@@ -96,15 +96,30 @@ async def test_completion_platform_publishes_each_session_and_survives_reload(
 
     monkeypatch.setattr(aiper, "AiperApi", UltraApi)
     monkeypatch.setattr(aiper, "async_get_clientsession", lambda hass: "session")
-    entry = MockConfigEntry(domain=DOMAIN, data={"username": "user@example.com", "password": "secret"})
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"username": "user@example.com", "password": "secret"},
+        options={CONF_METADATA_REFRESH_HOURS: 12},
+        version=1,
+        minor_version=2,
+    )
     entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    battery = registry.async_get_or_create("sensor", DOMAIN, f"{sn}_battery", config_entry=entry)
+    battery = registry.async_update_entity(battery.entity_id, new_entity_id="sensor.pool_battery_for_automation")
+    runtime = registry.async_get_or_create(
+        "sensor", DOMAIN, f"{sn}_runtime", config_entry=entry, disabled_by=er.RegistryEntryDisabler.USER
+    )
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
-    registry = er.async_get(hass)
     event_id = registry.async_get_entity_id("event", DOMAIN, f"{sn}_cleaning_finished")
     assert event_id is not None
-    assert registry.async_get_entity_id("sensor", DOMAIN, f"{sn}_battery") is not None
+    assert registry.async_get_entity_id("sensor", DOMAIN, f"{sn}_battery") == battery.entity_id
+    assert (battery_state := hass.states.get(battery.entity_id)) is not None and battery_state.state == "80"
+    assert (runtime_entry := registry.async_get(runtime.entity_id)) is not None
+    assert runtime_entry.disabled_by is er.RegistryEntryDisabler.USER
+    assert hass.states.get(runtime.entity_id) is None
     completions: list[str] = []
 
     @callback
@@ -141,6 +156,10 @@ async def test_completion_platform_publishes_each_session_and_survives_reload(
         session.session_id for session in reversed(sessions)
     ]
     assert reloaded.pending_completions() == []
+    assert entry.options[CONF_METADATA_REFRESH_HOURS] == 12
+    assert (battery_state := hass.states.get(battery.entity_id)) is not None and battery_state.state == "80"
+    assert (runtime_entry := registry.async_get(runtime.entity_id)) is not None
+    assert runtime_entry.disabled_by is er.RegistryEntryDisabler.USER
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 

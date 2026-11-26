@@ -202,11 +202,9 @@ it wires up the entities itself.
 
 ### Plain YAML examples
 
-If you prefer stock cards, copy-paste YAML lives in this repository:
-- `lovelace/example-dashboard.yaml` (stock Lovelace)
-- `lovelace/mushroom-example.yaml` (Mushroom cards)
-
-To use the device headers, place an image (like `docs/assets/scuba_x1.png`) into `config/www/aiper/` and reference it as `/local/aiper/scuba_x1.png` in your cards.
+The [dashboard guide](lovelace/README.md) shows how to install the built-in
+Home Assistant example for your cleaner, water monitor, or both. An optional
+[Mushroom example](lovelace/mushroom-example.yaml) is also available.
 
 [hacs-badge]: https://img.shields.io/badge/HACS-Custom-41BDF5.svg
 [hacs-url]: https://github.com/hacs/integration

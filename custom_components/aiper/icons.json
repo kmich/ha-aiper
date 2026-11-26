@@ -63,6 +63,9 @@
       }
     },
     "sensor": {
+      "last_device_report": {
+        "default": "mdi:clock-outline"
+      },
       "status": {
         "default": "mdi:robot-vacuum"
       },

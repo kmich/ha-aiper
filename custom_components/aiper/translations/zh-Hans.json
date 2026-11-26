@@ -53,6 +53,9 @@
   },
   "entity": {
     "sensor": {
+      "last_device_report": {
+        "name": "最近设备报告"
+      },
       "battery": {
         "name": "电池"
       },

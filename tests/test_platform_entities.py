@@ -279,6 +279,7 @@ async def test_scuba_entity_publication_uses_scuba_capabilities(hass: HomeAssist
         "total_cleaning_time",
         "last_cleaning_mode",
         "last_cleaning_duration",
+        "last_device_report",
     }.issubset(_keys(sensor_entities))
     assert _entity_by_key(sensor_entities, "propeller").available is False
     roller_brush = _entity_by_key(sensor_entities, "roller_brush")
@@ -303,8 +304,9 @@ async def test_scuba_entity_publication_uses_scuba_capabilities(hass: HomeAssist
     assert all(
         entity._attr_entity_registry_enabled_default is False
         for entity in diagnostic_entities
-        if entity.entity_description.key != "last_cleaning_start"
+        if entity.entity_description.key not in {"last_cleaning_start", "last_device_report"}
     )
+    assert _entity_by_key(sensor_entities, "last_device_report").entity_registry_enabled_default is True
     assert "mode" in _keys(sensor_entities)
     assert "estimated_cleaning_time" not in _keys(sensor_entities)
     assert _entity_by_key(sensor_entities, "mode").available is False
