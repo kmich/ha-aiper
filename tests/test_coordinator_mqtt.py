@@ -392,3 +392,54 @@ async def test_fresh_mqtt_battery_runtime_temperature_preserved_until_ttl(
     assert data[SN]["battery"].value == 40
     assert data[SN]["runtime"].value == 1.0
     assert data[SN]["temperature"].value == 18
+
+
+@pytest.mark.asyncio
+async def test_coordinator_watchdog_retries_missing_topic_and_requests_shadow(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A partial subscribe timeout leaves SN unsubscribed until the watchdog recovers it."""
+    from unittest.mock import AsyncMock
+
+    from tests.test_api_mqtt import _connected_api
+
+    api, transport = _connected_api()
+    shadow_get_topic = f"$aws/things/{SN}/shadow/get/accepted"
+    fail_once = True
+
+    async def subscribe_with_transient_timeout(topic: str, callback: Any, qos: int = 1) -> bool:
+        nonlocal fail_once
+        if topic == shadow_get_topic and fail_once:
+            fail_once = False
+            return False
+        transport.subscriptions[topic] = callback
+        return True
+
+    transport.async_subscribe = subscribe_with_transient_timeout  # type: ignore[method-assign]
+    request_shadow = AsyncMock(return_value=True)
+    api.request_shadow = request_shadow  # type: ignore[method-assign]
+
+    coordinator = make_coordinator(api, hass=hass, _devices={SN: {"sn": SN, "model": "Scuba_X1"}})
+    coordinator.data = {SN: normalize_device_state({"sn": SN, "model": "Scuba_X1"})}
+    coordinator.async_update_listeners = lambda: None  # type: ignore[method-assign]
+    delivered: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(coordinator, "handle_shadow_update", lambda sn, payload: delivered.append((sn, payload)))
+
+    await coordinator.async_subscribe_all_devices()
+    assert SN not in api.subscribed_serials()
+    request_shadow.assert_not_awaited()
+
+    # Next watchdog run recovers ONLY the missing topic, requests shadow, and delivers once.
+    await coordinator.async_subscribe_all_devices()
+    assert SN in api.subscribed_serials()
+    request_shadow.assert_awaited_once_with(SN)
+
+    transport.subscriptions[shadow_get_topic](shadow_get_topic, b'{"state":{"reported":{"Machine":{"cap":77}}}}')
+    assert len(delivered) == 1
+    assert delivered[0][0] == SN
+
+    # Subsequent watchdog passes skip the now-acknowledged device cleanly.
+    request_shadow.reset_mock()
+    await coordinator.async_subscribe_all_devices()
+    request_shadow.assert_not_awaited()
