@@ -423,6 +423,8 @@ async def test_coordinator_watchdog_retries_missing_topic_and_requests_shadow(
     coordinator = make_coordinator(api, hass=hass, _devices={SN: {"sn": SN, "model": "Scuba_X1"}})
     coordinator.data = {SN: normalize_device_state({"sn": SN, "model": "Scuba_X1"})}
     coordinator.async_update_listeners = lambda: None  # type: ignore[method-assign]
+    delivered: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(coordinator, "handle_shadow_update", lambda sn, payload: delivered.append((sn, payload)))
 
     await coordinator.async_subscribe_all_devices()
     assert SN not in api.subscribed_serials()
@@ -433,8 +435,6 @@ async def test_coordinator_watchdog_retries_missing_topic_and_requests_shadow(
     assert SN in api.subscribed_serials()
     request_shadow.assert_awaited_once_with(SN)
 
-    delivered: list[tuple[str, dict[str, Any]]] = []
-    monkeypatch.setattr(coordinator, "handle_shadow_update", lambda sn, payload: delivered.append((sn, payload)))
     transport.subscriptions[shadow_get_topic](shadow_get_topic, b'{"state":{"reported":{"Machine":{"cap":77}}}}')
     assert len(delivered) == 1
     assert delivered[0][0] == SN
