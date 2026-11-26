@@ -11,7 +11,13 @@ import aiohttp
 import pytest
 
 from custom_components.aiper import api_rest as api_module
-from custom_components.aiper.api import AiperApi, AiperConnectionError, AiperResponseError, AiperSessionConflict
+from custom_components.aiper.api import (
+    AiperApi,
+    AiperAuthenticationError,
+    AiperConnectionError,
+    AiperResponseError,
+    AiperSessionConflict,
+)
 
 
 def _api() -> AiperApi:
@@ -294,3 +300,135 @@ async def test_device_info_is_not_logged_at_info(
 
     assert "SERIAL-XYZ-123456" not in caplog.text
     assert "10.0.0.5" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_refresh_conflict_propagates_without_calling_login(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An equipment 401 followed by refresh 402 enters cooldown without logging in."""
+    api = _api()
+    api._token = "stale-token"
+    monkeypatch.setattr(api_module, "AiperEncryption", FakeEncryption)
+    calls: list[str] = []
+    responses = [
+        {"code": "401", "successful": False, "msg": "expired"},
+        {"code": "402", "successful": False, "message": "already logged in elsewhere"},
+    ]
+
+    async def fake_request(method: str, url: str, *, headers: dict, data: Any = None, timeout: int = 30, **kwargs):
+        calls.append(url.rsplit("/", 1)[-1])
+        return 200, json.dumps(responses.pop(0))
+
+    login_calls = 0
+
+    async def fake_login() -> bool:
+        nonlocal login_calls
+        login_calls += 1
+        return True
+
+    monkeypatch.setattr(api, "_request_with_backoff", fake_request)
+    monkeypatch.setattr(api, "login", fake_login)
+
+    with pytest.raises(AiperSessionConflict):
+        await api._call_encrypted("POST", "/equipment/getEquipment", {})
+
+    assert calls == ["getEquipment", "refresh"]
+    assert login_calls == 0
+    assert api._session_conflict_pending_reauth is True
+    assert api._session_conflict_until > time.time()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_callers_after_cooldown_share_one_login(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two concurrent callers after cooldown expiry share one real login + OpenID fetch."""
+    api = _api()
+    api._session_conflict_pending_reauth = True
+    api._session_conflict_until = time.time() - 1
+    monkeypatch.setattr(api_module, "AiperEncryption", FakeEncryption)
+
+    login_count = 0
+    openid_count = 0
+    equipment_tokens: list[str | None] = []
+
+    async def fake_request(method: str, url: str, *, headers: dict, data: Any = None, timeout: int = 30, **kwargs):
+        nonlocal login_count, openid_count
+        path = url.rsplit("/", 1)[-1]
+        if path == "login":
+            login_count += 1
+            await asyncio.sleep(0.01)
+            return 200, json.dumps({"code": "200", "successful": True, "data": {"token": "recovered-tok"}})
+        if path == "getOpenIdToken":
+            openid_count += 1
+            return 200, json.dumps({"code": "200", "successful": True, "data": {"identityId": "id-1"}})
+        equipment_tokens.append(headers.get("token"))
+        return 200, json.dumps({"code": "200", "successful": True, "data": []})
+
+    monkeypatch.setattr(api, "_request_with_backoff", fake_request)
+
+    res1, res2 = await asyncio.gather(
+        api._call_encrypted("POST", "/equipment/getEquipment", {}),
+        api._call_encrypted("POST", "/equipment/getEquipment", {}),
+    )
+
+    assert res1["successful"] is True
+    assert res2["successful"] is True
+    assert login_count == 1
+    assert openid_count == 1
+    assert equipment_tokens == ["recovered-tok", "recovered-tok"]
+    assert api._session_conflict_pending_reauth is False
+
+
+@pytest.mark.asyncio
+async def test_invalid_credentials_during_post_cooldown_recovery_raises_auth_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bad credentials during post-cooldown recovery surface AiperAuthenticationError."""
+    api = _api()
+    api._session_conflict_pending_reauth = True
+    api._session_conflict_until = time.time() - 1
+    monkeypatch.setattr(api_module, "AiperEncryption", FakeEncryption)
+
+    async def fake_request(method: str, url: str, *, headers: dict, data: Any = None, timeout: int = 30, **kwargs):
+        return 200, json.dumps({"code": "401", "successful": False, "msg": "bad password"})
+
+    monkeypatch.setattr(api, "_request_with_backoff", fake_request)
+
+    with pytest.raises(AiperAuthenticationError):
+        await api._call_encrypted("POST", "/equipment/getEquipment", {})
+
+    assert api._session_conflict_pending_reauth is False
+
+
+@pytest.mark.asyncio
+async def test_concurrent_401_fallback_shares_one_login(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two concurrent callers hitting 401 on the same stale token serialize login recovery."""
+    api = _api()
+    api._token = "stale-tok"
+    monkeypatch.setattr(api_module, "AiperEncryption", FakeEncryption)
+
+    login_calls = 0
+
+    async def fake_request(method: str, url: str, *, headers: dict, data: Any = None, timeout: int = 30, **kwargs):
+        nonlocal login_calls
+        path = url.rsplit("/", 1)[-1]
+        if path == "refresh":
+            return 200, json.dumps({"code": "401", "successful": False, "msg": "cannot refresh"})
+        if path == "login":
+            login_calls += 1
+            await asyncio.sleep(0.01)
+            return 200, json.dumps({"code": "200", "successful": True, "data": {"token": "new-tok"}})
+        if path == "getOpenIdToken":
+            return 200, json.dumps({"code": "200", "successful": True, "data": {}})
+        if headers.get("token") == "new-tok":
+            return 200, json.dumps({"code": "200", "successful": True, "data": [{"sn": "SN1"}]})
+        return 200, json.dumps({"code": "401", "successful": False, "msg": "expired"})
+
+    monkeypatch.setattr(api, "_request_with_backoff", fake_request)
+
+    res1, res2 = await asyncio.gather(
+        api._call_encrypted("POST", "/equipment/getEquipment", {}),
+        api._call_encrypted("POST", "/equipment/getEquipment", {}),
+    )
+
+    assert res1["data"] == [{"sn": "SN1"}]
+    assert res2["data"] == [{"sn": "SN1"}]
+    assert login_calls == 1
