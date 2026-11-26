@@ -14,8 +14,9 @@ diagnostics.
   `CoordinatorEntity` platforms.
 - Async cloud client (`api.py` facade over `api_rest.py`, `api_mqtt.py`,
   `api_commands.py`) using Home Assistant's shared aiohttp client.
-- AWS IoT MQTT via `awsiotsdk`, using temporary Cognito credentials from
-  Aiper's API through the transport in `mqtt.py`.
+- AWS IoT MQTT over WebSockets via Home Assistant's shared `aiohttp` client
+  (`mqtt.py` + `mqtt_codec.py`), using temporary Cognito credentials from
+  Aiper's API.
 - HACS distribution with `hacs.json` and a zip release artifact.
 
 ## Architecture
@@ -35,7 +36,8 @@ diagnostics.
     learned per-model routes for unverified models.
   - `api.py` (`AiperApi`): the facade the integration imports, plus
     `diagnostics()`; re-exports the public names.
-- `custom_components/aiper/mqtt.py` wraps the AWS IoT SDK transport.
+- `custom_components/aiper/mqtt.py` and `mqtt_codec.py` implement the pure-asyncio
+  AWS IoT MQTT-over-WebSockets transport and SigV4/MQTT 3.1.1 wire codec.
 - `custom_components/aiper/profiles.py` and `state.py` normalize model
   capabilities and device state for platforms and tests.
 - `custom_components/aiper/coordinator.py` merges REST metadata and MQTT shadow
@@ -60,7 +62,7 @@ The integration is functional but carries reverse-engineering complexity. Tests
 run against current Home Assistant (dev lock, Python 3.14) and the declared
 minimum (Home Assistant 2024.12 on Python 3.12, see `hacs.json` and the
 `test-min-ha` CI job). Keep tests anchored to captured or representative
-payload shapes. The integration meets the **Gold** quality scale;
+payload shapes. The integration meets the **Platinum** quality scale;
 `quality_scale.yaml` tracks every rule. CI enforces at least 95% line
 coverage in total (`pyproject.toml`) and per module
 (`.github/scripts/check_coverage.py`), so new code needs tests.
@@ -106,7 +108,7 @@ a branch is obsolete.
 1. Completed: dynamic device discovery on coordinator polling without reloads (`dynamic-devices`).
 2. Completed: centralized entity icon translations in `icons.json` (`icon-translations`).
 3. Completed: Platinum-tier strict type checking (`mypy --strict`) on `custom_components/aiper`.
-4. Platinum: evaluate `awsiotsdk` async wrapper / pure asyncio bridge (`async-dependency`).
+4. Completed: pure-asyncio AWS IoT MQTT-over-WebSockets transport (`async-dependency`).
 
 ## Product Audits & Remediation
 

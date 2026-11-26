@@ -1,16 +1,37 @@
-"""AWS IoT MQTT transport for Aiper devices."""
+"""Pure-asyncio AWS IoT MQTT-over-WebSockets transport for Aiper devices."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
-from concurrent.futures import Future
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
 
+import aiohttp
+
+from .mqtt_codec import (
+    AwsIotCredentials as AwsIotCredentials,
+)
+from .mqtt_codec import (
+    ConnAckPacket,
+    MqttPacket,
+    MqttStreamDecoder,
+    PingRespPacket,
+    PubAckPacket,
+    PublishPacket,
+    SubAckPacket,
+    encode_connect,
+    encode_disconnect,
+    encode_pingreq,
+    encode_puback,
+    encode_publish,
+    encode_subscribe,
+    topic_matches,
+)
+from .mqtt_codec import (
+    sign_aws_iot_websocket_url as sign_aws_iot_websocket_url,
+)
 from .redaction import redact_topic
 
 _LOGGER = logging.getLogger(__name__)
@@ -18,23 +39,8 @@ _LOGGER = logging.getLogger(__name__)
 MessageCallback = Callable[[str, bytes], None]
 
 
-async def _async_wait_crt_operation[T](operation: Future[T] | tuple[Future[T], int], timeout: float) -> T:
-    """Wait for an AWS CRT operation result without blocking the event loop."""
-    future = operation[0] if isinstance(operation, tuple) else operation
-    return await asyncio.wait_for(asyncio.wrap_future(future), timeout=timeout)
-
-
-@dataclass(frozen=True, kw_only=True)
-class AwsIotCredentials:
-    """Temporary AWS credentials returned by Cognito."""
-
-    access_key_id: str
-    secret_access_key: str
-    session_token: str | None = None
-
-
 class AwsIotMqttTransport:
-    """Small wrapper around AWS IoT Device SDK v2 MQTT over WebSockets."""
+    """Pure-asyncio AWS IoT Core MQTT 3.1.1 transport over aiohttp WebSockets."""
 
     def __init__(
         self,
@@ -43,216 +49,383 @@ class AwsIotMqttTransport:
         region: str,
         client_id: str,
         credentials: AwsIotCredentials,
+        session: aiohttp.ClientSession | None = None,
         connect_timeout: float = 10.0,
         operation_timeout: float = 5.0,
+        keep_alive_secs: float = 60.0,
+        ping_timeout: float = 5.0,
+        reconnect_min_timeout_secs: float = 1.0,
+        reconnect_max_timeout_secs: float = 30.0,
         on_reconnected: Callable[[bool], None] | None = None,
         credentials_resolver: Callable[[], AwsIotCredentials | None] | None = None,
+        async_credentials_resolver: Callable[[], Awaitable[AwsIotCredentials | None]] | None = None,
     ) -> None:
         self.endpoint = endpoint
         self.region = region
         self.client_id = client_id
         self.credentials = credentials
+        self._session = session
         self.connect_timeout = connect_timeout
         self.operation_timeout = operation_timeout
+        self.keep_alive_secs = keep_alive_secs
+        self.ping_timeout = ping_timeout
+        self.reconnect_min_timeout_secs = reconnect_min_timeout_secs
+        self.reconnect_max_timeout_secs = reconnect_max_timeout_secs
         self.on_reconnected = on_reconnected
         self._credentials_resolver = credentials_resolver
+        self._async_credentials_resolver = async_credentials_resolver
 
-        self._connection: Any = None
+        self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._connected = False
+        self._closing = False
+        self._lifecycle_task: asyncio.Task[None] | None = None
+        self._send_lock = asyncio.Lock()
+        self._next_packet_id = 0
+        self._callbacks: dict[str, MessageCallback] = {}
+        self._pending_pubacks: dict[int, asyncio.Future[None]] = {}
+        self._pending_subacks: dict[int, asyncio.Future[SubAckPacket]] = {}
+        self._ping_event = asyncio.Event()
+
         self.last_error: str | None = None
         self.last_connected_at: datetime | None = None
         self.last_disconnected_at: datetime | None = None
         self.reconnect_count = 0
-        # Counts delegate invocations. The whole premise of the credential
-        # fix is that the CRT asks us again on each reconnect rather than
-        # caching what it got at build time; this counter is how we tell.
         self.credential_signing_count = 0
 
-    async def async_connect(self) -> bool:
-        """Connect to AWS IoT Core using SigV4-signed MQTT over WebSockets."""
-        try:
-            self._connection = self._build_connection()
-            await _async_wait_crt_operation(self._connection.connect(), self.connect_timeout)
-            self._connected = True
-            self.last_error = None
-            self.last_connected_at = datetime.now(UTC)
-            _LOGGER.debug("Connected to AWS IoT MQTT")
-            return True
-        except Exception as err:
-            conn = self._connection
-            self._connection = None
-            self._connected = False
-            self.last_error = f"{type(err).__name__}: {err}"
-            _LOGGER.error("AWS IoT MQTT connection failed: %s", err)
-            if conn is not None:
-                with suppress(Exception):
-                    await _async_wait_crt_operation(conn.disconnect(), min(self.operation_timeout, 2.0))
-            return False
+    def _allocate_packet_id(self) -> int:
+        self._next_packet_id = (self._next_packet_id % 0xFFFF) + 1
+        return self._next_packet_id
 
-    def _sign_with_current_credentials(self) -> Any:
-        """Hand the CRT the credentials to sign the next connection with.
-
-        MUST NOT BLOCK. The AWS CRT invokes this delegate synchronously on
-        whichever thread drives the connection, and for the initial connect
-        that is the Home Assistant event loop itself. Doing async work here
-        -- even `run_coroutine_threadsafe(...).result()` -- deadlocks the
-        loop against itself and surfaces as
-        AWS_ERROR_HTTP_CALLBACK_FAILURE. So we only ever read a snapshot
-        that someone else keeps warm from the event loop.
-        """
-        from awscrt import auth
-
+    async def _resolve_credentials(self) -> AwsIotCredentials:
+        """Resolve current AWS credentials, preferring async renewal when available."""
         self.credential_signing_count += 1
-        resolver = self._credentials_resolver
-        creds = resolver() if resolver is not None else None
-        if creds is None:
-            creds = self.credentials
-        else:
+        creds: AwsIotCredentials | None = None
+        if self._async_credentials_resolver is not None:
+            try:
+                creds = await self._async_credentials_resolver()
+            except Exception as err:
+                _LOGGER.debug("Async MQTT credential resolver failed: %s", err)
+        elif self._credentials_resolver is not None:
+            try:
+                creds = self._credentials_resolver()
+            except Exception as err:
+                _LOGGER.debug("Sync MQTT credential resolver failed: %s", err)
+
+        if creds is not None:
             self.credentials = creds
+        else:
+            creds = self.credentials
 
         _LOGGER.debug(
             "Signing AWS IoT MQTT connection (invocation #%d, access_key_id=%s...)",
             self.credential_signing_count,
             creds.access_key_id[:6],
         )
-        return auth.AwsCredentials(
-            creds.access_key_id,
-            creds.secret_access_key,
-            creds.session_token,
+        return creds
+
+    def _signed_websocket_url(self, credentials: AwsIotCredentials) -> str:
+        """Return a SigV4-presigned WebSocket URL for the given credentials."""
+        return sign_aws_iot_websocket_url(self.endpoint, self.region, credentials)
+
+    async def _open_session(
+        self,
+    ) -> tuple[aiohttp.ClientWebSocketResponse, bool, MqttStreamDecoder, list[MqttPacket]]:
+        """Open a WebSocket, complete MQTT CONNECT/CONNACK, and return session state."""
+        if self._session is None:
+            raise ValueError("aiohttp ClientSession is required")
+
+        creds = await self._resolve_credentials()
+        url = self._signed_websocket_url(creds)
+        ws = await asyncio.wait_for(
+            self._session.ws_connect(url, protocols=("mqtt",), heartbeat=None),
+            timeout=self.connect_timeout,
         )
-
-    def _build_connection(self) -> Any:
-        """Build an AWS IoT MQTT connection object."""
-        from awscrt import auth
-        from awsiot import mqtt_connection_builder
-
-        if self._credentials_resolver is not None:
-            # Delegate provider: re-asked for credentials on each signing,
-            # so the SDK's own reconnect loop stops re-signing with the
-            # credentials captured at initial connect (which go stale after
-            # Cognito's ~55 minute session and can never succeed again).
-            credentials_provider = auth.AwsCredentialsProvider.new_delegate(self._sign_with_current_credentials)
-        else:
-            credentials_provider = auth.AwsCredentialsProvider.new_static(
-                self.credentials.access_key_id,
-                self.credentials.secret_access_key,
-                self.credentials.session_token,
+        decoder = MqttStreamDecoder()
+        try:
+            await ws.send_bytes(
+                encode_connect(
+                    self.client_id,
+                    keep_alive=max(1, int(self.keep_alive_secs)),
+                    clean_session=False,
+                )
             )
+            while True:
+                msg = await asyncio.wait_for(ws.receive(), timeout=self.connect_timeout)
+                if msg.type == aiohttp.WSMsgType.BINARY:
+                    packets = decoder.feed(bytes(msg.data))
+                    for idx, packet in enumerate(packets):
+                        if isinstance(packet, ConnAckPacket):
+                            if packet.return_code != 0:
+                                raise ConnectionError(f"MQTT CONNACK rejected with code {packet.return_code}")
+                            return ws, packet.session_present, decoder, packets[idx + 1 :]
+                elif msg.type in (
+                    aiohttp.WSMsgType.CLOSE,
+                    aiohttp.WSMsgType.CLOSING,
+                    aiohttp.WSMsgType.CLOSED,
+                ):
+                    raise ConnectionError("WebSocket closed before MQTT CONNACK")
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    raise ConnectionError(f"WebSocket error before MQTT CONNACK: {ws.exception()}")
+        except BaseException:
+            with suppress(Exception):
+                await ws.close()
+            raise
 
-        return mqtt_connection_builder.websockets_with_default_aws_signing(
-            endpoint=self.endpoint,
-            region=self.region,
-            credentials_provider=credentials_provider,
-            client_id=self.client_id,
-            clean_session=False,
-            keep_alive_secs=60,
-            ping_timeout_ms=5000,
-            reconnect_min_timeout_secs=1,
-            reconnect_max_timeout_secs=30,
-            protocol_operation_timeout_ms=int(self.operation_timeout * 1000),
-            enable_metrics_collection=False,
-            on_connection_interrupted=self._on_connection_interrupted,
-            on_connection_resumed=self._on_connection_resumed,
-            on_connection_failure=self._on_connection_failure,
-            on_connection_closed=self._on_connection_closed,
-        )
-
-    async def async_disconnect(self) -> None:
-        """Disconnect from AWS IoT Core without blocking the event loop."""
-        connection = self._connection
-        self._connected = False
-        self.last_disconnected_at = datetime.now(UTC)
-        if connection is None:
-            return
+    async def async_connect(self) -> bool:
+        """Connect to AWS IoT Core using SigV4-signed MQTT over WebSockets."""
+        if self._lifecycle_task is not None and not self._lifecycle_task.done():
+            self._closing = True
+            self._lifecycle_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._lifecycle_task
 
         try:
-            await _async_wait_crt_operation(connection.disconnect(), self.operation_timeout)
+            self._closing = False
+            ws, _session_present, decoder, initial_packets = await self._open_session()
+            self._ws = ws
+            self._connected = True
+            self.last_error = None
+            self.last_connected_at = datetime.now(UTC)
+            self._lifecycle_task = asyncio.create_task(self._run_lifecycle(decoder, initial_packets))
+            _LOGGER.debug("Connected to AWS IoT MQTT")
+            return True
         except Exception as err:
+            self._ws = None
+            self._connected = False
             self.last_error = f"{type(err).__name__}: {err}"
-            _LOGGER.debug("AWS IoT MQTT disconnect failed: %s", err)
-        finally:
-            self._connection = None
+            _LOGGER.error("AWS IoT MQTT connection failed: %s", err)
+            return False
+
+    async def _send_bytes(self, data: bytes) -> None:
+        ws = self._ws
+        if ws is None or ws.closed:
+            raise ConnectionError("MQTT connection is not initialized")
+        async with self._send_lock:
+            ws = self._ws
+            if ws is None or ws.closed:
+                raise ConnectionError("MQTT connection is not initialized")
+            await ws.send_bytes(data)
+
+    def _fail_pending(self, exc: Exception) -> None:
+        for future in self._pending_pubacks.values():
+            if not future.done():
+                future.set_exception(exc)
+        self._pending_pubacks.clear()
+        for sub_future in self._pending_subacks.values():
+            if not sub_future.done():
+                sub_future.set_exception(exc)
+        self._pending_subacks.clear()
+
+    def _handle_packet(self, packet: MqttPacket) -> None:
+        if isinstance(packet, PublishPacket):
+            if packet.qos == 1 and packet.packet_id is not None:
+                task = asyncio.create_task(self._send_puback(packet.packet_id))
+                task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+            for topic_filter, callback in list(self._callbacks.items()):
+                if topic_matches(topic_filter, packet.topic):
+                    try:
+                        callback(packet.topic, packet.payload)
+                    except Exception as err:
+                        _LOGGER.error("MQTT callback failed for topic %s: %s", redact_topic(packet.topic), err)
+        elif isinstance(packet, PubAckPacket):
+            pub_future = self._pending_pubacks.pop(packet.packet_id, None)
+            if pub_future is not None and not pub_future.done():
+                pub_future.set_result(None)
+        elif isinstance(packet, SubAckPacket):
+            sub_future = self._pending_subacks.pop(packet.packet_id, None)
+            if sub_future is not None and not sub_future.done():
+                sub_future.set_result(packet)
+        elif isinstance(packet, PingRespPacket):
+            self._ping_event.set()
+
+    async def _send_puback(self, packet_id: int) -> None:
+        with suppress(Exception):
+            await self._send_bytes(encode_puback(packet_id))
+
+    async def _read_loop(
+        self,
+        ws: aiohttp.ClientWebSocketResponse,
+        decoder: MqttStreamDecoder,
+        initial_packets: list[MqttPacket],
+    ) -> None:
+        for packet in initial_packets:
+            self._handle_packet(packet)
+
+        async for msg in ws:
+            if msg.type == aiohttp.WSMsgType.BINARY:
+                for packet in decoder.feed(bytes(msg.data)):
+                    self._handle_packet(packet)
+            elif msg.type in (
+                aiohttp.WSMsgType.CLOSE,
+                aiohttp.WSMsgType.CLOSING,
+                aiohttp.WSMsgType.CLOSED,
+            ):
+                if not self._closing and self.last_error is None:
+                    self.last_error = f"WebSocket closed (code={msg.data})"
+                break
+            elif msg.type == aiohttp.WSMsgType.ERROR:
+                self.last_error = str(ws.exception() or "WebSocket error")
+                break
+
+    async def _keepalive_loop(self, ws: aiohttp.ClientWebSocketResponse) -> None:
+        try:
+            while not self._closing and self._ws is ws and not ws.closed:
+                await asyncio.sleep(self.keep_alive_secs)
+                if self._closing or self._ws is not ws or ws.closed:
+                    return
+                self._ping_event.clear()
+                await self._send_bytes(encode_pingreq())
+                await asyncio.wait_for(self._ping_event.wait(), timeout=self.ping_timeout)
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            if not self._closing and self._ws is ws:
+                self.last_error = f"{type(err).__name__}: {err}"
+                with suppress(Exception):
+                    await ws.close()
+
+    async def _run_lifecycle(
+        self,
+        decoder: MqttStreamDecoder,
+        initial_packets: list[MqttPacket],
+    ) -> None:
+        delay = max(0.05, self.reconnect_min_timeout_secs)
+        while not self._closing:
+            ws = self._ws
+            if ws is not None:
+                keepalive = asyncio.create_task(self._keepalive_loop(ws))
+                try:
+                    await self._read_loop(ws, decoder, initial_packets)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as err:
+                    self.last_error = f"{type(err).__name__}: {err}"
+                finally:
+                    keepalive.cancel()
+                    with suppress(asyncio.CancelledError, Exception):
+                        await keepalive
+                    if not self._closing:
+                        self._connected = False
+                        self.last_disconnected_at = datetime.now(UTC)
+                        if self.last_error is None:
+                            self.last_error = "MQTT connection interrupted"
+                        _LOGGER.warning("AWS IoT MQTT connection interrupted: %s", self.last_error)
+                    self._fail_pending(ConnectionError("MQTT connection interrupted"))
+                    self._ws = None
+                    with suppress(Exception):
+                        await ws.close()
+
+            if self._closing:
+                break
+
+            while not self._closing:
+                await asyncio.sleep(delay)
+                if self._closing:
+                    break
+                try:
+                    ws, session_present, decoder, initial_packets = await self._open_session()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as err:
+                    self.last_error = f"{type(err).__name__}: {err}"
+                    _LOGGER.warning("AWS IoT MQTT reconnect failed: %s", self.last_error)
+                    delay = min(delay * 2.0, max(delay, self.reconnect_max_timeout_secs))
+                    continue
+
+                if self._closing:
+                    with suppress(Exception):
+                        await ws.close()
+                    return
+
+                self._ws = ws
+                self._connected = True
+                self.last_connected_at = datetime.now(UTC)
+                self.last_error = None
+                self.reconnect_count += 1
+                delay = max(0.05, self.reconnect_min_timeout_secs)
+                _LOGGER.info("AWS IoT MQTT connection resumed session_present=%s", session_present)
+                if self.on_reconnected is not None:
+                    try:
+                        self.on_reconnected(session_present)
+                    except Exception as err:
+                        _LOGGER.debug("on_reconnected callback failed: %s", err)
+                break
+
+    async def async_disconnect(self) -> None:
+        """Disconnect from AWS IoT Core cleanly without blocking."""
+        self._closing = True
+        self._connected = False
+        self.last_disconnected_at = datetime.now(UTC)
+
+        ws = self._ws
+        self._ws = None
+        if ws is not None and not ws.closed:
+            try:
+                await asyncio.wait_for(ws.send_bytes(encode_disconnect()), timeout=self.operation_timeout)
+                await asyncio.wait_for(ws.close(), timeout=self.operation_timeout)
+            except Exception as err:
+                self.last_error = f"{type(err).__name__}: {err}"
+                _LOGGER.debug("AWS IoT MQTT disconnect failed: %s", err)
+
+        lifecycle = self._lifecycle_task
+        self._lifecycle_task = None
+        if lifecycle is not None and not lifecycle.done():
+            lifecycle.cancel()
+            with suppress(asyncio.CancelledError):
+                await lifecycle
+
+        self._fail_pending(ConnectionError("MQTT disconnected"))
 
     def is_connected(self) -> bool:
         """Return whether the transport considers MQTT connected."""
-        return bool(self._connected and self._connection is not None)
+        return bool(self._connected and self._ws is not None and not self._ws.closed)
 
     async def async_subscribe(self, topic: str, callback: MessageCallback, qos: int = 1) -> bool:
-        """Subscribe to a topic and dispatch raw payload bytes to callback."""
-        if not self._connection:
+        """Subscribe to a topic and dispatch incoming payload bytes to callback."""
+        if not self.is_connected():
             self.last_error = "MQTT connection is not initialized"
             return False
 
+        self._callbacks[topic] = callback
+        packet_id = self._allocate_packet_id()
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[SubAckPacket] = loop.create_future()
+        self._pending_subacks[packet_id] = future
         try:
-            from awscrt import mqtt
-
-            mqtt_qos = mqtt.QoS.AT_LEAST_ONCE if int(qos) == 1 else mqtt.QoS.AT_MOST_ONCE
-
-            def _callback(topic: str, payload: bytes, *args: Any, **kwargs: Any) -> None:
-                try:
-                    callback(topic, bytes(payload))
-                except Exception as err:
-                    _LOGGER.error("MQTT callback failed for topic %s: %s", redact_topic(topic), err)
-
-            await _async_wait_crt_operation(
-                self._connection.subscribe(topic=topic, qos=mqtt_qos, callback=_callback),
-                self.operation_timeout,
-            )
+            mqtt_qos = 1 if int(qos) == 1 else 0
+            await self._send_bytes(encode_subscribe(packet_id, topic, qos=mqtt_qos))
+            suback = await asyncio.wait_for(future, timeout=self.operation_timeout)
+            if any(code == 0x80 for code in suback.return_codes):
+                raise PermissionError(f"MQTT subscribe rejected for {redact_topic(topic)}")
             return True
         except Exception as err:
+            self._pending_subacks.pop(packet_id, None)
             self.last_error = f"{type(err).__name__}: {err}"
             _LOGGER.error("AWS IoT MQTT subscribe failed for %s: %s", redact_topic(topic), err)
             return False
 
     async def async_publish(self, topic: str, payload: str | bytes, qos: int = 1) -> bool:
-        """Publish a message to a topic without blocking the event loop."""
-        if not self._connection:
+        """Publish a message to a topic asynchronously."""
+        if not self.is_connected():
             self.last_error = "MQTT connection is not initialized"
             return False
 
-        try:
-            from awscrt import mqtt
+        mqtt_qos = 1 if int(qos) == 1 else 0
+        payload_bytes = payload.encode("utf-8") if isinstance(payload, str) else bytes(payload)
+        packet_id = self._allocate_packet_id() if mqtt_qos > 0 else None
+        future: asyncio.Future[None] | None = None
+        if packet_id is not None:
+            future = asyncio.get_running_loop().create_future()
+            self._pending_pubacks[packet_id] = future
 
-            mqtt_qos = mqtt.QoS.AT_LEAST_ONCE if int(qos) == 1 else mqtt.QoS.AT_MOST_ONCE
-            payload_bytes = payload.encode("utf-8") if isinstance(payload, str) else bytes(payload)
-            await _async_wait_crt_operation(
-                self._connection.publish(topic=topic, payload=payload_bytes, qos=mqtt_qos),
-                self.operation_timeout,
-            )
+        try:
+            await self._send_bytes(encode_publish(topic, payload_bytes, qos=mqtt_qos, packet_id=packet_id))
+            if future is not None:
+                await asyncio.wait_for(future, timeout=self.operation_timeout)
             return True
         except Exception as err:
+            if packet_id is not None:
+                self._pending_pubacks.pop(packet_id, None)
             self.last_error = f"{type(err).__name__}: {err}"
             _LOGGER.error("AWS IoT MQTT publish failed for %s: %s", redact_topic(topic), err)
             return False
-
-    def _on_connection_interrupted(self, connection: Any, error: Exception, **kwargs: Any) -> None:
-        self._connected = False
-        self.last_error = f"{type(error).__name__}: {error}"
-        self.last_disconnected_at = datetime.now(UTC)
-        _LOGGER.warning("AWS IoT MQTT connection interrupted: %s", error)
-
-    def _on_connection_resumed(self, connection: Any, return_code: Any, session_present: bool, **kwargs: Any) -> None:
-        self._connected = True
-        self.last_connected_at = datetime.now(UTC)
-        self.reconnect_count += 1
-        _LOGGER.info(
-            "AWS IoT MQTT connection resumed return_code=%s session_present=%s",
-            return_code,
-            session_present,
-        )
-        if self.on_reconnected is not None:
-            try:
-                self.on_reconnected(session_present)
-            except Exception as err:
-                _LOGGER.debug("on_reconnected callback failed: %s", err)
-
-    def _on_connection_failure(self, connection: Any, callback_data: Any, **kwargs: Any) -> None:
-        error = getattr(callback_data, "error", None)
-        self._connected = False
-        self.last_error = str(error or callback_data)
-        _LOGGER.warning("AWS IoT MQTT connection attempt failed: %s", self.last_error)
-
-    def _on_connection_closed(self, connection: Any, callback_data: Any, **kwargs: Any) -> None:
-        self._connected = False
-        self.last_disconnected_at = datetime.now(UTC)
-        _LOGGER.info("AWS IoT MQTT connection closed")
