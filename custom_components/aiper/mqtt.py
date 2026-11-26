@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from concurrent.futures import Future
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -78,9 +79,14 @@ class AwsIotMqttTransport:
             _LOGGER.debug("Connected to AWS IoT MQTT")
             return True
         except Exception as err:
+            conn = self._connection
+            self._connection = None
             self._connected = False
             self.last_error = f"{type(err).__name__}: {err}"
             _LOGGER.error("AWS IoT MQTT connection failed: %s", err)
+            if conn is not None:
+                with suppress(Exception):
+                    await _async_wait_crt_operation(conn.disconnect(), min(self.operation_timeout, 2.0))
             return False
 
     def _sign_with_current_credentials(self) -> Any:

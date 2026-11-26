@@ -17,10 +17,14 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .api import AiperApi, AiperAuthenticationError
+from .command_tracker import (
+    CLEAN_PATH_PENDING_TIMEOUT_SECONDS,
+    PENDING_TIMEOUT_SECONDS,
+    CommandTracker,
+)
 from .const import (
     DEFAULT_METADATA_REFRESH_HOURS,
     DOMAIN,
-    status_running,
 )
 from .coordinator_parsing import (
     _clean_path_value,
@@ -42,6 +46,7 @@ from .state import (
     DeviceState,
     EntityState,
     RawDeviceData,
+    _cleaner_running,
     merge_device_state,
     normalize_clean_path_update,
     normalize_device_state,
@@ -87,13 +92,16 @@ MQTT_REBUILD_MIN_INTERVAL_SECONDS = 600
 # REST "Cleaning" hidden for hours behind an older MQTT "Idle").
 MQTT_LIVE_STATE_TTL = LIVE_REFRESH_INTERVAL * 2
 # Per-field live keys whose source (MQTT vs REST) we track for the TTL above.
-MQTT_PREFERRED_STATE_KEYS = frozenset({"running", "status", "charging", "mode"})
+MQTT_PREFERRED_STATE_KEYS = frozenset({"running", "status", "charging", "mode", "battery", "runtime", "temperature"})
 # Which normalized live fields a given raw REST device-list key stands in for.
 # Used to record fresh REST evidence only for fields the poll actually carried.
 
 REST_STATE_FIELDS: dict[str, frozenset[str]] = {
     "machineStatus": frozenset({"running", "status", "charging"}),
     "mode": frozenset({"mode"}),
+    "battLevel": frozenset({"battery"}),
+    "runTime": frozenset({"runtime"}),
+    "temp": frozenset({"temperature"}),
 }
 
 
@@ -143,6 +151,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             else None
         )
         self._selected_mode_cache: dict[str, int] = {}
+        self._mqtt_mode_ids_cache: dict[str, list[int]] = {}
         # Last running GetWorkModeReport task per device (Scuba V3 Ultra); its
         # startTime dates the matching FinishTaskReport.
         self._active_tasks: dict[str, dict[str, Any]] = {}
@@ -157,8 +166,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         # Command tracking (for community-friendly UX)
         # We do not apply optimistic state changes; instead we track pending commands
         # and mark them confirmed when the device reports the new value.
-        self._command_state: dict[str, dict[str, dict[str, Any]]] = {}
-        # Structure: {sn: {"pending": {kind: {...}}, "last": {kind: {...}}}}
+        self._commands = CommandTracker()
 
         self._mqtt_maintenance_task: asyncio.Task[None] | None = None
         # Consecutive polls whose device-list request failed while cached
@@ -524,11 +532,17 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     self._devices[sn]["last_cleaning_start"] = last_record.get("start")
                     self._devices[sn]["last_cleaning_duration_min"] = last_record.get("duration_min")
 
-                # Derive supported modes only from observed info metadata.
-                # Family profiles provide typed defaults when the list is absent.
+                # Derive supported modes only from observed info metadata (or
+                # MQTT GetWorkMode when info omits them). Family profiles
+                # provide typed defaults when neither is present.
                 info = self._devices[sn].get("info")
                 supported_ids = supported_mode_ids_from_payload(info) if isinstance(info, dict) else []
                 explicit_supported_modes = bool(supported_ids)
+                if not supported_ids:
+                    cached_mqtt_modes = self._mqtt_mode_ids_cache.get(sn)
+                    if cached_mqtt_modes:
+                        supported_ids = list(cached_mqtt_modes)
+                        explicit_supported_modes = True
                 self._devices[sn]["supported_mode_ids"] = supported_ids
                 self._devices[sn]["supported_modes_explicit"] = explicit_supported_modes
 
@@ -583,7 +597,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     self._record_live_field_sources(sn, "rest", rest_live_fields.get(sn, set()), observed_at=now)
                     result[sn] = normalized
 
-            _LOGGER.debug("Coordinator updated devices=%s", list(result.keys()))
+            _LOGGER.debug("Coordinator updated devices=%s", [redact_serial(sn) for sn in result])
             if rest_refreshed:
                 self.last_successful_update = dt_util.utcnow()
             with suppress(Exception):
@@ -594,6 +608,9 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             # Stored credentials stopped working after setup (e.g. the
             # password was changed in the app): start Home Assistant's
             # reauth flow instead of failing every poll forever.
+            conn = getattr(self.api, "connection", None)
+            if conn is not None:
+                conn.mark_fatal(err)
             raise ConfigEntryAuthFailed("Aiper rejected the stored credentials") from err
         except Exception as err:
             # DataUpdateCoordinator logs UpdateFailed itself (once per outage).
@@ -784,6 +801,12 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
             elif lower_key == "otastatus":
                 updates = merge_device_state(updates, normalize_ota_update(component))
             elif lower_key == "getworkmode":
+                mode_ids = supported_mode_ids_from_payload(component)
+                if mode_ids:
+                    self._mqtt_mode_ids_cache[sn] = mode_ids
+                    raw_device["supported_mode_ids"] = mode_ids
+                    raw_device["supported_modes_explicit"] = True
+                    self._apply_device_profile(sn)
                 updates = merge_device_state(updates, normalize_mode_options_update(raw_device, component))
                 updates = merge_device_state(updates, normalize_clean_path_update(component))
             else:
@@ -914,40 +937,21 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
     # Command tracking
     # -----------------
 
-    PENDING_TIMEOUT_SECONDS = 8
-    # Scuba_S1_2025-only: async_confirm_clean_path_selection retries with
-    # sleeps summing to 10s, plus up to four more query_clean_path_setting
-    # calls that can each take up to their own ~4s ack timeout — a slow-ack
-    # worst case reaches ~26s. This must stay comfortably above that so the
-    # pending "hint" doesn't expire (and the UI flicker back to a stale
-    # value) while a legitimate confirmation is still in flight.
-    CLEAN_PATH_PENDING_TIMEOUT_SECONDS = 30
+    PENDING_TIMEOUT_SECONDS = PENDING_TIMEOUT_SECONDS
+    CLEAN_PATH_PENDING_TIMEOUT_SECONDS = CLEAN_PATH_PENDING_TIMEOUT_SECONDS
 
-    def _ensure_cmd_state(self, sn: str) -> dict[str, dict[str, Any]]:
-        st = self._command_state.get(sn)
-        if st is None:
-            st = {"pending": {}, "last": {}}
-            self._command_state[sn] = st
-        st.setdefault("pending", {})
-        st.setdefault("last", {})
-        return st
+    @property
+    def _command_state(self) -> dict[str, dict[str, dict[str, Any]]]:
+        """Expose underlying CommandTracker state for diagnostics and tests."""
+        return self._commands.state
+
+    @_command_state.setter
+    def _command_state(self, value: dict[str, dict[str, dict[str, Any]]]) -> None:
+        self._commands.state = value
 
     def note_command_sent(self, sn: str, kind: str, target: Any, *, source: str = "select") -> None:
         """Record that a command was sent and mark it pending until confirmed."""
-        now = dt_util.utcnow()
-        st = self._ensure_cmd_state(sn)
-        st["pending"][kind] = {
-            "target": target,
-            "since": now.isoformat(),
-            "source": source,
-        }
-        st["last"][kind] = {
-            "target": target,
-            "time": now.isoformat(),
-            "source": source,
-            "result": "sent",
-            "confirmed": False,
-        }
+        self._commands.note_sent(sn, kind, target, source=source)
         self.async_update_listeners()
 
     def note_command_failed(
@@ -960,28 +964,12 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         source: str = "select",
     ) -> None:
         """Record a command failure and clear any matching pending entry."""
-        now = dt_util.utcnow()
-        st = self._ensure_cmd_state(sn)
-        pend = st.get("pending", {})
-        if kind in pend and isinstance(pend.get(kind), dict) and pend[kind].get("target") == target:
-            pend.pop(kind, None)
-        st["last"][kind] = {
-            "target": target,
-            "time": now.isoformat(),
-            "source": source,
-            "result": "failed",
-            "reason": reason,
-            "confirmed": False,
-        }
+        self._commands.note_failed(sn, kind, target, reason=reason, source=source)
         self.async_update_listeners()
 
     def get_command_state(self, sn: str) -> dict[str, Any]:
         """Return a shallow copy of pending/last command state for entities."""
-        st = self._command_state.get(sn) or {"pending": {}, "last": {}}
-        return {
-            "pending": dict(st.get("pending", {})),
-            "last": dict(st.get("last", {})),
-        }
+        return self._commands.get_state(sn)
 
     async def async_refresh_metadata(self, sn: str) -> None:
         """Force a slow metadata refresh for one device."""
@@ -990,133 +978,24 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
 
     def clear_command_state(self, sn: str) -> None:
         """Clear local pending/last command tracking for one device."""
-        if self._command_state.pop(sn, None) is not None:
+        if self._commands.clear(sn):
             self.async_update_listeners()
 
     def get_pending_command_target(self, sn: str, kind: str) -> Any:
         """Return a non-expired pending command target, if present."""
         self.expire_pending_commands(sn)
-        st = self._command_state.get(sn) or {}
-        pending = st.get("pending") or {}
-        info = pending.get(kind) if isinstance(pending, dict) else None
-        if info is None and kind == "mode" and isinstance(pending, dict):
-            info = pending.get("cleaning_mode")
-        elif info is None and kind == "cleaning_mode" and isinstance(pending, dict):
-            info = pending.get("mode")
-        return info.get("target") if isinstance(info, dict) else None
+        return self._commands.get_pending_target(sn, kind)
 
     def expire_pending_commands(self, sn: str) -> None:
         """Expire pending commands that have not been confirmed within the timeout."""
-        st = self._command_state.get(sn)
-        if not st:
-            return
-        pend = st.get("pending", {})
-        if not isinstance(pend, dict) or not pend:
-            return
-        now = dt_util.utcnow()
-        expired: list[str] = []
-        for kind, info in pend.items():
-            if not isinstance(info, dict):
-                continue
-            since_raw = info.get("since")
-            try:
-                since = dt_util.parse_datetime(since_raw) if isinstance(since_raw, str) else None
-            except Exception:
-                since = None
-            if since is None:
-                continue
-            # The extended clean_path timeout exists specifically for
-            # Scuba_S1_2025's slow AT+AUTO? confirmation; other clean-path
-            # capable models (Scuba S2/S3) confirm quickly and should keep
-            # the standard timeout so a genuinely failed command doesn't
-            # leave a stale optimistic value on screen for longer than
-            # necessary.
-            is_s1 = model_key(self._devices.get(sn) or {}) == SCUBA_S1_2025_MODEL
-            timeout = (
-                self.CLEAN_PATH_PENDING_TIMEOUT_SECONDS
-                if (kind == "clean_path" and is_s1)
-                else self.PENDING_TIMEOUT_SECONDS
-            )
-            if (now - since).total_seconds() >= timeout:
-                expired.append(kind)
-        for kind in expired:
-            info = pend.pop(kind, None) or {}
-            st.setdefault("last", {})[kind] = {
-                "target": info.get("target"),
-                "time": now.isoformat(),
-                "source": info.get("source"),
-                "result": "timeout",
-                "confirmed": False,
-            }
-        if expired:
+        is_s1 = model_key(self._devices.get(sn) or {}) == SCUBA_S1_2025_MODEL
+        if self._commands.expire(sn, is_s1=is_s1):
             self.async_update_listeners()
 
     def _confirm_pending_commands(self, sn: str, machine: dict[str, Any]) -> None:
         """Mark pending commands confirmed when reported state matches targets."""
-        st = self._command_state.get(sn)
-        if not st:
-            return
-        pend = st.get("pending", {})
-        if not isinstance(pend, dict) or not pend:
-            return
-
-        def _to_int(v: Any) -> int | None:
-            try:
-                return int(v)
-            except Exception:
-                return None
-
-        reported_mode = _to_int(machine.get("mode"))
-        reported_status = _to_int(machine.get("status"))
-        reported_running = status_running(reported_status) if reported_status is not None else None
-        # Clean path is especially inconsistent across firmwares; normalize.
-        reported_clean_path = self._extract_clean_path_value(machine)
-
-        now = dt_util.utcnow().isoformat()
-        changed = False
-
-        for mode_kind in ("mode", "cleaning_mode"):
-            if mode_kind not in pend:
-                continue
-            tgt = _to_int((pend.get(mode_kind) or {}).get("target"))
-            if tgt is not None and reported_mode is not None and tgt == reported_mode:
-                pend.pop(mode_kind, None)
-                st.setdefault("last", {})[mode_kind] = {
-                    "target": tgt,
-                    "time": now,
-                    "source": "device_report",
-                    "result": "confirmed",
-                    "confirmed": True,
-                }
-                changed = True
-
-        if "running" in pend:
-            tgt = (pend.get("running") or {}).get("target")
-            if isinstance(tgt, bool) and reported_running is not None and tgt == reported_running:
-                pend.pop("running", None)
-                st.setdefault("last", {})["running"] = {
-                    "target": tgt,
-                    "time": now,
-                    "source": "device_report",
-                    "result": "confirmed",
-                    "confirmed": True,
-                }
-                changed = True
-
-        if "clean_path" in pend:
-            tgt = _clean_path_value((pend.get("clean_path") or {}).get("target"))
-            if tgt is not None and reported_clean_path is not None and tgt == reported_clean_path:
-                pend.pop("clean_path", None)
-                st.setdefault("last", {})["clean_path"] = {
-                    "target": tgt,
-                    "time": now,
-                    "source": "device_report",
-                    "result": "confirmed",
-                    "confirmed": True,
-                }
-                changed = True
-
-        if changed:
+        raw_device = self._devices.get(sn) or {}
+        if self._commands.confirm(sn, machine, running_fn=lambda status: _cleaner_running(raw_device, status)):
             self.async_update_listeners()
 
     # -----------------

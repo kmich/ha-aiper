@@ -21,10 +21,17 @@ SENSITIVE_KEY_FRAGMENTS = (
     "jwt",
 )
 
+# Non-secret diagnostic telemetry suffixes (e.g. credential_refresh_count,
+# aws_credentials_ttl, aws_credentials_expires_in) that contain a fragment
+# above but hold only counts or durations.
+SAFE_KEY_SUFFIXES = ("count", "ttl", "expiresin")
+
 
 def is_sensitive_key(key: str) -> bool:
     """Return True if a key name appears to contain sensitive data."""
     normalized = key.lower().replace("_", "").replace("-", "")
+    if normalized.endswith(SAFE_KEY_SUFFIXES):
+        return False
     return any(fragment in normalized for fragment in SENSITIVE_KEY_FRAGMENTS)
 
 

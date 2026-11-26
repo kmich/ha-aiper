@@ -2,14 +2,55 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
+from typing import Any
+
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .controller import AiperCommandResult, AiperDeviceController
 from .coordinator import AiperDataUpdateCoordinator
 from .state import DeviceState, EntityState
+
+
+def async_setup_dynamic_device_entities[EntityT: Entity](
+    entry: ConfigEntry[Any],
+    coordinator: AiperDataUpdateCoordinator,
+    async_add_entities: AddEntitiesCallback,
+    create_device_entities: Callable[[str, DeviceState], list[EntityT]],
+    extra_entities: Sequence[Entity] = (),
+) -> None:
+    """Create entities for current coordinator devices and listen for new ones."""
+    known_devices: set[str] = set()
+
+    @callback
+    def _async_add_new_devices() -> None:
+        if not coordinator.data:
+            return
+        new_entities: list[EntityT] = []
+        for sn, device_data in coordinator.data.items():
+            if sn not in known_devices:
+                known_devices.add(sn)
+                new_entities.extend(create_device_entities(sn, device_data))
+        if new_entities:
+            async_add_entities(new_entities)
+
+    initial_entities: list[Entity] = []
+    if coordinator.data:
+        for sn, device_data in coordinator.data.items():
+            known_devices.add(sn)
+            initial_entities.extend(create_device_entities(sn, device_data))
+
+    initial_entities.extend(extra_entities)
+    async_add_entities(initial_entities)
+    if hasattr(entry, "async_on_unload"):
+        entry.async_on_unload(coordinator.async_add_listener(_async_add_new_devices))
 
 
 def device_info_for(sn: str, device_data: DeviceState | None) -> DeviceInfo:

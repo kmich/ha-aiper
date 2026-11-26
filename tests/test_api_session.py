@@ -50,8 +50,8 @@ class FakeResponse:
 
 
 @pytest.mark.asyncio
-async def test_session_conflict_reauthenticates_and_retries_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A transient 402 should trigger one login and then retry the request."""
+async def test_session_conflict_backs_off_then_reauthenticates_after_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 402 should enter cooldown without kicking the app, then reauth once cooldown expires."""
     api = _api()
     responses = [
         {"code": "402", "successful": False, "message": "Your account is already being used"},
@@ -76,48 +76,69 @@ async def test_session_conflict_reauthenticates_and_retries_once(monkeypatch: py
     monkeypatch.setattr(api, "_request_with_backoff", fake_request)
     monkeypatch.setattr(api, "login", fake_login)
 
+    with pytest.raises(AiperSessionConflict):
+        await api._call_encrypted("POST", "/equipment/getEquipment", {})
+
+    assert login_calls == 0
+    assert api._session_conflict_pending_reauth is True
+    assert api._session_conflict_until > time.time()
+
+    # During cooldown, requests fail fast without hitting the cloud or logging in.
+    with pytest.raises(AiperSessionConflict):
+        await api._call_encrypted("POST", "/equipment/getEquipment", {})
+    assert len(request_tokens) == 1
+
+    # Once cooldown expires, the next call re-authenticates once and resumes.
+    api._session_conflict_until = time.time() - 1
     payload = await api._call_encrypted("POST", "/equipment/getEquipment", {})
 
     assert payload["successful"] is True
     assert payload["data"] == [{"sn": "SN123"}]
     assert login_calls == 1
+    assert api._session_conflict_pending_reauth is False
     assert request_tokens == ["", "fresh-token"]
 
 
 @pytest.mark.asyncio
-async def test_persistent_session_conflict_enters_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A repeated 402 should raise and avoid immediate follow-up requests."""
+async def test_session_conflict_reauth_failure_preserves_pending_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed post-cooldown reauth keeps the pending flag for the next attempt."""
     api = _api()
-    responses = [
-        {"code": "402", "successful": False, "message": "Your account is already being used"},
-        {"code": "402", "successful": False, "message": "Your account is already being used"},
-    ]
-    request_count = 0
+    api._session_conflict_pending_reauth = True
+    api._session_conflict_until = time.time() - 1
 
+    async def fail_login() -> bool:
+        raise AiperConnectionError("offline")
+
+    monkeypatch.setattr(api, "login", fail_login)
+
+    with pytest.raises(AiperConnectionError):
+        await api._call_encrypted("POST", "/equipment/getEquipment", {})
+
+    assert api._session_conflict_pending_reauth is True
+
+
+@pytest.mark.asyncio
+async def test_response_errors_do_not_embed_raw_payload_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Malformed decrypted bodies and tokenless login payloads stay out of exception strings."""
+    api = _api()
     monkeypatch.setattr(api_module, "AiperEncryption", FakeEncryption)
 
-    async def fake_request(method: str, url: str, *, headers: dict, data: Any = None, timeout: int = 30, **kwargs):
-        nonlocal request_count
-        request_count += 1
-        return 200, json.dumps(responses.pop(0))
+    async def bad_json_request(method: str, url: str, **kwargs):
+        return 200, "secret-raw-body-leak"
 
-    async def fake_login() -> bool:
-        api._token = "fresh-token"
-        api._headers["token"] = "fresh-token"
-        return True
-
-    monkeypatch.setattr(api, "_request_with_backoff", fake_request)
-    monkeypatch.setattr(api, "login", fake_login)
-
-    with pytest.raises(AiperSessionConflict):
+    monkeypatch.setattr(api, "_request_with_backoff", bad_json_request)
+    with pytest.raises(AiperResponseError) as err:
         await api._call_encrypted("POST", "/equipment/getEquipment", {})
+    assert "secret-raw-body-leak" not in str(err.value)
 
-    assert api._session_conflict_until > time.time()
+    async def tokenless_login(method: str, url: str, **kwargs):
+        return 200, json.dumps({"code": "200", "successful": True, "data": {"email": "leak@example.com"}})
 
-    with pytest.raises(AiperSessionConflict):
-        await api._call_encrypted("POST", "/equipment/getEquipment", {})
-
-    assert request_count == 2
+    monkeypatch.setattr(api, "_request_with_backoff", tokenless_login)
+    with pytest.raises(AiperResponseError) as login_err:
+        await api.login()
+    assert "leak@example.com" not in str(login_err.value)
+    assert "keys=['email']" in str(login_err.value)
 
 
 @pytest.mark.asyncio

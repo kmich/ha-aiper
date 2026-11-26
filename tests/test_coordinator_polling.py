@@ -10,6 +10,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from custom_components.aiper.api import AiperAuthenticationError, AiperConnectionError
+from custom_components.aiper.connection import ConnectionState, ConnectionStatus
 from custom_components.aiper.coordinator import AiperDataUpdateCoordinator
 from tests.coordinator_factory import BaseFakeApi
 
@@ -19,6 +20,7 @@ class FailingApi(BaseFakeApi):
 
     def __init__(self, error: Exception) -> None:
         self.error = error
+        self.connection = ConnectionStatus()
 
     async def get_devices(self) -> list[dict[str, Any]]:
         raise self.error
@@ -30,17 +32,19 @@ class FailingApi(BaseFakeApi):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cached", [False, True])
 async def test_auth_error_during_poll_starts_reauth(hass: HomeAssistant, cached: bool) -> None:
-    """A rejected password after setup must raise ConfigEntryAuthFailed.
+    """A rejected password after setup must raise ConfigEntryAuthFailed and mark FATAL.
 
     Even with cached device data (which otherwise masks REST failures), an
     authentication error has to surface so Home Assistant opens reauth.
     """
-    coordinator = AiperDataUpdateCoordinator(hass, FailingApi(AiperAuthenticationError("Login failed")))  # type: ignore[arg-type]
+    api = FailingApi(AiperAuthenticationError("Login failed"))
+    coordinator = AiperDataUpdateCoordinator(hass, api)  # type: ignore[arg-type]
     if cached:
         coordinator._devices = {"SN1": {"sn": "SN1"}}
 
     with pytest.raises(ConfigEntryAuthFailed):
         await coordinator._async_update_data()
+    assert api.connection.state is ConnectionState.FATAL
 
 
 @pytest.mark.asyncio

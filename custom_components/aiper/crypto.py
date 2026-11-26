@@ -9,6 +9,7 @@ This module uses `cryptography`, which is already bundled with Home Assistant.
 from __future__ import annotations
 
 import base64
+import functools
 import json
 import secrets
 import time
@@ -24,6 +25,16 @@ PUBLIC_KEY_STRING = (
     "qbEBT/VETjJ9Yr28QtHX13E8QGByYxLzYPldHNXChgOWfSemTEC3TxPvlaSuM9eFUuhqSeGbgoKG7JJNlgjvsPO2cH"
     "EhPXJE4qWtKEZVOZBxEeCgAaLZxwIDAQAB"
 )
+
+
+@functools.lru_cache(maxsize=1)
+def _load_public_key() -> rsa.RSAPublicKey:
+    """Decode and parse Aiper's RSA public key once per process."""
+    der = base64.b64decode(PUBLIC_KEY_STRING)
+    pub = load_der_public_key(der)
+    if not isinstance(pub, rsa.RSAPublicKey):
+        raise TypeError("Aiper public key is not an RSA key")
+    return pub
 
 
 class AiperEncryption:
@@ -51,10 +62,7 @@ class AiperEncryption:
             separators=(",", ":"),
         ).encode("utf-8")
 
-        der = base64.b64decode(PUBLIC_KEY_STRING)
-        pub = load_der_public_key(der)
-        if not isinstance(pub, rsa.RSAPublicKey):
-            raise TypeError("Aiper public key is not an RSA key")
+        pub = _load_public_key()
         encrypted = pub.encrypt(key_data, padding.PKCS1v15())
         return base64.b64encode(encrypted).decode("utf-8")
 

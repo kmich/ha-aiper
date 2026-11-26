@@ -12,13 +12,13 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntityDescription,
 )
 from homeassistant.const import EntityCategory
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import AiperConfigEntry
 from .coordinator import AiperDataUpdateCoordinator
-from .entity import AiperEntity, cloud_connection_device_info
+from .entity import AiperEntity, async_setup_dynamic_device_entities, cloud_connection_device_info
 from .helpers import is_not_hydrocomm
 from .profiles import Capability
 from .state import DeviceState, state_has_capability
@@ -131,7 +131,6 @@ async def async_setup_entry(
 ) -> None:
     """Set up Aiper binary sensors based on a config entry."""
     coordinator: AiperDataUpdateCoordinator = entry.runtime_data.coordinator
-    known_devices: set[str] = set()
 
     def _create_device_entities(sn: str, device_data: DeviceState) -> list[BinarySensorEntity]:
         dev_entities: list[BinarySensorEntity] = []
@@ -150,28 +149,13 @@ async def async_setup_entry(
             )
         return dev_entities
 
-    @callback
-    def _async_add_new_devices() -> None:
-        if not coordinator.data:
-            return
-        new_entities: list[BinarySensorEntity] = []
-        for sn, device_data in coordinator.data.items():
-            if sn not in known_devices:
-                known_devices.add(sn)
-                new_entities.extend(_create_device_entities(sn, device_data))
-        if new_entities:
-            async_add_entities(new_entities)
-
-    initial_entities: list[BinarySensorEntity] = []
-    if coordinator.data:
-        for sn, device_data in coordinator.data.items():
-            known_devices.add(sn)
-            initial_entities.extend(_create_device_entities(sn, device_data))
-
-    initial_entities.append(AiperCloudConnectedBinarySensor(coordinator, entry.entry_id))
-    async_add_entities(initial_entities)
-    if hasattr(entry, "async_on_unload"):
-        entry.async_on_unload(coordinator.async_add_listener(_async_add_new_devices))
+    async_setup_dynamic_device_entities(
+        entry,
+        coordinator,
+        async_add_entities,
+        _create_device_entities,
+        extra_entities=(AiperCloudConnectedBinarySensor(coordinator, entry.entry_id),),
+    )
 
 
 class AiperBinarySensor(AiperEntity, BinarySensorEntity):

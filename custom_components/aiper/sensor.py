@@ -28,7 +28,7 @@ from homeassistant.util import dt as dt_util
 from . import AiperConfigEntry
 from .connection import ConnectionState
 from .coordinator import AiperDataUpdateCoordinator
-from .entity import AiperEntity, cloud_connection_device_info
+from .entity import AiperEntity, async_setup_dynamic_device_entities, cloud_connection_device_info
 from .helpers import is_not_hydrocomm
 from .profiles import Capability
 from .report_sections import next_scheduled_clean
@@ -476,7 +476,6 @@ async def async_setup_entry(
 ) -> None:
     """Set up Aiper sensors based on a config entry."""
     coordinator: AiperDataUpdateCoordinator = entry.runtime_data.coordinator
-    known_devices: set[str] = set()
 
     def _create_device_entities(sn: str, device_data: DeviceState) -> list[SensorEntity]:
         dev_entities: list[SensorEntity] = []
@@ -503,34 +502,16 @@ async def async_setup_entry(
             )
         return dev_entities
 
-    @callback
-    def _async_add_new_devices() -> None:
-        if not coordinator.data:
-            return
-        new_entities: list[SensorEntity] = []
-        for sn, device_data in coordinator.data.items():
-            if sn not in known_devices:
-                known_devices.add(sn)
-                new_entities.extend(_create_device_entities(sn, device_data))
-        if new_entities:
-            async_add_entities(new_entities)
-
-    initial_entities: list[SensorEntity] = []
-    if coordinator.data:
-        for sn, device_data in coordinator.data.items():
-            known_devices.add(sn)
-            initial_entities.extend(_create_device_entities(sn, device_data))
-
-    initial_entities.extend(
-        (
+    async_setup_dynamic_device_entities(
+        entry,
+        coordinator,
+        async_add_entities,
+        _create_device_entities,
+        extra_entities=(
             AiperConnectionStateSensor(coordinator, entry.entry_id),
             AiperLastCloudUpdateSensor(coordinator, entry.entry_id),
-        )
+        ),
     )
-
-    async_add_entities(initial_entities)
-    if hasattr(entry, "async_on_unload"):
-        entry.async_on_unload(coordinator.async_add_listener(_async_add_new_devices))
 
 
 class AiperSensor(AiperEntity, SensorEntity):

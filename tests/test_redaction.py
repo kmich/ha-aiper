@@ -42,3 +42,24 @@ def test_redaction_walks_entity_state_values() -> None:
     assert redacted == {
         "SN1...890": {"device_info": {"value": "Aiper SN1...890", "attributes": {"token": "***", "model": "X"}}}
     }
+
+
+def test_redact_preserves_non_secret_credential_counters_and_ttls() -> None:
+    """Numeric diagnostic counters/TTLs are preserved while credential values stay masked."""
+    payload = {
+        "credential_refresh_count": 4,
+        "credential_reject_count": 1,
+        "mqtt_credential_signing_count": 7,
+        "aws_credentials_ttl": 3300,
+        "aws_credentials_expires_in": 1200,
+        "aws_credentials": {"AccessKeyId": "AKIA", "SecretKey": "secret"},
+    }
+
+    redacted = redact(payload)
+
+    assert redacted["credential_refresh_count"] == 4
+    assert redacted["credential_reject_count"] == 1
+    assert redacted["mqtt_credential_signing_count"] == 7
+    assert redacted["aws_credentials_ttl"] == 3300
+    assert redacted["aws_credentials_expires_in"] == 1200
+    assert redacted["aws_credentials"] == "***"

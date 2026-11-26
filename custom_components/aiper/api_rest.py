@@ -108,6 +108,7 @@ class AiperRestClient:
         self.base_url = ApiEndpoint[region].value
         self._async_session = async_session
         self._session_conflict_until = 0.0
+        self._session_conflict_pending_reauth = False
 
         self._token: str | None = None
         self._token_expires: Any = None
@@ -201,6 +202,18 @@ class AiperRestClient:
     ) -> dict[str, Any]:
         """Call an Aiper REST endpoint using the AES/RSA envelope."""
         self._raise_if_session_conflict_active(path)
+        if retry_login and path != "/login" and self._session_conflict_pending_reauth:
+            self._session_conflict_pending_reauth = False
+            _LOGGER.debug("Session conflict cooldown elapsed; re-authenticating before resuming requests")
+            try:
+                await self.login()
+            except AiperAuthenticationError:
+                raise
+            except Exception:
+                self._session_conflict_pending_reauth = True
+                raise
+            token = self._token
+
         enc = AiperEncryption()
 
         headers = self._request_headers(token)
@@ -216,32 +229,19 @@ class AiperRestClient:
         try:
             payload = json.loads(decrypted)
         except Exception as err:
-            raise AiperResponseError(f"Failed to parse decrypted response from {path}: {decrypted[:200]}") from err
+            raise AiperResponseError(
+                f"Failed to parse decrypted response from {path} ({len(decrypted)} bytes)"
+            ) from err
 
         if not isinstance(payload, dict):
             raise AiperResponseError(f"Unexpected decrypted response from {path}: {type(payload).__name__}")
 
-        if retry_login and path != "/login" and self._is_session_conflict(payload):
-            _LOGGER.info("Aiper account session conflict; re-authenticating once before backing off")
-            try:
-                if await self.login():
-                    retry_payload = await self._call_encrypted(
-                        method,
-                        path,
-                        body,
-                        base_url=base_url,
-                        token=self._token,
-                        timeout=timeout,
-                        retry_login=False,
-                    )
-                    if not self._is_session_conflict(retry_payload):
-                        self._session_conflict_until = 0.0
-                        return retry_payload
-                    payload = retry_payload
-            except AiperSessionConflict:
-                raise
-            except Exception as err:
-                _LOGGER.debug("Session-conflict re-authentication failed: %s", err)
+        if path != "/login" and self._is_session_conflict(payload):
+            self._session_conflict_pending_reauth = True
+            _LOGGER.info(
+                "Aiper account session conflict; backing off for %ss before re-authenticating",
+                SESSION_CONFLICT_COOLDOWN_SECONDS,
+            )
             self._mark_session_conflict(payload)
 
         # Never re-login from the login request itself: a 401/403 there means
@@ -274,6 +274,10 @@ class AiperRestClient:
                     timeout=timeout,
                     retry_login=False,
                 )
+
+        if path != "/login" and self._is_success(payload):
+            self._session_conflict_until = 0.0
+            self._session_conflict_pending_reauth = False
 
         return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
 
@@ -407,7 +411,8 @@ class AiperRestClient:
                 self.base_url = str(domains[0]).rstrip("/")
 
             if not self._token:
-                raise AiperResponseError(f"No token in login response: {result}")
+                keys = sorted(result) if isinstance(result, dict) else type(result).__name__
+                raise AiperResponseError(f"No token in login response (keys={keys})")
 
             self._headers["token"] = self._token
             _LOGGER.debug("Successfully logged in to Aiper API (base_url=%s)", self.base_url)

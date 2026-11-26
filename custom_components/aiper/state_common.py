@@ -5,15 +5,53 @@ No dependency on other integration modules — safe to import from anywhere.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
 __all__ = [
+    "EntityState",
+    "RawDeviceData",
+    "DeviceState",
+    "DevicesState",
     "_coerce_bool",
     "_coerce_int",
     "_coerce_float",
     "_centihours_to_hours",
+    "_round_number",
     "_hours",
+    "_state_value",
+    "_state_attrs",
 ]
+
+
+@dataclass(frozen=True)
+class EntityState:
+    """Normalized state value plus Home Assistant entity attributes."""
+
+    value: Any
+    attributes: dict[str, Any] = field(default_factory=dict)
+
+
+# Raw REST/cache payload assembled by the coordinator before translation.
+RawDeviceData = dict[str, Any]
+# Normalized Home Assistant-facing entity states for one device, keyed by entity key.
+DeviceState = dict[str, EntityState]
+# Data exposed by AiperDataUpdateCoordinator.data, keyed first by device serial number.
+DevicesState = dict[str, DeviceState]
+
+
+def _state_value(state: DeviceState | None, key: str) -> Any:
+    if not state:
+        return None
+    entity = state.get(key)
+    return entity.value if entity else None
+
+
+def _state_attrs(state: DeviceState | None, key: str) -> dict[str, Any]:
+    if not state:
+        return {}
+    entity = state.get(key)
+    return dict(entity.attributes) if entity else {}
 
 
 def _coerce_bool(value: Any) -> bool | None:
@@ -82,7 +120,8 @@ def _centihours_to_hours(value: Any) -> float | None:
     return None
 
 
-def _hours(value: Any) -> float | None:
+def _round_number(value: Any) -> float | None:
+    """Coerce a numeric payload value and round it to two decimal places."""
     if isinstance(value, bool) or value is None:
         return None
     if isinstance(value, (int, float)):
@@ -93,3 +132,6 @@ def _hours(value: Any) -> float | None:
         except ValueError:
             return None
     return None
+
+
+_hours = _round_number
