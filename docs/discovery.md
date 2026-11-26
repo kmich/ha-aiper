@@ -159,9 +159,12 @@ uv run tools/aiper_probe.py contract-verify --sn T1B50900024 --allow-control
 
 `bundle` logs in, connects MQTT, and emits a **single redacted JSON object** for
 one device to stdout. It bundles REST device identity (`get_device_info`),
-device status (`get_device_status`), consumables, a device-shadow snapshot, the
-raw `Machine` report string, and the mode + clean-path query results, plus
-top-level `integration_version` and `bundle_schema_version` fields. Every value
+device status (`get_device_status`), consumables (`get_consumables`), cleaning
+history (`get_cleaning_history`), the full device-shadow snapshot (preferring
+`shadow/get/accepted` / `shadow/update/documents`), the raw `Machine` report
+string, all observed MQTT events in the capture window, and the mode +
+clean-path query results, plus top-level `integration_version` and
+`bundle_schema_version` fields. Every value
 is routed through `custom_components/aiper/redaction.py`, so it is safe to paste
 into a public GitHub issue. Device serial numbers are shortened to a form like
 `SN1...890` everywhere in the bundle, including inside MQTT topics; the
@@ -180,6 +183,7 @@ its output publicly.
 - `get_device_status`
 - `get_device_info`
 - `get_consumables`
+- `get_cleaning_history`
 - `query_clean_path_setting`
 
 Each REST call is recorded independently. If one endpoint fails, the snapshot

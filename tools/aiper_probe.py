@@ -41,7 +41,8 @@ DEFAULT_DISCOVERY_FLOW = "generic"
 
 MANIFEST_PATH = REPO_ROOT / "custom_components" / "aiper" / "manifest.json"
 # Bump when the `bundle` subcommand changes the shape of its emitted object.
-BUNDLE_SCHEMA_VERSION = 1
+BUNDLE_SCHEMA_VERSION = 2
+MAX_BUNDLE_MQTT_EVENTS = 50
 
 
 _SN_KEYS = ("sn", "deviceSn", "serialNumber", "equipmentSn", "deviceSN")
@@ -201,6 +202,7 @@ async def capture_rest_snapshot(api: AiperApi, sn: str) -> dict[str, Any]:
             "status": await _capture_call("get_device_status", lambda: api.get_device_status(sn)),
             "info": await _capture_call("get_device_info", lambda: api.get_device_info(sn)),
             "consumables": await _capture_call("get_consumables", lambda: api.get_consumables(sn)),
+            "cleaning_history": await _capture_call("get_cleaning_history", lambda: api.get_cleaning_history(sn)),
             "clean_path": await _capture_call("query_clean_path_setting", lambda: api.query_clean_path_setting(sn)),
         },
     }
@@ -362,14 +364,27 @@ def _looks_like_shadow(payload: Any) -> bool:
     return payload.get("type") in ("Machine", "NetStat", "OtaStatus", "GetWorkMode")
 
 
+def _is_full_shadow_document(payload: Any) -> bool:
+    """Return True for full AWS IoT shadow documents rather than partial reports."""
+    if not isinstance(payload, dict):
+        return False
+    topic = str(payload.get("_topic") or "").lower()
+    if "shadow/get/accepted" in topic or "shadow/update/documents" in topic:
+        return True
+    return isinstance(payload.get("state"), dict)
+
+
 def extract_shadow_snapshot(events: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Return the most recent shadow-like MQTT payload captured in the window."""
-    snapshot: dict[str, Any] | None = None
+    """Return the most recent full shadow document, or the latest shadow-like payload."""
+    full_snapshot: dict[str, Any] | None = None
+    fallback_snapshot: dict[str, Any] | None = None
     for event in events:
         payload = event.get("payload") if "payload" in event else event
+        if _is_full_shadow_document(payload):
+            full_snapshot = payload
         if _looks_like_shadow(payload):
-            snapshot = payload
-    return snapshot
+            fallback_snapshot = payload
+    return full_snapshot if full_snapshot is not None else fallback_snapshot
 
 
 def extract_machine_report(events: list[dict[str, Any]]) -> str | None:
@@ -395,6 +410,8 @@ def build_bundle(
     machine_report: Any,
     mode_query: Any,
     clean_path_query: Any,
+    cleaning_history: Any = None,
+    mqtt_events: list[dict[str, Any]] | None = None,
     devices: Any = None,
     captured_at: str | None = None,
 ) -> dict[str, Any]:
@@ -415,10 +432,12 @@ def build_bundle(
             "get_device_info": device_identity,
             "get_device_status": device_status,
             "consumables": consumables,
+            "cleaning_history": cleaning_history,
         },
         "mqtt": {
             "device_shadow": device_shadow,
             "machine_report": machine_report,
+            "events": list(mqtt_events[:MAX_BUNDLE_MQTT_EVENTS]) if mqtt_events else [],
         },
         "queries": {
             "mode": mode_query,
@@ -457,6 +476,7 @@ async def collect_bundle(
     device_identity = await _capture_call("get_device_info", lambda: api.get_device_info(sn))
     device_status = await _capture_call("get_device_status", lambda: api.get_device_status(sn))
     consumables = await _capture_call("get_consumables", lambda: api.get_consumables(sn))
+    cleaning_history = await _capture_call("get_cleaning_history", lambda: api.get_cleaning_history(sn))
     mode_query = await _capture_call("query_cleaning_mode_setting", lambda: api.query_cleaning_mode_setting(sn))
     clean_path_query = await _capture_call("query_clean_path_setting", lambda: api.query_clean_path_setting(sn))
 
@@ -474,9 +494,20 @@ async def collect_bundle(
         machine_report=extract_machine_report(events),
         mode_query=mode_query,
         clean_path_query=clean_path_query,
+        cleaning_history=cleaning_history,
+        mqtt_events=events,
         devices=devices,
     )
-    bundle["mqtt_capture"] = redact_known_values(redact({**mqtt, "events_captured": len(events)}), {sn})
+    bundle["mqtt_capture"] = redact_known_values(
+        redact(
+            {
+                **mqtt,
+                "events_captured": len(events),
+                "events_truncated": len(events) > MAX_BUNDLE_MQTT_EVENTS,
+            }
+        ),
+        {sn},
+    )
     return bundle
 
 

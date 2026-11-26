@@ -172,17 +172,45 @@ def test_integration_version_reads_manifest() -> None:
 
 
 def test_extract_machine_report_and_shadow_pick_latest() -> None:
-    """Report/shadow extraction returns the most recent matching payload."""
+    """Report/shadow extraction returns full shadow docs over partial reports."""
+    full_shadow = {"_topic": "$aws/things/SN123/shadow/get/accepted", "state": {"reported": {"Machine": {"status": 1}}}}
     events: list[dict[str, Any]] = [
-        {"payload": {"_topic": "x/shadow/get/accepted", "Machine": {"status": 1}}},
+        {"payload": full_shadow},
         {"payload": {"type": "Machine", "data": {"report": "+INFO: 1,1,80"}}},
         {"payload": {"NetStat": {"online": 1}}},
         {"payload": {"type": "Machine", "data": {"report": "+INFO: 2,1,79"}}},
     ]
 
     assert aiper_probe.extract_machine_report(events) == "+INFO: 2,1,79"
-    assert aiper_probe.extract_shadow_snapshot(events) == {"type": "Machine", "data": {"report": "+INFO: 2,1,79"}}
-    assert aiper_probe.extract_shadow_snapshot(events[:3]) == {"NetStat": {"online": 1}}
+    assert aiper_probe.extract_shadow_snapshot(events) == full_shadow
+    assert aiper_probe.extract_shadow_snapshot(events[1:3]) == {"NetStat": {"online": 1}}
+
+
+@pytest.mark.asyncio
+async def test_capture_rest_snapshot_includes_cleaning_history() -> None:
+    """capture_rest_snapshot records status, info, consumables, cleaning_history, and clean_path."""
+
+    class FakeApi:
+        async def get_device_status(self, sn: str) -> dict[str, Any]:
+            return {"online": 1}
+
+        async def get_device_info(self, sn: str) -> dict[str, Any]:
+            return {"sn": sn, "model": "Scuba_S3"}
+
+        async def get_consumables(self, sn: str) -> dict[str, Any]:
+            return {"data": {"list": []}}
+
+        async def get_cleaning_history(self, sn: str) -> dict[str, Any]:
+            return {"code": 0, "data": {"total": 2, "list": []}}
+
+        async def query_clean_path_setting(self, sn: str) -> int:
+            return 0
+
+    snapshot = await aiper_probe.capture_rest_snapshot(cast(Any, FakeApi()), "SN123")
+
+    assert set(snapshot["calls"]) == {"status", "info", "consumables", "cleaning_history", "clean_path"}
+    assert snapshot["calls"]["cleaning_history"]["ok"] is True
+    assert snapshot["calls"]["cleaning_history"]["data"] == {"code": 0, "data": {"total": 2, "list": []}}
 
 
 @pytest.mark.asyncio
@@ -209,6 +237,9 @@ async def test_collect_bundle_uses_mocked_api_without_network() -> None:
         async def get_consumables(self, sn: str) -> dict[str, Any]:
             return {"data": {"list": []}}
 
+        async def get_cleaning_history(self, sn: str) -> dict[str, Any]:
+            return {"code": 0, "data": {"sn": sn, "token": "leak-hist-token", "list": [], "total": 0}}
+
         async def query_cleaning_mode_setting(self, sn: str) -> int:
             return 1
 
@@ -216,25 +247,50 @@ async def test_collect_bundle_uses_mocked_api_without_network() -> None:
             return 0
 
         async def request_shadow(self, sn: str) -> bool:
-            self.callback(sn, {"_topic": "x/shadow/get/accepted", "Machine": {"status": 1, "report": "+INFO: 1,1,80"}})
+            self.callback(
+                sn,
+                {
+                    "_topic": f"$aws/things/{sn}/shadow/get/accepted",
+                    "state": {"reported": {"Machine": {"status": 1}, "AutomationTaskReport": {"autoTasks": []}}},
+                },
+            )
+            self.callback(
+                sn,
+                {
+                    "_topic": f"aiper/things/{sn}/shadow/report",
+                    "type": "Machine",
+                    "data": {"sn": sn, "report": "+INFO: 1,1,80"},
+                },
+            )
             return True
 
     bundle = await aiper_probe.collect_bundle(
         cast(Any, FakeApi()), "SN1234567890", observe_seconds=0, devices=[{"sn": "OTHER9876543"}]
     )
 
+    serialized = json.dumps(bundle)
     assert bundle["bundle_schema_version"] == aiper_probe.BUNDLE_SCHEMA_VERSION
     # Bundles are pasted into public issues: serials are pseudonymized,
     # keeping the model-identifying prefix.
     assert bundle["sn"] == "SN1...890"
     assert bundle["rest"]["get_device_info"]["data"]["sn"] == "SN1...890"
+    assert bundle["rest"]["cleaning_history"]["ok"] is True
+    assert bundle["rest"]["cleaning_history"]["data"]["data"]["sn"] == "SN1...890"
+    assert bundle["rest"]["cleaning_history"]["data"]["data"]["token"] == "***"
     assert bundle["devices"] == [{"sn": "OTH...543"}]
-    assert "SN1234567890" not in json.dumps(bundle)
+    assert "SN1234567890" not in serialized
     assert bundle["rest"]["get_device_info"]["ok"] is True
     assert bundle["rest"]["get_device_info"]["data"]["token"] == "***"
+    assert bundle["mqtt"]["device_shadow"]["_topic"] == "$aws/things/SN1...890/shadow/get/accepted"
+    assert bundle["mqtt"]["device_shadow"]["state"]["reported"]["AutomationTaskReport"] == {"autoTasks": []}
     assert bundle["mqtt"]["machine_report"] == "+INFO: 1,1,80"
+    assert len(bundle["mqtt"]["events"]) == 2
+    assert bundle["mqtt"]["events"][1]["payload"]["_topic"] == "aiper/things/SN1...890/shadow/report"
     assert bundle["mqtt_capture"]["subscribed"] is True
-    assert "leak-token" not in json.dumps(bundle)
+    assert bundle["mqtt_capture"]["events_captured"] == 2
+    assert bundle["mqtt_capture"]["events_truncated"] is False
+    assert "leak-token" not in serialized
+    assert "leak-hist-token" not in serialized
 
 
 def test_run_directory_files_pseudonymize_known_serials(tmp_path, monkeypatch) -> None:
