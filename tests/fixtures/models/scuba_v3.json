@@ -6,11 +6,37 @@
     "integration_version": "1.5.0",
     "notes": "Onboarding bundle from issue #49 (@stevelea); status-code deviation corroborated by issue #38 (@dusty-turner) power-meter data. deviceType added from the device-list entry."
   },
+  "_feature_evidence": [
+    {
+      "feature": "Charging",
+      "support": "Observed",
+      "detail": "Status 2 means charging and status 3 means charged. A power-meter trace corroborates the interpretation.",
+      "source": "[#38](https://github.com/kmich/ha-aiper/issues/38) and [#49](https://github.com/kmich/ha-aiper/issues/49)",
+      "capability": "charging",
+      "exposed": true
+    },
+    {
+      "feature": "Clean path",
+      "support": "Readback only",
+      "detail": "A read query returned a clean-path value. A write followed by independent readback is unverified.",
+      "source": "[#49](https://github.com/kmich/ha-aiper/issues/49)",
+      "capability": "clean_path",
+      "exposed": true
+    },
+    {
+      "feature": "Mode choices",
+      "support": "Family default",
+      "detail": "The app shows Auto, AI Patrol and Floor. The integration uses the family mode map pending device command evidence.",
+      "source": "[#49](https://github.com/kmich/ha-aiper/issues/49)",
+      "capability": "mode_select",
+      "exposed": true
+    }
+  ],
   "deviceModel": "Scuba_V3",
   "deviceType": "3",
   "fw_main": "V5.0.0",
   "model": "Scuba_V3",
   "name": "Scuba V3",
   "online": 1,
-  "sn": "N3X62001472"
+  "sn": "SEEDSN000030"
 }

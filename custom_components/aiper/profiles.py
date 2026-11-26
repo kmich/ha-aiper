@@ -126,6 +126,8 @@ SCUBA_P1_PRO_CAPABILITIES = SCUBA_CAPABILITIES - frozenset(
 # field and a consumables list of Roller Brush, Caterpillar Tread, and
 # Replaceable MicroMesh Ultra-fine Filter. Charge-type and propeller data
 # are absent, so those entities stay off; clean-path queries succeed.
+# Fixture-backed observations and the scope of readback are documented in
+# docs/device-models/scuba.md.
 SCUBA_S3_CAPABILITIES = SCUBA_CAPABILITIES - frozenset(
     {
         Capability.WATER_TEMPERATURE,

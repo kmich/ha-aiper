@@ -6,6 +6,30 @@
     "integration_version": "1.8.1",
     "notes": "Scuba V3 Ultra, main/SOC firmware V1.1.16.4, Americas region. Serial replaced."
   },
+  "_feature_evidence": [
+    {
+      "feature": "Water temperature",
+      "support": "Observed",
+      "detail": "The MQTT WQSReport section reports water temperature.",
+      "source": "[#56](https://github.com/kmich/ha-aiper/issues/56) and a maintainer capture",
+      "capability": "water_temperature",
+      "exposed": true
+    },
+    {
+      "feature": "Schedule",
+      "support": "Observed",
+      "detail": "AutomationTaskReport exposes saved schedule entries in the MQTT shadow.",
+      "source": "[#57](https://github.com/kmich/ha-aiper/pull/57) and a maintainer capture",
+      "capability": "report_sections",
+      "exposed": true
+    },
+    {
+      "feature": "Cleaning completion",
+      "support": "Observed",
+      "detail": "FinishTaskReport confirms completion. REST history can enrich or corroborate the same session.",
+      "source": "[#72](https://github.com/kmich/ha-aiper/pull/72) and a maintainer capture"
+    }
+  ],
   "deviceModel": "Scuba_V3_Ultra",
   "deviceType": "3",
   "fw_main": "V1.1.16.4",

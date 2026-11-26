@@ -4,8 +4,53 @@
     "captured_at": "2026-11-26T04:39:29+00:00",
     "generated_by": "tools/fixture_from_probe.py",
     "integration_version": "1.9.1",
-    "notes": "Onboarding bundle from issue #59 (@toddc1976); corroborated by issue #29. Not hardware-verified by the maintainer."
+    "notes": "Onboarding bundle from issue #59 and prior field report in issue #29.",
+    "observations": {
+      "legacy_history_total": 0,
+      "readback_queries": ["clean_path"],
+      "shadow_reports": ["Machine"]
+    }
   },
+  "_feature_evidence": [
+    {
+      "feature": "Battery and lifecycle",
+      "support": "Observed",
+      "detail": "Machine reports battery, status, in-water state and minute-based runtime.",
+      "source": "[#59](https://github.com/kmich/ha-aiper/issues/59)",
+      "capability": "battery",
+      "exposed": true
+    },
+    {
+      "feature": "Clean path",
+      "support": "Readback only",
+      "detail": "The device returned a current clean-path value. A write followed by independent readback is unverified.",
+      "source": "[#59](https://github.com/kmich/ha-aiper/issues/59)",
+      "capability": "clean_path",
+      "exposed": true
+    },
+    {
+      "feature": "Mode choices",
+      "support": "Family default",
+      "detail": "MQTT reports the active mode, and the integration inherits the Scuba mode choices.",
+      "source": "[#59](https://github.com/kmich/ha-aiper/issues/59)",
+      "capability": "mode_select",
+      "exposed": true
+    },
+    {
+      "feature": "Cloud history",
+      "support": "App route identified",
+      "detail": "The legacy history returned zero rows. The app maps S3 to N30 and uses `/equipmentCleanRecord/gen4/n30n31t30/page` for N30 history.",
+      "source": "[#59](https://github.com/kmich/ha-aiper/issues/59) and Aiper Android 3.8.0"
+    },
+    {
+      "feature": "Schedule",
+      "support": "Unconfirmed",
+      "detail": "The online shadow lacked a schedule section. The app's `/poolRobot/getTimedTask` is a candidate for read-only validation.",
+      "source": "[#59](https://github.com/kmich/ha-aiper/issues/59) and Aiper Android 3.8.0",
+      "capability": "report_sections",
+      "exposed": false
+    }
+  ],
   "deviceModel": "Scuba_S3",
   "deviceType": "3",
   "fw_main": "V1.0.0",
@@ -13,5 +58,5 @@
   "model": "Scuba_S3",
   "name": "Scuba S3",
   "online": 1,
-  "sn": "N0X...424"
+  "sn": "SEEDSN000003"
 }

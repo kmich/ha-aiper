@@ -241,6 +241,16 @@ def test_model_fixture_derives_expected_profile(fixture_path: Path) -> None:
     assert profile.family.value == expected["family"]
     assert {cap.value for cap in profile.capabilities} == expected["capabilities"]
     assert profile.mode_map == expected["mode_map"]
+    for evidence in device.get("_feature_evidence", []):
+        if capability := evidence.get("capability"):
+            assert (capability in profile.capabilities) is evidence["exposed"]
+
+
+def test_scuba_guide_matches_fixture_evidence() -> None:
+    guide = FIXTURES_DIR.parents[2] / "docs" / "device-models" / "scuba.md"
+    generated = guide.read_text(encoding="utf-8").split("<!-- model-evidence:start -->", 1)[1]
+    generated = generated.split("<!-- model-evidence:end -->", 1)[0]
+    assert generated.strip() == fixture_from_probe.render_model_evidence_table(FIXTURES_DIR)
 
 
 def _fake_bundle_inputs() -> dict[str, Any]:
@@ -356,7 +366,7 @@ def test_fixture_from_probe_writes_named_file(tmp_path: Path) -> None:
 
 def test_fixture_from_probe_extracts_nested_aws_shadow_machine() -> None:
     """v2 bundles nest shadow data under state.reported.Machine."""
-    bundle = {
+    bundle: dict[str, Any] = {
         "bundle_schema_version": 2,
         "integration_version": "1.9.1",
         "captured_at": "2026-11-26T04:39:29+00:00",
@@ -381,3 +391,13 @@ def test_fixture_from_probe_extracts_nested_aws_shadow_machine() -> None:
     assert device["in_water"] == 0
     assert device["online"] == 1
     assert model_key(device) == "scuba_s3"
+    assert device["_bundle_provenance"]["observations"] == {"shadow_reports": ["Machine"], "readback_queries": []}
+
+    bundle["rest"]["cleaning_history"] = {"ok": True, "data": {"data": {"total": 0, "list": []}}}
+    bundle["queries"]["clean_path"] = {"ok": True, "data": 0}
+    device, _ = fixture_from_probe.build_fixture_device(bundle)
+    assert device["_bundle_provenance"]["observations"] == {
+        "shadow_reports": ["Machine"],
+        "readback_queries": ["clean_path"],
+        "legacy_history_total": 0,
+    }
