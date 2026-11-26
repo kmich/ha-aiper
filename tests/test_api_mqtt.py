@@ -308,10 +308,15 @@ async def test_subscribe_device_requires_connection_and_reports_errors() -> None
     api, transport = _connected_api()
 
     assert await api.subscribe_device(SN, lambda sn, data: None) is True
+    assert SN in api.subscribed_serials()
+
+    # An unsubscribed serial reports failure when the transport fails.
     transport.subscribe_result = RuntimeError("denied")
-    assert await api.subscribe_device(SN, lambda sn, data: None) is False
+    assert await api.subscribe_device("SN_FAIL", lambda sn, data: None) is False
+    assert "SN_FAIL" not in api.subscribed_serials()
+
     transport.connected = False
-    assert await api.subscribe_device(SN, lambda sn, data: None) is False
+    assert await api.subscribe_device("SN_OFFLINE", lambda sn, data: None) is False
 
 
 @pytest.mark.asyncio
@@ -412,3 +417,122 @@ async def test_disconnect_without_transport() -> None:
     await api.disconnect()
 
     assert api._mqtt_client is None
+
+
+@pytest.mark.asyncio
+async def test_subscription_recovery_retries_only_missing_topics_and_deduplicates_x9() -> None:
+    """Partial subscription failure tracks missing topics and recovers without duplicates."""
+    api, transport = _connected_api()
+    topics = api._subscription_topics_for_sn("X912345")
+    assert len(topics) == len(set(topics))
+
+    fail_topic = f"aiper/things/{SN}/upChan"
+    subscribe_calls: list[str] = []
+    fail_once = True
+
+    async def scripted_subscribe(topic: str, callback: Any, qos: int = 1) -> bool:
+        nonlocal fail_once
+        subscribe_calls.append(topic)
+        if topic == fail_topic and fail_once:
+            fail_once = False
+            transport.last_error = "publish/subscribe timeout"  # type: ignore[attr-defined]
+            return False
+        transport.subscriptions[topic] = callback
+        return True
+
+    transport.async_subscribe = scripted_subscribe  # type: ignore[method-assign]
+    received: list[tuple[str, dict[str, Any]]] = []
+
+    def cb(sn: str, data: dict[str, Any]) -> None:
+        received.append((sn, data))
+
+    assert await api.subscribe_device(SN, cb) is False
+    assert SN not in api.subscribed_serials()
+    initial_calls = len(subscribe_calls)
+    assert initial_calls == len(api._subscription_topics_for_sn(SN))
+
+    # Second attempt subscribes ONLY the missing topic, then marks SN subscribed.
+    subscribe_calls.clear()
+    assert await api.subscribe_device(SN, cb) is True
+    assert subscribe_calls == [fail_topic]
+    assert SN in api.subscribed_serials()
+
+    transport.subscriptions[fail_topic](fail_topic, b'{"Machine":{"cap":90}}')
+    assert len(received) == 1
+    assert received[0][1]["Machine"]["cap"] == 90
+
+
+@pytest.mark.asyncio
+async def test_denied_topic_and_backoff_prevent_tight_retry_loops(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Denied topics stop retrying on this connection; transient failures back off."""
+    api, transport = _connected_api()
+    api._subscribe_retry_base_seconds = 30.0
+    api._subscribe_retry_max_seconds = 120.0
+    api._subscribe_max_retries = 3
+
+    topics = api._subscription_topics_for_sn(SN)
+    denied_topic = topics[0]
+    flaky_topic = topics[1]
+    calls: dict[str, int] = {}
+
+    async def selective_subscribe(topic: str, callback: Any, qos: int = 1) -> bool:
+        calls[topic] = calls.get(topic, 0) + 1
+        if topic == denied_topic:
+            transport.last_error = "subscribe: PermissionError: MQTT subscribe rejected"  # type: ignore[attr-defined]
+            return False
+        if topic == flaky_topic:
+            transport.last_error = "subscribe: TimeoutError"  # type: ignore[attr-defined]
+            return False
+        transport.subscriptions[topic] = callback
+        return True
+
+    transport.async_subscribe = selective_subscribe  # type: ignore[method-assign]
+
+    now = 100.0
+    monkeypatch.setattr("time.monotonic", lambda: now)
+
+    assert await api.subscribe_device(SN, lambda sn, data: None) is False
+    assert (SN, denied_topic) in api._denied_topics
+    assert calls[denied_topic] == 1
+    assert calls[flaky_topic] == 1
+
+    # Failure #1 had 0s delay -> immediate second try allowed; denied topic NOT retried.
+    assert await api.subscribe_device(SN, lambda sn, data: None) is False
+    assert calls[denied_topic] == 1
+    assert calls[flaky_topic] == 2
+
+    # Failure #2 scheduled 30s backoff -> blocked at t=110, allowed at t=135.
+    now = 110.0
+    assert await api.subscribe_device(SN, lambda sn, data: None) is False
+    assert calls[flaky_topic] == 2
+
+    now = 135.0
+    assert await api.subscribe_device(SN, lambda sn, data: None) is False
+    assert calls[flaky_topic] == 3
+
+    # Failure #3 reached max_retries=3 -> no further attempts on this connection.
+    now = 9999.0
+    assert await api.subscribe_device(SN, lambda sn, data: None) is False
+    assert calls[flaky_topic] == 3
+
+
+@pytest.mark.asyncio
+async def test_late_subscription_ack_from_old_connection_is_ignored_and_disconnect_resets() -> None:
+    """Late acks from a torn-down connection must not mark the new connection subscribed."""
+    api, transport1 = _connected_api()
+    gate = asyncio.Event()
+
+    async def slow_subscribe(topic: str, callback: Any, qos: int = 1) -> bool:
+        await gate.wait()
+        return True
+
+    transport1.async_subscribe = slow_subscribe  # type: ignore[method-assign]
+    task = asyncio.create_task(api.subscribe_device(SN, lambda sn, data: None))
+    await asyncio.sleep(0.01)
+
+    await api.disconnect_mqtt()
+    assert api.subscribed_serials() == set()
+
+    gate.set()
+    assert await task is False
+    assert api._acked_topics_by_sn == {}

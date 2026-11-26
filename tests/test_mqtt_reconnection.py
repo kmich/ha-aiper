@@ -290,7 +290,8 @@ def test_register_shadow_callback_is_idempotent_for_the_same_callback() -> None:
     api._register_shadow_callback("SN123", cb)
 
     assert api._shadow_callbacks["SN123"] == [cb]
-    assert api.subscribed_serials() == {"SN123"}
+    # Registering a callback alone does not confirm a broker subscription.
+    assert api.subscribed_serials() == set()
 
 
 @pytest.mark.asyncio

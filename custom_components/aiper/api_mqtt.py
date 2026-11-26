@@ -34,6 +34,9 @@ _LOGGER = logging.getLogger(__name__)
 # window of expiring. Comfortably larger than the coordinator poll interval
 # so a refresh is never missed.
 MQTT_CREDENTIALS_REFRESH_MARGIN_SECONDS = 600
+MQTT_SUBSCRIBE_RETRY_BASE_SECONDS = 30.0
+MQTT_SUBSCRIBE_RETRY_MAX_SECONDS = 1800.0
+MQTT_SUBSCRIBE_MAX_RETRIES = 5
 
 # MQTT payload callback: called as ``callback(sn, payload)`` from an AWS CRT thread.
 ShadowCallback = Callable[[str, dict[str, Any]], None]
@@ -73,6 +76,14 @@ class AiperMqttClient(AiperRestClient):
         self._cmd_locks: dict[str, asyncio.Lock] = {}
         # Serialize topic re-subscriptions across overlapping reconnect callbacks.
         self._resubscribe_lock = asyncio.Lock()
+        # Connection-scoped broker acknowledgement tracking for subscriptions.
+        self._mqtt_connection_generation = 0
+        self._acked_topics_by_sn: dict[str, set[str]] = {}
+        self._topic_retry_state: dict[tuple[str, str], tuple[int, float]] = {}
+        self._denied_topics: set[tuple[str, str]] = set()
+        self._subscribe_retry_base_seconds = MQTT_SUBSCRIBE_RETRY_BASE_SECONDS
+        self._subscribe_retry_max_seconds = MQTT_SUBSCRIBE_RETRY_MAX_SECONDS
+        self._subscribe_max_retries = MQTT_SUBSCRIBE_MAX_RETRIES
 
     def _encrypt(self, data: str) -> str:
         """Encrypt message using XOR + Base64."""
@@ -190,6 +201,7 @@ class AiperMqttClient(AiperRestClient):
 
             client_id = self._identity_id
             region = self._resolve_aws_region()
+            self._reset_mqtt_subscription_state()
 
             self._mqtt_client = AwsIotMqttTransport(
                 endpoint=self._iot_endpoint,
@@ -282,12 +294,13 @@ class AiperMqttClient(AiperRestClient):
         return (datetime.now(UTC) - self._mqtt_first_disconnected_at).total_seconds()
 
     def _on_mqtt_reconnected(self, session_present: bool) -> None:
-        """Called from the AWS CRT thread when MQTT auto-reconnects.
+        """Called when the MQTT transport auto-reconnects.
 
         When session_present is False the broker has no record of our
         subscriptions, so we must re-subscribe for shadow updates to resume.
-        We always re-subscribe to be safe — MQTT re-subscribe is idempotent.
+        We always reset tracked acknowledgements and re-subscribe to be safe.
         """
+        self._reset_mqtt_subscription_state()
         loop = self._async_loop
         if loop is None or not loop.is_running():
             return
@@ -302,6 +315,109 @@ class AiperMqttClient(AiperRestClient):
 
         future.add_done_callback(_log_error)
 
+    def _reset_mqtt_subscription_state(self) -> None:
+        """Clear connection-scoped broker subscription acknowledgements and retry state."""
+        with self._lock:
+            self._mqtt_connection_generation += 1
+            self._acked_topics_by_sn.clear()
+            self._topic_retry_state.clear()
+            self._denied_topics.clear()
+
+    def _is_topic_retry_eligible_locked(self, sn: str, topic: str, now: float) -> bool:
+        retry = self._topic_retry_state.get((sn, topic))
+        if retry is None:
+            return True
+        failures, next_retry_at = retry
+        return failures < self._subscribe_max_retries and now >= next_retry_at
+
+    def _is_device_subscribed_locked(self, sn: str) -> bool:
+        if sn not in self._shadow_callbacks:
+            return False
+        acked = self._acked_topics_by_sn.get(sn)
+        if not acked:
+            return False
+        return all(
+            topic in acked or (sn, topic) in self._denied_topics for topic in self._subscription_topics_for_sn(sn)
+        )
+
+    async def _subscribe_device_topics(self, sn: str) -> tuple[bool, int]:
+        """Subscribe any unacknowledged eligible topics for one device."""
+        if not self.is_mqtt_connected():
+            return False, 0
+
+        client = self._mqtt_client
+        with self._lock:
+            generation = self._mqtt_connection_generation
+            acked = self._acked_topics_by_sn.get(sn, set())
+            now = time.monotonic()
+            eligible_topics = [
+                topic
+                for topic in self._subscription_topics_for_sn(sn)
+                if topic not in acked
+                and (sn, topic) not in self._denied_topics
+                and self._is_topic_retry_eligible_locked(sn, topic, now)
+            ]
+            if not eligible_topics:
+                return self._is_device_subscribed_locked(sn), 0
+
+        def on_message(topic: str, payload_bytes: bytes) -> None:
+            self._handle_device_message(sn, topic, payload_bytes)
+
+        async def _subscribe_one(topic: str) -> tuple[bool, bool, str | None]:
+            try:
+                ok = bool(await client.async_subscribe(topic, on_message, 1))
+            except Exception as err:
+                err_msg = f"{type(err).__name__}: {err}"
+                denied = isinstance(err, PermissionError) or "rejected" in err_msg.lower()
+                return False, denied, err_msg
+            if ok:
+                return True, False, None
+            err_msg = str(getattr(client, "last_error", "") or "")
+            denied = "permissionerror" in err_msg.lower() or "rejected" in err_msg.lower()
+            return False, denied, err_msg or None
+
+        outcomes = await asyncio.gather(*(_subscribe_one(topic) for topic in eligible_topics))
+
+        with self._lock:
+            if self._mqtt_connection_generation != generation or self._mqtt_client is not client:
+                return False, 0
+
+            newly_acked = 0
+            retry_now = time.monotonic()
+            for topic, (ok, is_denied, err_text) in zip(eligible_topics, outcomes, strict=True):
+                if ok:
+                    self._acked_topics_by_sn.setdefault(sn, set()).add(topic)
+                    self._topic_retry_state.pop((sn, topic), None)
+                    newly_acked += 1
+                    continue
+
+                if is_denied:
+                    self._denied_topics.add((sn, topic))
+                    self._topic_retry_state.pop((sn, topic), None)
+                    _LOGGER.debug("MQTT topic subscription rejected for %s: %s", redact_serial(sn), redact_topic(topic))
+                    continue
+
+                prev_failures, _ = self._topic_retry_state.get((sn, topic), (0, 0.0))
+                failures = prev_failures + 1
+                delay = (
+                    0.0
+                    if failures == 1
+                    else min(
+                        self._subscribe_retry_base_seconds * (2 ** (failures - 2)),
+                        self._subscribe_retry_max_seconds,
+                    )
+                )
+                self._topic_retry_state[(sn, topic)] = (failures, retry_now + delay)
+                if err_text:
+                    _LOGGER.debug(
+                        "Subscribe failed for %s topic %s: %s",
+                        redact_serial(sn),
+                        redact_topic(topic),
+                        err_text,
+                    )
+
+            return self._is_device_subscribed_locked(sn), newly_acked
+
     async def _resubscribe_all_devices(self) -> None:
         """Re-subscribe to all device topics after an MQTT reconnect."""
         async with self._resubscribe_lock:
@@ -311,24 +427,12 @@ class AiperMqttClient(AiperRestClient):
                 sns = list(self._shadow_callbacks.keys())
             for sn in sns:
                 _LOGGER.debug("Re-subscribing MQTT topics for %s after reconnect", redact_serial(sn))
-
-                def on_message(topic: str, payload_bytes: bytes, _sn: str = sn) -> None:
-                    self._handle_device_message(_sn, topic, payload_bytes)
-
-                async def _subscribe_one(topic: str, _sn: str = sn, _cb: Any = on_message) -> None:
-                    try:
-                        await self._mqtt_client.async_subscribe(topic, _cb, 1)
-                    except Exception as err:
-                        _LOGGER.debug(
-                            "Re-subscribe failed for %s topic %s: %s", redact_serial(_sn), redact_topic(topic), err
-                        )
-
-                # Topics for one device are independent of each other, so
-                # subscribe them concurrently instead of paying N sequential
-                # round trips per device.
-                await asyncio.gather(*(_subscribe_one(topic) for topic in self._subscription_topics_for_sn(sn)))
-                with suppress(Exception):
-                    await self.request_shadow(sn)
+                await self._subscribe_device_topics(sn)
+                with self._lock:
+                    has_acked = bool(self._acked_topics_by_sn.get(sn))
+                if has_acked:
+                    with suppress(Exception):
+                        await self.request_shadow(sn)
 
     async def request_shadow(self, sn: str) -> bool:
         """Request the current AWS IoT thing shadow."""
@@ -378,22 +482,26 @@ class AiperMqttClient(AiperRestClient):
                 existing.append(callback)
 
     def subscribed_serials(self) -> set[str]:
-        """Return the serials with at least one registered shadow callback."""
+        """Return the serials whose topics are acknowledged on the current connection."""
         with self._lock:
-            return set(self._shadow_callbacks.keys())
+            return {sn for sn in self._shadow_callbacks if self._is_device_subscribed_locked(sn)}
 
     def _subscription_topics_for_sn(self, sn: str) -> tuple[str, ...]:
-        """Return MQTT topics to subscribe for a device."""
+        """Return deduplicated MQTT topics to subscribe for a device."""
         is_x9 = any(sn.upper().startswith(prefix) for prefix in X9_SERIES_PREFIXES)
         report_topic = MqttTopic.SHADOW_REPORT_X9 if is_x9 else MqttTopic.SHADOW_REPORT
-        return (
-            report_topic.format(sn=sn),
-            MqttTopic.READ.format(sn=sn),
-            MqttTopic.SHADOW_GET.format(sn=sn),
-            MqttTopic.SHADOW_UPDATE_ACCEPTED.format(sn=sn),
-            MqttTopic.SHADOW_UPDATE_DELTA.format(sn=sn),
-            MqttTopic.SHADOW_UPDATE_DOCUMENTS.format(sn=sn),
-            MqttTopic.SHADOW_REPORT_X9.format(sn=sn),
+        return tuple(
+            dict.fromkeys(
+                (
+                    report_topic.format(sn=sn),
+                    MqttTopic.READ.format(sn=sn),
+                    MqttTopic.SHADOW_GET.format(sn=sn),
+                    MqttTopic.SHADOW_UPDATE_ACCEPTED.format(sn=sn),
+                    MqttTopic.SHADOW_UPDATE_DELTA.format(sn=sn),
+                    MqttTopic.SHADOW_UPDATE_DOCUMENTS.format(sn=sn),
+                    MqttTopic.SHADOW_REPORT_X9.format(sn=sn),
+                )
+            )
         )
 
     def _handle_device_message(self, sn: str, topic: str, payload_bytes: bytes) -> None:
@@ -451,20 +559,10 @@ class AiperMqttClient(AiperRestClient):
         self._async_loop = asyncio.get_running_loop()
         self._register_shadow_callback(sn, callback)
 
-        def on_message(topic: str, payload_bytes: bytes) -> None:
-            self._handle_device_message(sn, topic, payload_bytes)
-
         try:
-            # Topics for one device are independent of each other, so
-            # subscribe them concurrently instead of paying N sequential
-            # round trips per device.
-            results = await asyncio.gather(
-                *(
-                    self._mqtt_client.async_subscribe(topic, on_message, 1)
-                    for topic in self._subscription_topics_for_sn(sn)
-                )
-            )
-            return all(results)
+            async with self._resubscribe_lock:
+                fully_subscribed, _newly_acked = await self._subscribe_device_topics(sn)
+                return fully_subscribed
 
         except Exception as err:
             _LOGGER.error("Failed to subscribe to %s: %s", redact_serial(sn), err)
@@ -681,6 +779,7 @@ class AiperMqttClient(AiperRestClient):
         """
         client = self._mqtt_client
         self._mqtt_client = None
+        self._reset_mqtt_subscription_state()
         if client is None:
             return
         with suppress(Exception):
