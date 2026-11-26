@@ -38,6 +38,7 @@ TERMINAL_STATUS_CODES = frozenset({2, 3, 10})
 RUNNING_STATUS_CODES = frozenset({1})
 IDLE_STATUS_CODES = frozenset({0})
 REPLAY_LIFECYCLE_FIELDS = frozenset({"status", "mode", "cap", "run_time", "in_water"})
+S1_FORCED_LIFECYCLE_FIELDS = frozenset({"running", "status", "charging", "mode", "runtime", "in_water"})
 
 
 class S1StateReconciler:

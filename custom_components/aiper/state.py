@@ -339,6 +339,13 @@ def normalize_machine_update(
         if raw_status is not None and not hydrocomm:
             current_running = _cleaner_running(rest, raw_status)
         updates["runtime"] = EntityState(_current_runtime_to_hours(rest, mqtt.get("run_time"), current_running))
+    elif (
+        raw_status is not None
+        and not hydrocomm
+        and model_key(rest) in _MINUTE_RUNTIME_MODELS
+        and not _cleaner_running(rest, raw_status)
+    ):
+        updates["runtime"] = EntityState(0.0)
     charging = raw_status is not None and _cleaner_charging(rest, status_value(raw_status))
     if model_key(rest) in (SCUBA_S1_2025_MODEL, SCUBA_V3_ULTRA_MODEL) and charging:
         # Physically validated S1 charging reports can omit in_water or repeat
