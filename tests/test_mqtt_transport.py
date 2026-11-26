@@ -470,13 +470,13 @@ async def test_loopback_initial_handshake_rejection_redacts_signed_url(
 
     app = web.Application()
     app.router.add_get("/mqtt", handle_mqtt)
-    runner = web.AppRunner(app)
+    runner = web.AppRunner(app, access_log=None)
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
     port = cast(Any, site._server).sockets[0].getsockname()[1]
 
-    caplog.set_level(logging.DEBUG, logger="custom_components.aiper.mqtt")
+    caplog.set_level(logging.DEBUG, logger="custom_components.aiper")
     async with aiohttp.ClientSession() as session:
         transport = _LoopbackMqttTransport(
             port=port,
@@ -496,9 +496,12 @@ async def test_loopback_initial_handshake_rejection_redacts_signed_url(
             assert seen_queries and "X-Amz-Signature" in seen_queries[0]
             assert "X-Amz-Security-Token" in seen_queries[0]
             _assert_no_signed_url_leak(transport.last_error)
-            _assert_no_signed_url_leak(caplog.text)
-            assert "WSServerHandshakeError" in caplog.text
-            assert "HTTP 403" in caplog.text
+            aiper_logs = "\n".join(
+                record.getMessage() for record in caplog.records if record.name.startswith("custom_components.aiper")
+            )
+            _assert_no_signed_url_leak(aiper_logs)
+            assert "WSServerHandshakeError" in aiper_logs
+            assert "HTTP 403" in aiper_logs
         finally:
             await transport.async_disconnect()
             await runner.cleanup()
@@ -528,13 +531,13 @@ async def test_loopback_reconnect_handshake_rejection_redacts_signed_url(
 
     app = web.Application()
     app.router.add_get("/mqtt", handle_mqtt)
-    runner = web.AppRunner(app)
+    runner = web.AppRunner(app, access_log=None)
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
     port = cast(Any, site._server).sockets[0].getsockname()[1]
 
-    caplog.set_level(logging.DEBUG, logger="custom_components.aiper.mqtt")
+    caplog.set_level(logging.DEBUG, logger="custom_components.aiper")
     async with aiohttp.ClientSession() as session:
         transport = _LoopbackMqttTransport(
             port=port,
@@ -559,9 +562,12 @@ async def test_loopback_reconnect_handshake_rejection_redacts_signed_url(
 
             assert transport.last_error == "reconnect: WSServerHandshakeError (HTTP 403)"
             _assert_no_signed_url_leak(transport.last_error)
-            _assert_no_signed_url_leak(caplog.text)
-            assert "WSServerHandshakeError" in caplog.text
-            assert "HTTP 403" in caplog.text
+            aiper_logs = "\n".join(
+                record.getMessage() for record in caplog.records if record.name.startswith("custom_components.aiper")
+            )
+            _assert_no_signed_url_leak(aiper_logs)
+            assert "WSServerHandshakeError" in aiper_logs
+            assert "HTTP 403" in aiper_logs
         finally:
             await transport.async_disconnect()
             await runner.cleanup()
