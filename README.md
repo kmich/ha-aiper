@@ -205,5 +205,5 @@ To use the device headers, place an image (like `docs/assets/scuba_x1.png`) into
 [release-url]: https://github.com/kmich/ha-aiper/releases
 [ci-badge]: https://img.shields.io/github/actions/workflow/status/kmich/ha-aiper/ci.yml?label=CI
 [ci-url]: https://github.com/kmich/ha-aiper/actions/workflows/ci.yml
-[quality-scale-badge]: https://img.shields.io/badge/Quality%20Scale-Gold-gold.svg
+[quality-scale-badge]: https://img.shields.io/badge/Quality%20Scale-Platinum-e5e4e2.svg
 [quality-scale-url]: https://developers.home-assistant.io/docs/core/integration-quality-scale/

@@ -63,7 +63,6 @@ jobs:
           uv pip install --python .venv-min
           "homeassistant==2024.12.5"
           "pytest-homeassistant-custom-component==0.13.195"
-          "awsiotsdk>=1.29.0"
           pyyaml
       - run: .venv-min/bin/python -m pytest tests/ -q --tb=short -p no:cacheprovider
 

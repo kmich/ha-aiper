@@ -11,13 +11,7 @@
   "integration_type": "hub",
   "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/kmich/ha-aiper/issues",
-  "loggers": [
-    "awscrt",
-    "awsiot"
-  ],
-  "quality_scale": "gold",
-  "requirements": [
-    "awsiotsdk>=1.29.0"
-  ],
+  "quality_scale": "platinum",
+  "requirements": [],
   "version": "1.9.1"
 }
