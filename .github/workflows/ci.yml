@@ -78,8 +78,7 @@ jobs:
       - run: uv venv --python 3.14 .venv-latest
       - run: >-
           uv pip install --python .venv-latest
-          homeassistant
-          pytest-homeassistant-custom-component
+          "pytest-homeassistant-custom-component>=0.13"
           pyyaml
       - run: >-
           .venv-latest/bin/python -c
