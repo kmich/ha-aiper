@@ -34,6 +34,7 @@ from .const import (
 )
 from .coordinator_parsing import (
     _clean_path_value,
+    _device_report_time,
     _ensure_utc_aware,
     _finished_task_summary,
     _machine_from_reports,
@@ -83,8 +84,6 @@ LEARNED_ROUTES_STORE_VERSION = 1
 CLEANING_SESSIONS_STORE_VERSION = 1
 # Newest REST history rows offered to the session ledger on each metadata refresh.
 SESSION_HISTORY_ROWS = 5
-# Completions older than this before startup (retained MQTT, backfilled history)
-# are recorded but never announced.
 # Coalesce clean-path cache writes (seconds).
 CLEAN_PATH_SAVE_DELAY = 5
 
@@ -884,6 +883,21 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                 self._save_sessions()
         if has_capability(raw_device, Capability.REPORT_SECTIONS):
             updates.update(report_entity_states(payload, dt_util.now(), dt_util.get_default_time_zone()))
+
+        if machine or isinstance(work_mode, dict) or isinstance(finish, dict):
+            report_time = _device_report_time(data, mqtt_received_at + LIVE_REFRESH_INTERVAL)
+            if (
+                report_time is None
+                and mqtt_observed_at_explicit
+                and isinstance(topic, str)
+                and topic.endswith("/shadow/update/accepted")
+            ):
+                # An accepted write can carry its own time without field metadata.
+                # A GET or documents snapshot timestamp only dates the snapshot.
+                report_time = mqtt_observed_at
+            previous = (current_state or {}).get("last_device_report")
+            if report_time is not None and (previous is None or report_time > previous.value):
+                updates["last_device_report"] = EntityState(report_time)
 
         # Update last-seen time on any MQTT activity.
         if sn in self._devices:

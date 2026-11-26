@@ -126,6 +126,54 @@ def test_mqtt_freshness_requires_a_timestamp() -> None:
     assert coordinator._mqtt_field_is_fresh(SN, "status", dt_util.utcnow()) is False
 
 
+def test_last_device_report_uses_reported_metadata_instead_of_shadow_receipt() -> None:
+    coordinator = _coordinator(model="Scuba_S3")
+    now = dt_util.utcnow().replace(microsecond=0)
+    observed = now - timedelta(hours=3)
+    state = {"reported": {"Machine": {"status": 0, "in_water": 1}, "NetStat": {"online": 0}}}
+    report_metadata = {
+        "reported": {
+            "Machine": {
+                "status": {"timestamp": (observed - timedelta(minutes=1)).timestamp()},
+                "in_water": {"timestamp": observed.timestamp()},
+                "cap": {"timestamp": (now + timedelta(hours=1)).timestamp()},
+            },
+            "NetStat": {"online": {"timestamp": now.timestamp()}},
+        },
+    }
+    coordinator._on_shadow_update(
+        SN, {"_topic": f"$aws/things/{SN}/shadow/get/accepted", "timestamp": now.timestamp(), "state": state}
+    )
+    assert "last_device_report" not in coordinator.data[SN]
+
+    coordinator._on_shadow_update(
+        SN,
+        {
+            "_topic": f"$aws/things/{SN}/shadow/update/documents",
+            "current": {"timestamp": now.timestamp(), "state": state, "metadata": report_metadata},
+        },
+    )
+    assert coordinator.data[SN]["last_device_report"].value == observed
+    assert coordinator.data[SN]["online"].value is False
+
+    report_metadata["reported"]["Machine"]["in_water"]["timestamp"] = (observed - timedelta(hours=1)).timestamp()
+    coordinator._on_shadow_update(
+        SN,
+        {"_topic": f"$aws/things/{SN}/shadow/get/accepted", "state": state, "metadata": report_metadata},
+    )
+    assert coordinator.data[SN]["last_device_report"].value == observed
+
+    coordinator._on_shadow_update(
+        SN,
+        {
+            "_topic": f"$aws/things/{SN}/shadow/update/accepted",
+            "timestamp": now.timestamp(),
+            "state": {"reported": {"Machine": {"in_water": 0}}},
+        },
+    )
+    assert coordinator.data[SN]["last_device_report"].value == now
+
+
 @pytest.mark.asyncio
 async def test_subscribe_all_devices_tolerates_errors() -> None:
     class Api(BaseFakeApi):

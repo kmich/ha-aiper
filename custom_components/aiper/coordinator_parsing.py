@@ -183,6 +183,37 @@ def _number(value: Any) -> float | None:
     return None
 
 
+def _device_report_time(data: dict[str, Any], latest_allowed: datetime) -> datetime | None:
+    """Find the newest device telemetry time in the AWS reported-state metadata."""
+    envelope = data.get("current", data)
+    metadata = envelope.get("metadata") if isinstance(envelope, dict) else None
+    reported = metadata.get("reported") if isinstance(metadata, dict) else None
+    if not isinstance(reported, dict):
+        return None
+
+    sections = (
+        "Machine",
+        "machine",
+        "OpInfoReport",
+        "InwaterReport",
+        "WQSReport",
+        "GetAlarmReport",
+        "GetWorkModeReport",
+        "FinishTaskReport",
+    )
+    pending = [reported[key] for key in sections if isinstance(reported.get(key), dict)]
+    latest: datetime | None = None
+    while pending:
+        field = pending.pop()
+        timestamp = field.get("timestamp")
+        if type(timestamp) in (int, float) and timestamp > 0:
+            observed = _parse_dt(timestamp)
+            if observed is not None and observed <= latest_allowed and (latest is None or observed > latest):
+                latest = observed
+        pending.extend(value for value in field.values() if isinstance(value, dict))
+    return latest
+
+
 def _machine_from_reports(payload: dict[str, Any]) -> dict[str, Any]:
     """Map ``*Report`` shadow sections onto Machine-style fields.
 

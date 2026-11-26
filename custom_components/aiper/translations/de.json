@@ -53,6 +53,9 @@
   },
   "entity": {
     "sensor": {
+      "last_device_report": {
+        "name": "Letzter Gerätebericht"
+      },
       "battery": {
         "name": "Batterie"
       },

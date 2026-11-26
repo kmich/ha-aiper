@@ -1,22 +1,92 @@
-# Example Lovelace dashboard snippet for Aiper (0.7.0)
-# Paste into a view or dashboard (YAML mode). Replace entity_ids with your device entities.
+# Paste into the dashboard's raw configuration editor. See lovelace/README.md.
+title: Pool
+views:
+  - title: Overview
+    path: overview
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Pool cleaner
+            icon: mdi:robot-vacuum
+          - type: tile
+            entity: sensor.pool_cleaner_status
+            name: Status
+          - type: tile
+            entity: sensor.pool_cleaner_battery
+            name: Battery
+          - type: markdown
+            title: Cleaning sessions
+            content: |
+              {% set report = as_datetime(states('sensor.pool_cleaner_last_device_report'), none) %}
+              {% set runtime = states('sensor.pool_cleaner_current_cleaning_time') | float(none) %}
+              {% set started = as_datetime(states('sensor.pool_cleaner_last_cleaning_start'), none) %}
+              {% set duration = states('sensor.pool_cleaner_last_cleaning_duration') | float(none) %}
+              {% set completed = as_datetime(state_attr('event.pool_cleaner_cleaning_finished', 'finished_at'), none) %}
+              {% set next_run = as_datetime(states('sensor.pool_cleaner_next_scheduled_clean'), none) %}
+              **Latest device report:** {{ relative_time(report) ~ ' ago' if report else 'No timestamp yet' }}
 
-type: vertical-stack
-cards:
-  - type: picture
-    image: /local/aiper/scuba_x1.png
-    tap_action:
-      action: none
+              **Current run:** {% if is_state('sensor.pool_cleaner_status', 'Cleaning') and runtime is not none %}{{ (runtime * 60) | round(0) | int }} min{% elif is_state('sensor.pool_cleaner_status', 'Cleaning') %}Cleaning{% else %}No active run reported{% endif %}
 
-  - type: entities
-    title: Aiper
-    show_header_toggle: false
-    entities:
-      - entity: select.REPLACE_ME_cleaning_mode
-        name: Mode
-      - entity: select.REPLACE_ME_clean_path
-        name: Clean path
-      - entity: sensor.REPLACE_ME_status
-        name: Status
-      - entity: sensor.REPLACE_ME_battery
-        name: Battery
+              {% if not completed and started and duration is not none %}
+                {% set completed = started + timedelta(minutes=duration) %}
+              {% endif %}
+              **Last completion:** {{ relative_time(completed) ~ ' ago' if completed else 'No completion available' }}
+              {% if next_run %}
+
+              **Next scheduled run:** {{ as_local(next_run).strftime('%a %H:%M') }}
+              {% endif %}
+            grid_options:
+              columns: 12
+          - type: conditional
+            conditions:
+              - condition: state
+                entity: select.pool_cleaner_cleaning_mode
+                state_not: ["unknown", "unavailable"]
+            card:
+              type: entities
+              entities:
+                - select.pool_cleaner_cleaning_mode
+          - type: conditional
+            conditions:
+              - condition: state
+                entity: select.pool_cleaner_clean_path
+                state_not: ["unknown", "unavailable"]
+            card:
+              type: entities
+              entities:
+                - select.pool_cleaner_clean_path
+          - type: conditional
+            conditions:
+              - condition: state
+                entity: switch.pool_cleaner_running
+                state: ["on", "off"]
+            card:
+              type: tile
+              entity: switch.pool_cleaner_running
+              name: Start or stop
+      - type: grid
+        cards:
+          - type: heading
+            heading: Water quality
+            icon: mdi:water-check
+          - type: markdown
+            content: |
+              {% set sample = as_datetime(states('sensor.pool_monitor_water_sample_time'), none) %}
+              **Latest sample:** {{ relative_time(sample) ~ ' ago' if sample else 'No sample timestamp yet' }}
+            grid_options:
+              columns: 12
+          - type: tile
+            entity: sensor.pool_monitor_ph
+            name: pH
+          - type: tile
+            entity: sensor.pool_monitor_orp
+            name: ORP
+          - type: tile
+            entity: sensor.pool_monitor_free_chlorine
+            name: Free chlorine
+          - type: tile
+            entity: sensor.pool_monitor_water_quality_score
+            name: Quality score
