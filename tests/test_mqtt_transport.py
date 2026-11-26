@@ -300,3 +300,80 @@ async def test_keepalive_timeout_triggers_reconnect_and_callback_errors_containe
     assert transport.reconnect_count == 1
     assert transport.is_connected() is True
     await transport.async_disconnect()
+
+
+@pytest.mark.asyncio
+async def test_connect_cancels_previous_lifecycle_and_handles_initial_packets() -> None:
+    """Reconnecting replaces any live lifecycle task and dispatches bundled packets."""
+    received: list[tuple[str, bytes]] = []
+    initial_pub = encode_publish("aiper/things/SN1/upChan", b"bundled", qos=0)
+
+    def _on_send_first(ws: FakeWebSocket, data: bytes) -> None:
+        if data[0] >> 4 == PACKET_CONNECT:
+            ws.push_binary(_connack() + initial_pub)
+
+    ws1 = FakeWebSocket(on_send=_on_send_first)
+    ws2 = FakeWebSocket(on_send=_auto_respond)
+    transport = _transport(
+        FakeSession([ws1, ws2]),
+        credentials_resolver=lambda: (_ for _ in ()).throw(RuntimeError("sync fail")),
+    )
+    transport._callbacks["aiper/things/SN1/upChan"] = lambda t, p: received.append((t, p))
+
+    assert await transport.async_connect() is True
+    await asyncio.sleep(0.02)
+    assert received == [("aiper/things/SN1/upChan", b"bundled")]
+
+    # Calling async_connect() again cancels the first lifecycle task cleanly.
+    assert await transport.async_connect() is True
+    assert ws1.closed is True
+    await transport.async_disconnect()
+
+
+@pytest.mark.asyncio
+async def test_ws_error_and_disconnect_fails_pending_and_handles_close_error() -> None:
+    """Active WS errors trigger reconnect, fail pending acks, and survive close errors."""
+    ws1 = FakeWebSocket(
+        on_send=lambda w, d: w.push_binary(_connack()) if d[0] >> 4 == PACKET_CONNECT else None,
+    )
+    ws2 = FakeWebSocket(on_send=_auto_respond)
+
+    class FailingDisconnectWebSocket(FakeWebSocket):
+        async def send_bytes(self, data: bytes) -> None:
+            if data[0] >> 4 == PACKET_DISCONNECT:
+                raise RuntimeError("disconnect write failed")
+            await super().send_bytes(data)
+
+    ws2_bad = FailingDisconnectWebSocket(on_send=_auto_respond)
+    transport = _transport(
+        FakeSession([ws1, ws2_bad]),
+        reconnect_min_timeout_secs=0.01,
+        reconnect_max_timeout_secs=0.02,
+        operation_timeout=1.0,
+    )
+    assert await transport.async_connect() is True
+
+    # Start a QoS 1 publish and subscribe that won't receive ACKs before the drop.
+    pub_task = asyncio.create_task(transport.async_publish("aiper/things/SN1/downChan", "x", qos=1))
+    sub_task = asyncio.create_task(transport.async_subscribe("aiper/things/SN1/upChan", lambda t, p: None))
+    await asyncio.sleep(0.01)
+
+    ws1.push_error(RuntimeError("socket reset"))
+    assert await pub_task is False
+    assert await sub_task is False
+
+    for _ in range(30):
+        if transport.reconnect_count >= 1 and transport.is_connected():
+            break
+        await asyncio.sleep(0.02)
+    assert transport.reconnect_count == 1
+
+    # Direct _send_bytes when closed raises ConnectionError cleanly.
+    await ws2.close()
+    transport._ws = cast(Any, ws2)
+    with pytest.raises(ConnectionError):
+        await transport._send_bytes(b"\xe0\x00")
+
+    transport._ws = cast(Any, ws2_bad)
+    await transport.async_disconnect()
+    assert "RuntimeError" in (transport.last_error or "")
