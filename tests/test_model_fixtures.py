@@ -114,6 +114,7 @@ EXPECTED_PROFILES: dict[str, dict[str, Any]] = {
             "bluetooth",
             "charging",
             "clean_path",
+            "cleaning_completion",
             "device_link",
             "firmware",
             "in_water",

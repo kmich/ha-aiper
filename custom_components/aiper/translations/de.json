@@ -349,6 +349,18 @@
       "clean_path": {
         "name": "Reinigungspfad"
       }
+    },
+    "event": {
+      "cleaning_finished": {
+        "name": "Reinigung beendet",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "cleaning_finished": "Reinigung beendet"
+            }
+          }
+        }
+      }
     }
   },
   "issues": {

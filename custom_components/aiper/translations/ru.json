@@ -349,6 +349,18 @@
       "clean_path": {
         "name": "Траектория уборки"
       }
+    },
+    "event": {
+      "cleaning_finished": {
+        "name": "Уборка завершена",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "cleaning_finished": "Уборка завершена"
+            }
+          }
+        }
+      }
     }
   },
   "issues": {

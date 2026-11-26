@@ -51,6 +51,7 @@ class Capability(StrEnum):
     PROPELLER = "propeller"
     ESTIMATED_CLEANING_TIME = "estimated_cleaning_time"
     REPORT_SECTIONS = "report_sections"
+    CLEANING_COMPLETION = "cleaning_completion"
 
 
 SURFER_MODEL_MARKERS = (DeviceFamily.SURFER.value,)
@@ -165,7 +166,7 @@ SCUBA_V3_ULTRA_CAPABILITIES = (
             Capability.CATERPILLAR_TREAD,
         }
     )
-) | frozenset({Capability.REPORT_SECTIONS})
+) | frozenset({Capability.REPORT_SECTIONS, Capability.CLEANING_COMPLETION})
 
 SURFER_CAPABILITIES = (
     COMMON_CAPABILITIES - frozenset({Capability.ROLLER_BRUSH, Capability.CATERPILLAR_TREAD})

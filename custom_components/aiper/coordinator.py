@@ -85,7 +85,6 @@ CLEANING_SESSIONS_STORE_VERSION = 1
 SESSION_HISTORY_ROWS = 5
 # Completions older than this before startup (retained MQTT, backfilled history)
 # are recorded but never announced.
-SESSION_QUIET_MARGIN = timedelta(minutes=5)
 # Coalesce clean-path cache writes (seconds).
 CLEAN_PATH_SAVE_DELAY = 5
 
@@ -174,7 +173,7 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         # Reconciled cleaning runs from MQTT reports and REST history, and
         # which completions were already announced.
         self._session_ledger = SessionLedger()
-        self._session_quiet_before = dt_util.utcnow() - SESSION_QUIET_MARGIN
+        self._session_quiet_before = dt_util.utcnow()
         self._selected_mode_cache: dict[str, int] = {}
         self._mqtt_mode_ids_cache: dict[str, list[int]] = {}
         # Last running GetWorkModeReport task per device (Scuba V3 Ultra); its
@@ -1091,6 +1090,11 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
         """Persist the ledger, coalescing bursts of writes."""
         if self._sessions_store is not None:
             self._sessions_store.async_delay_save(self._session_ledger.to_store, CLEAN_PATH_SAVE_DELAY)
+
+    async def async_flush_cleaning_sessions(self) -> None:
+        """Save announcements before a reloaded entry can read the ledger."""
+        if self._sessions_store is not None:
+            await self._sessions_store.async_save(self._session_ledger.to_store())
 
     def _ingest_history_sessions(self, sn: str, records: list[dict[str, Any]]) -> None:
         """Offer the newest REST history rows to the ledger.

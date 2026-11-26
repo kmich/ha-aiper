@@ -349,6 +349,18 @@
       "clean_path": {
         "name": "Reinigingspad"
       }
+    },
+    "event": {
+      "cleaning_finished": {
+        "name": "Reiniging voltooid",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "cleaning_finished": "Reiniging voltooid"
+            }
+          }
+        }
+      }
     }
   },
   "issues": {

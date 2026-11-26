@@ -349,6 +349,18 @@
       "clean_path": {
         "name": "清洁路径"
       }
+    },
+    "event": {
+      "cleaning_finished": {
+        "name": "清洁完成",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "cleaning_finished": "清洁完成"
+            }
+          }
+        }
+      }
     }
   },
   "issues": {
