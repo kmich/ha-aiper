@@ -38,6 +38,7 @@ _MODEL_KEYS = ("model", "deviceModel", "productModel", "modelName", "equipmentMo
 _NAME_KEYS = ("name", "deviceName", "productName", "nickName")
 _SN_KEYS = ("sn", "deviceSn", "serialNumber", "equipmentSn", "deviceSN")
 _FW_KEYS = ("fw_main", "mainVersion", "firmwareVersion", "softwareVersion", "version")
+_EVIDENCE_REPORTS = ("AutomationTaskReport", "FinishTaskReport", "GetWorkModeReport", "Machine")
 
 
 def load_bundle(path: str | Path) -> dict[str, Any]:
@@ -96,6 +97,26 @@ def _first(mapping: dict[str, Any], keys: tuple[str, ...]) -> Any:
         if value not in (None, ""):
             return value
     return None
+
+
+def _bundle_observations(bundle: dict[str, Any]) -> dict[str, Any]:
+    """Record what was present in the capture without copying payload data."""
+    shadow = bundle.get("mqtt", {}).get("device_shadow")
+    state = shadow.get("state") if isinstance(shadow, dict) else None
+    reported = state.get("reported") if isinstance(state, dict) else shadow
+    observations: dict[str, Any] = {}
+    if isinstance(reported, dict):
+        observations["shadow_reports"] = [key for key in _EVIDENCE_REPORTS if isinstance(reported.get(key), dict)]
+
+    queries = bundle.get("queries", {})
+    observations["readback_queries"] = [
+        name for name in ("clean_path", "mode") if type(_capture_data(queries.get(name))) is int
+    ]
+    history = _capture_data(bundle.get("rest", {}).get("cleaning_history"))
+    history_data = history.get("data") if isinstance(history, dict) else None
+    if isinstance(history_data, dict) and type(total := history_data.get("total")) is int:
+        observations["legacy_history_total"] = total
+    return observations
 
 
 def build_fixture_device(bundle: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -161,8 +182,25 @@ def build_fixture_device(bundle: dict[str, Any]) -> tuple[dict[str, Any], list[s
         "integration_version": bundle.get("integration_version"),
         "captured_at": bundle.get("captured_at"),
         "generated_by": "tools/fixture_from_probe.py",
+        "observations": _bundle_observations(bundle),
     }
     return device, guesses
+
+
+def render_model_evidence_table(fixtures_dir: Path) -> str:
+    """Render the guide rows from the evidence recorded in model fixtures."""
+    rows = [
+        "| Model | Main firmware | Feature | Evidence | Source |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for path in sorted(fixtures_dir.glob("*.json")):
+        device = load_bundle(path)
+        for evidence in device.get("_feature_evidence", []):
+            rows.append(
+                f"| {device['name']} | {device.get('fw_main', 'Unspecified')} | {evidence['feature']} "
+                f"| {evidence['support']}: {evidence['detail']} | {evidence['source']} |"
+            )
+    return "\n".join(rows)
 
 
 def _const_prefix(key: str) -> str:
@@ -232,7 +270,7 @@ def write_fixture(device: dict[str, Any], fixtures_dir: str | Path = DEFAULT_FIX
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("bundle", help="Path to a bundle JSON emitted by 'aiper_probe.py bundle'")
+    parser.add_argument("bundle", nargs="?", help="Path to a bundle JSON emitted by 'aiper_probe.py bundle'")
     parser.add_argument(
         "--fixtures-dir",
         type=Path,
@@ -244,7 +282,15 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Also echo the fixture JSON to stdout",
     )
+    parser.add_argument("--evidence-table", action="store_true", help="Print the model guide's fixture evidence table")
     args = parser.parse_args(argv)
+    if args.evidence_table:
+        if args.bundle or args.print_fixture:
+            parser.error("--evidence-table uses existing fixtures and takes no bundle")
+        print(render_model_evidence_table(args.fixtures_dir))
+        return 0
+    if not args.bundle:
+        parser.error("provide a probe bundle or use --evidence-table")
 
     bundle = load_bundle(args.bundle)
     device, guesses = build_fixture_device(bundle)

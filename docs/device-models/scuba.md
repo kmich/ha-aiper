@@ -10,6 +10,39 @@ Most current Scuba-specific behavior in the integration was built around Scuba
 X-series observations, especially Scuba X1. It has not been re-verified in the
 same live probe pass as Surfer S2.
 
+## Fixture-backed model evidence
+
+Observations cover the listed firmware and capture. Readback confirms a value
+returned by the device. A verified write requires sending a change and checking
+it with a separate readback.
+
+<!-- model-evidence:start -->
+| Model | Main firmware | Feature | Evidence | Source |
+| --- | --- | --- | --- | --- |
+| Scuba S3 | V1.0.0 | Battery and lifecycle | Observed: Machine reports battery, status, in-water state and minute-based runtime. | [#59](https://github.com/kmich/ha-aiper/issues/59) |
+| Scuba S3 | V1.0.0 | Clean path | Readback only: The device returned a current clean-path value. A write followed by independent readback is unverified. | [#59](https://github.com/kmich/ha-aiper/issues/59) |
+| Scuba S3 | V1.0.0 | Mode choices | Family default: MQTT reports the active mode, and the integration inherits the Scuba mode choices. | [#59](https://github.com/kmich/ha-aiper/issues/59) |
+| Scuba S3 | V1.0.0 | Cloud history | App route identified: The legacy history returned zero rows. The app maps S3 to N30 and uses `/equipmentCleanRecord/gen4/n30n31t30/page` for N30 history. | [#59](https://github.com/kmich/ha-aiper/issues/59) and Aiper Android 3.8.0 |
+| Scuba S3 | V1.0.0 | Schedule | Unconfirmed: The online shadow lacked a schedule section. The app's `/poolRobot/getTimedTask` is a candidate for read-only validation. | [#59](https://github.com/kmich/ha-aiper/issues/59) and Aiper Android 3.8.0 |
+| Scuba V3 | V5.0.0 | Charging | Observed: Status 2 means charging and status 3 means charged. A power-meter trace corroborates the interpretation. | [#38](https://github.com/kmich/ha-aiper/issues/38) and [#49](https://github.com/kmich/ha-aiper/issues/49) |
+| Scuba V3 | V5.0.0 | Clean path | Readback only: A read query returned a clean-path value. A write followed by independent readback is unverified. | [#49](https://github.com/kmich/ha-aiper/issues/49) |
+| Scuba V3 | V5.0.0 | Mode choices | Family default: The app shows Auto, AI Patrol and Floor. The integration uses the family mode map pending device command evidence. | [#49](https://github.com/kmich/ha-aiper/issues/49) |
+| Scuba V3 Ultra | V1.1.16.4 | Water temperature | Observed: The MQTT WQSReport section reports water temperature. | [#56](https://github.com/kmich/ha-aiper/issues/56) and a maintainer capture |
+| Scuba V3 Ultra | V1.1.16.4 | Schedule | Observed: AutomationTaskReport exposes saved schedule entries in the MQTT shadow. | [#57](https://github.com/kmich/ha-aiper/pull/57) and a maintainer capture |
+| Scuba V3 Ultra | V1.1.16.4 | Cleaning completion | Observed: FinishTaskReport confirms completion. REST history can enrich or corroborate the same session. | [#72](https://github.com/kmich/ha-aiper/pull/72) and a maintainer capture |
+<!-- model-evidence:end -->
+
+### Scuba S3 history and schedules
+
+Issue #59 reports completed runs in the app while the Asia probe returned zero
+legacy history records. The online probe captured 25 MQTT messages with the
+schedule active. Its shadow contained `Machine`, `NetStat`, `OpInfo`, and `OtaStatus`.
+The app routes provide two leads for read-only verification. The missing
+evidence is a redacted N30 history page containing a known completed run and an
+S3 timed-task response with the configured weekdays, start time, and duration.
+Check time zones and duration units against a known run before exposing either
+result in Home Assistant.
+
 ## Known
 
 Scuba devices use the normal Aiper account, REST, Cognito, AWS IoT, and shadow
