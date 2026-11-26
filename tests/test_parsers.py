@@ -15,6 +15,7 @@ from custom_components.aiper.coordinator_parsing import (
 from custom_components.aiper.state import (
     _collect_warning_codes,
     _normalize_warn_code,
+    merge_device_state,
     normalize_device_state,
     normalize_machine_update,
     normalize_w2_alarm_update,
@@ -130,6 +131,38 @@ def test_scuba_s3_runtime_is_only_exposed_while_cleaning() -> None:
         {"status": 2, "run_time": 11},
     )
     assert charging_update["runtime"].value == 0.0
+
+
+def test_scuba_s3_status_only_stop_resets_runtime_while_generic_preserves() -> None:
+    """Status-only non-running S3 transitions reset runtime; unrelated partials and X1 preserve it."""
+    raw = {"model": "Scuba_S3", "machineStatus": 1, "runTime": 30}
+    state = normalize_device_state(raw)
+    assert state["runtime"].value == 0.5
+
+    # Status-only charging update resets current-cycle runtime to 0.0.
+    state = merge_device_state(state, normalize_machine_update(raw, {"status": 2}, state))
+    assert state["charging"].value is True
+    assert state["running"].value is False
+    assert state["runtime"].value == 0.0
+
+    # Charged update with an incrementing charger timer remains 0.0.
+    state = merge_device_state(state, normalize_machine_update(raw, {"status": 3, "run_time": 90}, state))
+    assert state["runtime"].value == 0.0
+
+    # Next cleaning cycle resumes counting from run_time.
+    state = merge_device_state(state, normalize_machine_update(raw, {"status": 1, "run_time": 12}, state))
+    assert state["running"].value is True
+    assert state["runtime"].value == 0.2
+
+    # Unrelated partial report (e.g. battery only) preserves active runtime.
+    state = merge_device_state(state, normalize_machine_update(raw, {"cap": 80}, state))
+    assert state["runtime"].value == 0.2
+
+    # Generic Scuba X1 status-only charging update does not reset prior runtime.
+    x1_raw = {"model": "Scuba_X1", "machineStatus": 1, "runTime": 120}
+    x1_state = normalize_device_state(x1_raw)
+    x1_state = merge_device_state(x1_state, normalize_machine_update(x1_raw, {"status": 3}, x1_state))
+    assert x1_state["runtime"].value == 1.2
 
 
 def test_machine_solar_status_uses_observed_integer_payload() -> None:

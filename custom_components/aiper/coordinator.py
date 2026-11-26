@@ -40,7 +40,7 @@ from .profiles import SCUBA_S1_2025_MODEL, Capability, derive_device_profile, ha
 from .redaction import redact_serial, redact_topic
 from .repairs import async_update_unknown_model_issues
 from .report_sections import report_entity_states
-from .s1_reconciliation import S1StateReconciler
+from .s1_reconciliation import S1_FORCED_LIFECYCLE_FIELDS, S1StateReconciler
 from .state import (
     DevicesState,
     DeviceState,
@@ -587,7 +587,9 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     forced_rest = sn in fresh_s1_rest_charging
                     incoming_rest_fields = rest_live_fields.get(sn, set())
                     for key in MQTT_PREFERRED_STATE_KEYS:
-                        if forced_rest or (key in incoming_rest_fields and not self._mqtt_field_is_fresh(sn, key, now)):
+                        if (forced_rest and key in S1_FORCED_LIFECYCLE_FIELDS) or (
+                            key in incoming_rest_fields and not self._mqtt_field_is_fresh(sn, key, now)
+                        ):
                             if key in normalized:
                                 self._record_live_field_sources(sn, "rest", (key,), observed_at=now)
                         else:

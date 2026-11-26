@@ -1250,3 +1250,61 @@ async def test_scuba_s1_clean_path_confirmation_ignores_stale_readback() -> None
     assert coordinator.data["SN123"]["clean_path"].value == "S-shaped"
     assert coordinator.get_pending_command_target("SN123", "clean_path") is None
     assert coordinator.get_command_state("SN123")["last"]["clean_path"]["result"] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_s1_forced_charging_preserves_fresh_mqtt_battery_over_cached_rest(hass: HomeAssistant) -> None:
+    """Forced S1 charging reconciliation must only override lifecycle fields, not omit-battery cache."""
+    raw = {"sn": "device", "model": "Scuba_S1_2025", "battLevel": 40}
+    rest_responses: list[list[dict[str, Any]]] = [
+        [{"sn": "device", "machineStatus": 2}],
+        [{"sn": "device", "machineStatus": 2, "battLevel": 90}],
+    ]
+
+    class Api(BaseFakeApi):
+        async def get_devices(self) -> list[dict[str, Any]]:
+            return rest_responses.pop(0)
+
+    coordinator = make_coordinator(Api(), hass=hass)
+    coordinator._devices = {"device": dict(raw)}
+    coordinator._last_metadata_fetch = {"device": dt_util.utcnow()}
+    coordinator.data = {"device": normalize_device_state(raw)}
+
+    coordinator._on_shadow_update("device", {"Machine": {"cap": 82, "status": 1, "in_water": 1}})
+    assert coordinator.data["device"]["battery"].value == 82
+
+    updated = await coordinator._async_update_data()
+    assert updated["device"]["charging"].value is True
+    assert updated["device"]["running"].value is False
+    assert updated["device"]["in_water"].value is False
+    assert updated["device"]["runtime"].value == 0.0
+    assert updated["device"]["battery"].value == 82
+    assert coordinator.diagnostic_field_sources["device"]["battery"]["source"] == "mqtt"
+
+    # Once MQTT battery ages past TTL and REST carries battLevel, REST takes over.
+    coordinator._live_field_sources["device"]["battery"]["observed_at"] = dt_util.utcnow() - timedelta(minutes=20)
+    updated2 = await coordinator._async_update_data()
+    assert updated2["device"]["battery"].value == 90
+    assert coordinator.diagnostic_field_sources["device"]["battery"]["source"] == "rest"
+
+
+@pytest.mark.asyncio
+async def test_s3_status_only_charging_push_resets_runtime_and_survives_poll(hass: HomeAssistant) -> None:
+    """An S3 status-only MQTT charging update resets runtime across subsequent REST polls."""
+    raw = {"sn": "S3DEV", "model": "Scuba_S3", "machineStatus": 1, "runTime": 30, "battLevel": 80}
+
+    class Api(BaseFakeApi):
+        async def get_devices(self) -> list[dict[str, Any]]:
+            return [{"sn": "S3DEV", "machineStatus": 2, "runTime": 31, "battLevel": 81}]
+
+    coordinator = make_coordinator(Api(), hass=hass)
+    coordinator._devices = {"S3DEV": dict(raw)}
+    coordinator._last_metadata_fetch = {"S3DEV": dt_util.utcnow()}
+    coordinator.data = {"S3DEV": normalize_device_state(raw)}
+
+    coordinator._on_shadow_update("S3DEV", {"Machine": {"status": 2}})
+    assert coordinator.data["S3DEV"]["runtime"].value == 0.0
+    assert coordinator.diagnostic_field_sources["S3DEV"]["runtime"]["source"] == "mqtt"
+
+    polled = await coordinator._async_update_data()
+    assert polled["S3DEV"]["runtime"].value == 0.0
