@@ -65,6 +65,28 @@ EXPECTED_PROFILES: dict[str, dict[str, Any]] = {
         },
         "mode_map": {1: "Smart", 2: "Floor", 3: "Wall", 4: "Waterline", 5: "Scheduled"},
     },
+    "scuba_s3": {
+        "family": "scuba",
+        "capabilities": {
+            "battery",
+            "bluetooth",
+            "caterpillar_tread",
+            "charging",
+            "clean_path",
+            "device_link",
+            "firmware",
+            "in_water",
+            "micromesh_filter",
+            "mode_select",
+            "mqtt_shadow",
+            "online",
+            "roller_brush",
+            "status",
+            "warning",
+            "wifi",
+        },
+        "mode_map": {1: "Smart", 2: "Floor", 3: "Wall", 4: "Waterline", 5: "Scheduled"},
+    },
     "scuba_v3": {
         "family": "scuba",
         "capabilities": {
@@ -329,3 +351,32 @@ def test_fixture_from_probe_writes_named_file(tmp_path: Path) -> None:
     path = fixture_from_probe.write_fixture(device, tmp_path)
     assert path.name == "scuba_v3.json"
     assert json.loads(path.read_text(encoding="utf-8"))["model"] == "Scuba_V3"
+
+
+def test_fixture_from_probe_extracts_nested_aws_shadow_machine() -> None:
+    """v2 bundles nest shadow data under state.reported.Machine."""
+    bundle = {
+        "bundle_schema_version": 2,
+        "integration_version": "1.9.1",
+        "captured_at": "2026-11-26T04:39:29+00:00",
+        "sn": "N0X...424",
+        "rest": {
+            "get_device_info": {
+                "ok": True,
+                "data": {"sn": "N0X...424", "model": "Scuba_S3", "name": "Scuba S3", "version": "V1.0.0"},
+            },
+            "get_device_status": {"ok": True, "data": {"online": 1}},
+        },
+        "mqtt": {
+            "device_shadow": {
+                "_topic": "$aws/things/N0X...424/shadow/get/accepted",
+                "state": {"reported": {"Machine": {"status": 2, "mode": 0, "cap": 84, "in_water": 0}}},
+            }
+        },
+        "queries": {"mode": {"ok": True, "data": None}},
+    }
+
+    device, _ = fixture_from_probe.build_fixture_device(bundle)
+    assert device["in_water"] == 0
+    assert device["online"] == 1
+    assert model_key(device) == "scuba_s3"

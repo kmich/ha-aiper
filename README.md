@@ -18,6 +18,7 @@ View live status, battery, charging state, cleaning modes, consumables, and wate
 | ✅ **Surfer S2** | |
 | ✅ **Shark** | |
 | 🧪 **Scuba P1 Pro** | |
+| 🧪 **Scuba S3** | |
 | 🧪 **Scuba V3** | |
 | 🧪 **Scuba V3 Ultra** | |
 
@@ -27,6 +28,14 @@ The current 2026 retail Scuba S1 identifies itself through Aiper's cloud as
 🧪 **Scuba P1 Pro** support is onboarded from a community diagnostics bundle
 (no `temp` field; Roller Brush and MicroMesh Filter consumables) and has not
 been verified on hardware by the maintainer. Reports welcome.
+
+🧪 **Scuba S3** support is onboarded from community reports (issues #29, #59):
+`machineStatus` 2/3 map to Charging/Charged, `runTime` is reported in minutes
+and suppressed while charging, and water temperature, charge type, and propeller
+entities are dropped while Roller Brush, Caterpillar Tread, and MicroMesh
+Filter are kept. The cleaning-mode options remain the generic Scuba set, and
+cloud cleaning history and schedule entities are not yet available. Reports
+welcome.
 
 🧪 **Scuba V3** support is onboarded from community reports (issues #38, #49):
 `machineStatus` 2/3 map to Charging/Charged as on the S3, and the

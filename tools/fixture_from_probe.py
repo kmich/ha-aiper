@@ -72,11 +72,15 @@ def _shadow_machine(bundle: dict[str, Any]) -> dict[str, Any]:
     shadow = bundle.get("mqtt", {}).get("device_shadow")
     if not isinstance(shadow, dict):
         return {}
+    state = shadow.get("state")
+    reported = state.get("reported") if isinstance(state, dict) else None
     for container in (
         shadow.get("Machine"),
         shadow.get("machine"),
         shadow.get("data"),
-        (shadow.get("state") or {}).get("reported") if isinstance(shadow.get("state"), dict) else None,
+        reported.get("Machine") if isinstance(reported, dict) else None,
+        reported.get("machine") if isinstance(reported, dict) else None,
+        reported,
         shadow,
     ):
         if isinstance(container, dict) and any(

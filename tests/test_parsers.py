@@ -98,9 +98,38 @@ def test_scuba_s1_runtime_is_only_exposed_while_cleaning() -> None:
 
 
 def test_other_models_keep_existing_runtime_semantics_when_not_running() -> None:
-    """The S1 state-timer guard must not change other model profiles."""
+    """The S1/S3 state-timer guard must not change other model profiles."""
     state = normalize_device_state({"model": "Scuba_X1", "machineStatus": 3, "runTime": 1673})
     assert state["runtime"].value == 16.73
+
+
+def test_scuba_s3_runtime_is_reported_in_minutes() -> None:
+    """Scuba S3 (issues #29/#59) reports run_time/runTime in minutes."""
+    state = normalize_device_state({"model": "Scuba_S3", "runTime": 90})
+    assert state["runtime"].value == 1.5
+
+    updates = normalize_machine_update(
+        {"model": "Scuba_S3"},
+        {"run_time": 90},
+    )
+    assert updates["runtime"].value == 1.5
+
+
+def test_scuba_s3_runtime_is_only_exposed_while_cleaning() -> None:
+    """Scuba S3 runTime increments as a state timer while charging."""
+    cleaning = normalize_device_state({"model": "Scuba_S3", "machineStatus": 1, "runTime": 12})
+    charging = normalize_device_state({"model": "Scuba_S3", "machineStatus": 2, "runTime": 11})
+    charged = normalize_device_state({"model": "Scuba_S3", "machineStatus": 3, "runTime": 90})
+
+    assert cleaning["runtime"].value == 0.2
+    assert charging["runtime"].value == 0.0
+    assert charged["runtime"].value == 0.0
+
+    charging_update = normalize_machine_update(
+        {"model": "Scuba_S3"},
+        {"status": 2, "run_time": 11},
+    )
+    assert charging_update["runtime"].value == 0.0
 
 
 def test_machine_solar_status_uses_observed_integer_payload() -> None:

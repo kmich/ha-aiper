@@ -127,6 +127,39 @@ def test_scuba_p1_pro_recognized_via_device_model_fallback() -> None:
     assert Capability.WATER_TEMPERATURE not in profile.capabilities
 
 
+def test_scuba_s3_profile_keeps_verified_consumables_drops_temp_charge_propeller() -> None:
+    """Scuba S3 (issues #29/#59): no temp/charge_type/propeller, keeps brush/tread/filter."""
+    profile = derive_device_profile({"model": "Scuba_S3"})
+
+    assert profile.family is DeviceFamily.SCUBA
+    assert Capability.CLEAN_PATH in profile.capabilities
+    assert Capability.CLEANING_MODE_SELECT in profile.capabilities
+    assert Capability.IN_WATER in profile.capabilities
+    assert Capability.ROLLER_BRUSH in profile.capabilities
+    assert Capability.CATERPILLAR_TREAD in profile.capabilities
+    assert Capability.MICROMESH_FILTER in profile.capabilities
+    assert Capability.WATER_TEMPERATURE not in profile.capabilities
+    assert Capability.CHARGE_TYPE not in profile.capabilities
+    assert Capability.PROPELLER not in profile.capabilities
+
+
+def test_scuba_s3_ignores_stray_temp_evidence() -> None:
+    """A stray `temp` field must not re-add the water-temperature entity on Scuba S3."""
+    profile = derive_device_profile({"model": "Scuba_S3", "temp": 25})
+
+    assert Capability.WATER_TEMPERATURE not in profile.capabilities
+
+
+def test_scuba_s3_recognized_via_device_model_fallback() -> None:
+    """Known only by `deviceModel`, the Scuba S3 still gets its full profile."""
+    profile = derive_device_profile({"deviceModel": "Scuba_S3"})
+
+    assert profile.family is DeviceFamily.SCUBA
+    assert Capability.CATERPILLAR_TREAD in profile.capabilities
+    assert Capability.ROLLER_BRUSH in profile.capabilities
+    assert Capability.WATER_TEMPERATURE not in profile.capabilities
+
+
 def test_scuba_v3_profile_drops_temperature_and_roller_brush() -> None:
     """V3 (issues #38/#49): no shadow temp, only a MicroMesh filter consumable.
 
