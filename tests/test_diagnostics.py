@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any, cast
 
+import aiohttp
 import pytest
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -13,6 +14,7 @@ from custom_components.aiper.api import AiperApi
 from custom_components.aiper.const import DOMAIN
 from custom_components.aiper.coordinator import AiperDataUpdateCoordinator
 from custom_components.aiper.diagnostics import async_get_config_entry_diagnostics
+from custom_components.aiper.mqtt import format_transport_error
 from custom_components.aiper.state import normalize_device_state
 
 
@@ -123,3 +125,34 @@ async def test_diagnostics_degrades_gracefully_before_runtime_data_is_set(hass: 
     assert diagnostics["entry"]["data"] == {}
     assert "coordinator" not in diagnostics
     assert "devices" not in diagnostics
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_retains_safe_handshake_error_without_signed_url(hass: HomeAssistant) -> None:
+    """Diagnostics export preserves handshake status and strips signed URL secrets."""
+    entry = MockConfigEntry(domain=DOMAIN, entry_id="entry-mqtt-err", data={"region": "eu"}, options={})
+    api = AiperApi("user@example.com", "pw", "eu", async_session=cast(Any, object()))
+
+    handshake_err = aiohttp.WSServerHandshakeError(
+        cast(
+            Any,
+            SimpleNamespace(
+                real_url="wss://iot.example/mqtt?X-Amz-Credential=AKIA_TEST&X-Amz-Signature=SIG_TEST&X-Amz-Security-Token=TOK_TEST"
+            ),
+        ),
+        (),
+        status=403,
+        message="Forbidden",
+    )
+    safe_err = format_transport_error("connect", handshake_err)
+    api._mqtt_client = SimpleNamespace(last_error=safe_err, is_connected=lambda: False)
+    api.connection.mark_disconnected(safe_err)
+    entry.runtime_data = SimpleNamespace(api=api, coordinator=None)
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    blob = str(diagnostics)
+
+    assert diagnostics["api"]["mqtt_last_error"] == "connect: WSServerHandshakeError (HTTP 403)"
+    assert diagnostics["api"]["connection"]["last_error"] == "connect: WSServerHandshakeError (HTTP 403)"
+    for secret in ("AKIA_TEST", "SIG_TEST", "TOK_TEST", "X-Amz-", "iot.example/mqtt"):
+        assert secret not in blob

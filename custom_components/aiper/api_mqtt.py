@@ -25,7 +25,7 @@ import aiohttp
 from .api_rest import AiperRestClient
 from .connection import ConnectionState
 from .const import X9_SERIES_PREFIXES, XOR_KEY, ApiEndpoint, MqttTopic
-from .mqtt import AwsIotCredentials, AwsIotMqttTransport
+from .mqtt import AwsIotCredentials, AwsIotMqttTransport, format_transport_error
 from .redaction import redact_serial, redact_topic
 
 _LOGGER = logging.getLogger(__name__)
@@ -210,12 +210,15 @@ class AiperMqttClient(AiperRestClient):
                 _LOGGER.debug("Connected to AWS IoT MQTT over WebSockets (asyncio)")
                 return True
 
-            self.connection.mark_disconnected("MQTT transport did not establish a session")
+            self.connection.mark_disconnected(
+                getattr(self._mqtt_client, "last_error", None) or "MQTT transport did not establish a session"
+            )
             return False
 
         except Exception as err:
-            _LOGGER.error("MQTT connection failed: %s", err)
-            self.connection.mark_disconnected(err)
+            safe_err = format_transport_error("connect", err)
+            _LOGGER.error("MQTT connection failed: %s", safe_err)
+            self.connection.mark_disconnected(safe_err)
             return False
 
     async def reconnect_mqtt(self) -> bool:
