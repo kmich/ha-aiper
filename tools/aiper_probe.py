@@ -13,6 +13,7 @@ import asyncio
 import getpass
 import json
 import os
+import re
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
@@ -33,6 +34,7 @@ except ImportError:  # pragma: no cover - exercised only in incomplete dev envs
 
 from custom_components.aiper.api import AiperApi  # noqa: E402
 from custom_components.aiper.const import MqttTopic  # noqa: E402
+from custom_components.aiper.profiles import SCUBA_S3_MODEL, model_key  # noqa: E402
 from custom_components.aiper.redaction import redact, redact_known_values, redact_str  # noqa: E402
 
 DEFAULT_OUTPUT_DIR = Path("probe-output")
@@ -51,6 +53,31 @@ _SN_KEYS = ("sn", "deviceSn", "serialNumber", "equipmentSn", "deviceSN")
 # issue reports, so these are pseudonymized there; only `list` prints them in
 # full, because you pass one back with --sn.
 _KNOWN_SERIALS: set[str] = set()
+_S3_CAPTURE_FIELDS = frozenset(
+    {
+        "code",
+        "successful",
+        "data",
+        "list",
+        "total",
+        "pageNum",
+        "pageSize",
+        "cleanCount",
+        "cleanAreaSum",
+        "cleanDuration",
+        "cleanTime",
+        "cleanResult",
+        "taskCleanArea",
+        "taskType",
+        "utcStartTimeStamp",
+        "utcEndTimeStamp",
+        "cleanModeBackup",
+        "cleanMode",
+        "cleanAreaList",
+        "cleanWeekList",
+    }
+)
+_S3_CAPTURE_SCALAR = re.compile(r"[0-9TtZz:+. -]{1,32}\Z")
 
 
 def _shareable(data: Any) -> Any:
@@ -206,6 +233,40 @@ async def capture_rest_snapshot(api: AiperApi, sn: str) -> dict[str, Any]:
             "clean_path": await _capture_call("query_clean_path_setting", lambda: api.query_clean_path_setting(sn)),
         },
     }
+
+
+def _scuba_s3_evidence(value: Any) -> Any:
+    """Keep known response fields and discard identifiers, URLs, and free text."""
+    if isinstance(value, dict):
+        return {key: _scuba_s3_evidence(item) for key, item in value.items() if key in _S3_CAPTURE_FIELDS}
+    if isinstance(value, list):
+        return [_scuba_s3_evidence(item) for item in value[:14]]
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    if isinstance(value, str) and _S3_CAPTURE_SCALAR.fullmatch(value):
+        return value
+    return None
+
+
+async def capture_scuba_s3_cloud(api: AiperApi, sn: str) -> dict[str, Any]:
+    """Collect history and the cached cycle-cleaning schedule for one Scuba S3."""
+    calls: dict[str, Any] = {}
+    for name, read in (
+        ("history_page", lambda: api.get_scuba_s3_history_page(sn, page_size=5)),
+        ("history_statistics", lambda: api.get_scuba_s3_history_statistics(sn)),
+        ("cycle_schedule", lambda: api.get_scuba_s3_cycle_schedule(sn)),
+    ):
+        try:
+            response = await read()
+        except Exception as err:
+            calls[name] = {"error": type(err).__name__}
+        else:
+            calls[name] = {"ok": api._is_success(response), "response": _scuba_s3_evidence(response)}
+
+    return redact_known_values(
+        {"model": "Scuba_S3", "captured_at": _utc_now(), "calls": calls},
+        {sn, *_KNOWN_SERIALS},
+    )
 
 
 def _region_from_iot_endpoint(endpoint: str | None) -> str | None:
@@ -769,6 +830,16 @@ async def cmd_bundle(args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_scuba_s3_cloud(args: argparse.Namespace) -> int:
+    async with _make_api(args) as api:
+        devices = [device for device in await _get_devices(api) if model_key(device) == SCUBA_S3_MODEL]
+        if not devices or (args.sn and all(_device_sn(device) != args.sn for device in devices)):
+            raise SystemExit("Select a Scuba S3 listed on this account")
+        result = await capture_scuba_s3_cloud(api, _select_sn(devices, args.sn))
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
 async def cmd_consumables_probe(args: argparse.Namespace) -> int:
     async with _make_api(args) as api:
         devices = await _get_devices(api)
@@ -1021,10 +1092,11 @@ def _write_summary(out_dir: Path, command: str, sn: str, mqtt_events: int) -> No
 
 
 def build_parser() -> argparse.ArgumentParser:
-    common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--username", help="Aiper account username, or AIPER_USERNAME")
-    common.add_argument("--password", help="Aiper account password, or AIPER_PASSWORD")
-    common.add_argument("--region", choices=("eu", "us", "asia", "au"), help="Aiper API region")
+    credentials = argparse.ArgumentParser(add_help=False)
+    credentials.add_argument("--username", help="Aiper account username, or AIPER_USERNAME")
+    credentials.add_argument("--password", help="Aiper account password, or AIPER_PASSWORD")
+    credentials.add_argument("--region", choices=("eu", "us", "asia", "au"), help="Aiper API region")
+    common = argparse.ArgumentParser(add_help=False, parents=[credentials])
     common.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     common.add_argument("--mqtt-debug", action="store_true", help="Enable verbose MQTT logging in AiperApi")
 
@@ -1057,6 +1129,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only print the bundle to stdout; do not write a run directory",
     )
     bundle_parser.set_defaults(func=cmd_bundle)
+
+    s3_parser = subparsers.add_parser(
+        "scuba-s3-cloud",
+        parents=[credentials],
+        help="Print a redacted, read-only Scuba S3 history and schedule capture",
+    )
+    s3_parser.add_argument("--sn", help="Device serial number; defaults to the first Scuba S3")
+    s3_parser.set_defaults(func=cmd_scuba_s3_cloud)
 
     consumables_parser = subparsers.add_parser(
         "consumables",

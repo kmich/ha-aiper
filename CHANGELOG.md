@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+### Added
+
+- Reconciled cleaning history across MQTT and REST, with a **Cleaning finished**
+  Home Assistant event on Scuba V3 Ultra. Repeated delivery and initial history
+  backfill stay quiet.
+- Scuba S3 support for its charge states, minute-based runtime, cloud cleaning
+  history, and read-only cycle-cleaning schedule. A live S3 capture confirmed
+  the history timestamps and durations, run count, and saved schedule.
+- Built-in Home Assistant dashboards for cleaners, water monitors, and mixed
+  accounts. They display the age of the cleaner's last device report and the
+  monitor's own sample. [Dashboard guide](lovelace/README.md)
+- Firmware-specific model evidence and an onboarding probe that captures
+  cleaning history and MQTT reports with device identifiers redacted.
+
+### Changed
+
+- Replaced the AWS IoT SDK dependency with an asynchronous Home Assistant
+  WebSocket MQTT transport. CI now checks strict typing, the minimum supported
+  Home Assistant, and a latest-stable setup and unload smoke test.
+- Cleaners retain MQTT readings while those observations are current. Fresher
+  REST data can take over as the MQTT observations age.
+
+### Fixed
+
+- Retried missing MQTT subscriptions, preserved session-conflict cooldowns,
+  and improved reconnect and unload handling.
+- Preserved fresh S1 battery readings during partial charging reports and
+  reset the S3 runtime when a status-only update stops a run.
+- Added Shark controls when a device provides its supported modes after
+  discovery, while preserving existing entity IDs.
+- Removed signed MQTT URLs and credential material from connection errors.
+
 ## [1.9.1] - 2026-11-05
 
 ### Changed

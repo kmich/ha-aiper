@@ -22,8 +22,8 @@ it with a separate readback.
 | Scuba S3 | V1.0.0 | Battery and lifecycle | Observed: Machine reports battery, status, in-water state and minute-based runtime. | [#59](https://github.com/kmich/ha-aiper/issues/59) |
 | Scuba S3 | V1.0.0 | Clean path | Readback only: The device returned a current clean-path value. A write followed by independent readback is unverified. | [#59](https://github.com/kmich/ha-aiper/issues/59) |
 | Scuba S3 | V1.0.0 | Mode choices | Family default: MQTT reports the active mode, and the integration inherits the Scuba mode choices. | [#59](https://github.com/kmich/ha-aiper/issues/59) |
-| Scuba S3 | V1.0.0 | Cloud history | App route identified: The legacy history returned zero rows. The app maps S3 to N30 and uses `/equipmentCleanRecord/gen4/n30n31t30/page` for N30 history. | [#59](https://github.com/kmich/ha-aiper/issues/59) and Aiper Android 3.8.0 |
-| Scuba S3 | V1.0.0 | Schedule | Unconfirmed: The online shadow lacked a schedule section. The app's `/poolRobot/getTimedTask` is a candidate for read-only validation. | [#59](https://github.com/kmich/ha-aiper/issues/59) and Aiper Android 3.8.0 |
+| Scuba S3 | V1.0.0 | Cloud history | Observed: The N30 history page and statistics returned the reported run times, durations, and count. | [#59](https://github.com/kmich/ha-aiper/issues/59) and Aiper Android 3.8.0 |
+| Scuba S3 | V1.0.0 | Schedule | Observed: The cloud cycle-cleaning plan matched the saved weekdays, start time, and duration. | [#59](https://github.com/kmich/ha-aiper/issues/59) and Aiper Android 3.8.0 |
 | Scuba V3 | V5.0.0 | Charging | Observed: Status 2 means charging and status 3 means charged. A power-meter trace corroborates the interpretation. | [#38](https://github.com/kmich/ha-aiper/issues/38) and [#49](https://github.com/kmich/ha-aiper/issues/49) |
 | Scuba V3 | V5.0.0 | Clean path | Readback only: A read query returned a clean-path value. A write followed by independent readback is unverified. | [#49](https://github.com/kmich/ha-aiper/issues/49) |
 | Scuba V3 | V5.0.0 | Mode choices | Family default: The app shows Auto, AI Patrol and Floor. The integration uses the family mode map pending device command evidence. | [#49](https://github.com/kmich/ha-aiper/issues/49) |
@@ -37,11 +37,16 @@ it with a separate readback.
 Issue #59 reports completed runs in the app while the Asia probe returned zero
 legacy history records. The online probe captured 25 MQTT messages with the
 schedule active. Its shadow contained `Machine`, `NetStat`, `OpInfo`, and `OtaStatus`.
-The app routes provide two leads for read-only verification. The missing
-evidence is a redacted N30 history page containing a known completed run and an
-S3 timed-task response with the configured weekdays, start time, and duration.
-Check time zones and duration units against a known run before exposing either
-result in Home Assistant.
+The Android app uses the N30 history page and statistics reads. History
+timestamps use UTC milliseconds and durations use seconds. The app displays
+the saved cycle-cleaning plan from the cloud and can refresh it from the
+device. Home Assistant reads the saved cloud plan with the cleaner's timezone
+when discovery provides one.
+
+A live S3 capture matched both run times and rounded durations, the run
+count, and the saved schedule. Home Assistant displays **Scheduled** when a
+history record identifies a scheduled run and omits cleaning-area details.
+In this case the owner reported **Floor** in the app. [Live capture](https://github.com/kmich/ha-aiper/issues/59#issuecomment-7203015536)
 
 ## Known
 

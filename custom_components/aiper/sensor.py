@@ -380,7 +380,9 @@ def _next_scheduled_clean_state(state: EntityState) -> tuple[Any, dict[str, Any]
     """Return the next scheduled start (as of now) and that task's details."""
     schedule = state.attributes.get("schedule")
     entries = [entry for entry in schedule if isinstance(entry, dict)] if isinstance(schedule, list) else []
-    start, entry = next_scheduled_clean(entries, dt_util.now(), dt_util.get_default_time_zone())
+    zone_name = state.attributes.get("time_zone")
+    zone = dt_util.get_time_zone(zone_name) if isinstance(zone_name, str) else None
+    start, entry = next_scheduled_clean(entries, dt_util.now(), zone or dt_util.get_default_time_zone())
     attributes: dict[str, Any] = dict(state.attributes)
     if entry is not None:
         attributes.update(
@@ -389,6 +391,8 @@ def _next_scheduled_clean_state(state: EntityState) -> tuple[Any, dict[str, Any]
                 for key in ("weekday_name", "clean_mode", "clean_intensity", "water_gover", "clean_areas")
             }
         )
+        if entry.get("duration_minutes") is not None:
+            attributes["duration_minutes"] = entry["duration_minutes"]
     return start, attributes
 
 
@@ -406,10 +410,13 @@ def _report(key: str, **kwargs: Any) -> AiperSensorEntityDescription:
 # Read-only sensors from Scuba V3 Ultra ``*Report`` sections (report_sections.py).
 # Raw codes whose meaning is unknown stay raw; most of them are disabled.
 REPORT_SENSOR_DESCRIPTIONS: tuple[AiperSensorEntityDescription, ...] = (
-    _report(
-        "next_scheduled_clean",
+    AiperSensorEntityDescription(
+        key="next_scheduled_clean",
+        translation_key="next_scheduled_clean",
         device_class=SensorDeviceClass.TIMESTAMP,
-        entity_category=None,
+        include_fn=lambda state: (
+            "next_scheduled_clean" in state or state_has_capability(state, Capability.REPORT_SECTIONS)
+        ),
         computed_fn=_next_scheduled_clean_state,
     ),
     _report("last_cleaning_result", entity_category=None),

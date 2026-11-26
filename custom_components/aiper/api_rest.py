@@ -767,6 +767,36 @@ class AiperRestClient:
 
         return {}
 
+    async def get_scuba_s3_history_page(self, sn: str, *, page_size: int = 20) -> dict[str, Any]:
+        """Read the first N30 cleaning-history page from the cloud."""
+        return await self._call_with_zoneid(
+            sn,
+            lambda: self._call_encrypted(
+                "POST",
+                "/equipmentCleanRecord/gen4/n30n31t30/page",
+                {"deviceSn": sn, "pageNum": 1, "pageSize": page_size},
+            ),
+        )
+
+    async def get_scuba_s3_history_statistics(self, sn: str) -> dict[str, Any]:
+        """Read the N30 history totals separately from the paginated records."""
+        return await self._call_with_zoneid(
+            sn,
+            lambda: self._call_encrypted("POST", "/equipmentCleanRecord/gen4/n30n31t30/statistic", {"deviceSn": sn}),
+        )
+
+    async def get_scuba_s3_cycle_schedule(self, sn: str) -> dict[str, Any]:
+        """Read the last cycle-clean plan synced to the cloud by the S3 app."""
+        return await self._call_with_zoneid(
+            sn,
+            lambda: self._call_encrypted("POST", "/deviceCleanPlan/getCleanPlanByDeviceSn", {"deviceSn": sn}),
+        )
+
+    def device_zone_name(self, sn: str) -> str | None:
+        """Return the discovered IANA timezone once it has been loaded."""
+        zone_name = self._device_zone_id_by_sn.get(sn)
+        return zone_name if zone_name and self._zone_info_cache.get(zone_name) is not None else None
+
     # --- Clean path preference (REST) ---
 
     async def _async_cache_zone_info(self, zone_ids: set[str]) -> None:

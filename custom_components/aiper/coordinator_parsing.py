@@ -29,6 +29,7 @@ __all__ = [
     "_machine_from_reports",
     "_number",
     "_parse_cleaning_history",
+    "_parse_scuba_s3_cleaning_history",
     "_parse_consumables",
 ]
 
@@ -512,6 +513,61 @@ def _parse_cleaning_history(raw: Any) -> tuple[int | None, float | None, list[di
         if duration_sum > 0:
             total_hours = round(duration_sum / 60.0, 3)
 
+    return total_count, total_hours, records
+
+
+_S3_HISTORY_MODES = {
+    1: "Auto",
+    2: "Floor",
+    3: "Wall",
+    4: "Waterline",
+    5: "Scheduled",
+    6: "Random",
+    10: "Eco",
+    15: "Visual",
+    16: "AI Patrol",
+}
+
+
+def _parse_scuba_s3_cleaning_history(
+    page: dict[str, Any],
+    statistics: dict[str, Any] | None,
+) -> tuple[int | None, float | None, list[dict[str, Any]]] | None:
+    """Parse the N30 page, where cleaning duration always uses seconds."""
+    data = page.get("data")
+    if not isinstance(data, dict) or not isinstance(items := data.get("list"), list):
+        return None
+    totals = statistics.get("data") if statistics is not None else None
+    count = totals.get("cleanCount") if isinstance(totals, dict) else None
+    if type(count) is not int or count < len(items):
+        count = data.get("total")
+    total_count = count if type(count) is int and count >= len(items) else None
+
+    records: list[dict[str, Any]] = []
+    for row in items:
+        if not isinstance(row, dict):
+            continue
+        timestamp = _number(row.get("utcStartTimeStamp"))
+        start = _parse_dt(timestamp) if timestamp is not None and timestamp > 0 else None
+        if start is None:
+            continue
+
+        seconds = _number(row.get("cleanTime"))
+        duration = seconds / 60 if seconds is not None and 0 <= seconds < float("inf") else None
+        areas = row.get("cleanAreaList")
+        mode_ids = sorted(value for value in areas if type(value) is int) if isinstance(areas, list) and areas else []
+        task_type = row.get("taskType")
+        if not mode_ids and type(task_type) is int:
+            mode_ids = [task_type]
+        mode = "+".join(_S3_HISTORY_MODES[value] for value in mode_ids if value in _S3_HISTORY_MODES)
+        records.append({"start": start, "duration_min": duration, "mode": mode or None, "raw": row})
+
+    records.sort(key=lambda record: record["start"], reverse=True)
+    # The statistics response provides a count, while the first page contains
+    # individual durations. Only sum durations when the page covers all runs.
+    total_hours = None
+    if total_count == len(records) and all(record["duration_min"] is not None for record in records):
+        total_hours = round(sum(record["duration_min"] for record in records) / 60, 3)
     return total_count, total_hours, records
 
 

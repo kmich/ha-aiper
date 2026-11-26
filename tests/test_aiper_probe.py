@@ -213,6 +213,68 @@ async def test_capture_rest_snapshot_includes_cleaning_history() -> None:
     assert snapshot["calls"]["cleaning_history"]["data"] == {"code": 0, "data": {"total": 2, "list": []}}
 
 
+async def test_scuba_s3_cloud_capture_uses_app_reads_and_omits_private_data() -> None:
+    args = aiper_probe.build_parser().parse_args(["scuba-s3-cloud", "--region", "asia"])
+    assert args.func is aiper_probe.cmd_scuba_s3_cloud
+    sn = "SYNTHETIC-S3-NOT-A-REAL-SERIAL"
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    class FakeApi(aiper_probe.AiperApi):
+        async def _call_encrypted(
+            self, method: str, path: str, body: dict[str, Any] | None = None, **_kwargs: Any
+        ) -> dict[str, Any]:
+            assert body is not None
+            calls.append((method, path, body))
+            if path.endswith("/page"):
+                return {
+                    "code": 0,
+                    "data": {
+                        "total": 1,
+                        "list": [
+                            {
+                                "utcStartTimeStamp": 1795651200000,
+                                "cleanTime": 65,
+                                "deviceSn": sn,
+                                "cleanRecordId": "private-record-id",
+                                "mapUrl": "private-signed-map-url",
+                            }
+                        ],
+                    },
+                }
+            if path.endswith("/statistic"):
+                raise RuntimeError(f"private error content with {sn}")
+            return {
+                "code": 0,
+                "data": {
+                    "cleanTime": "07:00",
+                    "cleanDuration": 2,
+                    "cleanWeekList": [2, 4, 6],
+                    "token": "private-token",
+                },
+            }
+
+    capture = await aiper_probe.capture_scuba_s3_cloud(
+        FakeApi("test@example.com", "test-password", "asia", async_session=cast(Any, object())), sn
+    )
+    assert calls == [
+        ("POST", "/equipmentCleanRecord/gen4/n30n31t30/page", {"deviceSn": sn, "pageNum": 1, "pageSize": 5}),
+        ("POST", "/equipmentCleanRecord/gen4/n30n31t30/statistic", {"deviceSn": sn}),
+        ("POST", "/deviceCleanPlan/getCleanPlanByDeviceSn", {"deviceSn": sn}),
+    ]
+    assert capture["calls"]["history_page"]["response"]["data"] == {
+        "total": 1,
+        "list": [{"utcStartTimeStamp": 1795651200000, "cleanTime": 65}],
+    }
+    assert capture["calls"]["history_statistics"] == {"error": "RuntimeError"}
+    assert capture["calls"]["cycle_schedule"]["response"]["data"] == {
+        "cleanTime": "07:00",
+        "cleanDuration": 2,
+        "cleanWeekList": [2, 4, 6],
+    }
+    assert sn not in repr(capture)
+    assert "private-" not in repr(capture)
+
+
 @pytest.mark.asyncio
 async def test_collect_bundle_uses_mocked_api_without_network() -> None:
     """collect_bundle drives AiperApi methods and never touches the network."""
