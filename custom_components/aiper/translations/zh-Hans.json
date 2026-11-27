@@ -280,6 +280,15 @@
       }
     },
     "binary_sensor": {
+      "action_module_problem": {
+        "name": "动作模块故障"
+      },
+      "cleaning_module_problem": {
+        "name": "清洁模块故障"
+      },
+      "power_module_problem": {
+        "name": "电源模块故障"
+      },
       "online": {
         "name": "在线"
       },

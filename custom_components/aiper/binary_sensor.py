@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from homeassistant.components.binary_sensor import (
@@ -15,10 +16,11 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from . import AiperConfigEntry
-from .coordinator import AiperDataUpdateCoordinator
-from .entity import AiperEntity, async_setup_dynamic_device_entities, cloud_connection_device_info
+from .coordinator import MQTT_LIVE_STATE_TTL, AiperDataUpdateCoordinator
+from .entity import AiperEntity, async_setup_dynamic_device_entities, cloud_connection_device_info, device_online
 from .helpers import is_not_hydrocomm
 from .profiles import Capability
 from .state import DeviceState, state_has_capability
@@ -35,6 +37,7 @@ class AiperBinarySensorEntityDescription(BinarySensorEntityDescription):
     capability: Capability | None = None
     include_fn: Callable[[DeviceState], bool] = lambda _: True
     expose_attributes: bool = False
+    warning_mask: int | None = None
 
 
 BINARY_SENSOR_DESCRIPTIONS: tuple[AiperBinarySensorEntityDescription, ...] = (
@@ -86,6 +89,23 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[AiperBinarySensorEntityDescription, ...] = (
         translation_key="linked",
         enabled_default=False,  # MQTT-only
         capability=Capability.DEVICE_LINK,
+    ),
+    # Live Scuba S3 alarm catalog, grouped by the Android app's module IDs.
+    *(
+        AiperBinarySensorEntityDescription(
+            key=key,
+            translation_key=key,
+            device_class=BinarySensorDeviceClass.PROBLEM,
+            entity_category=EntityCategory.DIAGNOSTIC,
+            enabled_default=False,
+            capability=Capability.SCUBA_S3_HEALTH,
+            warning_mask=mask,
+        )
+        for key, mask in (
+            ("action_module_problem", 0x2 | 0x4),
+            ("cleaning_module_problem", 0x8 | 0x10),
+            ("power_module_problem", 0x40 | 0x80 | 0x200 | 0x400),
+        )
     ),
 )
 
@@ -178,6 +198,9 @@ class AiperBinarySensor(AiperEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         """Return true if the binary sensor is on."""
+        if (mask := self.entity_description.warning_mask) is not None:
+            state = self.entity_state("scuba_s3_warning_code")
+            return bool(state.value & mask) if state is not None else None
         state = self.entity_state(self.entity_description.key)
         value = state.value if state is not None else None
         return value if isinstance(value, bool) else None
@@ -193,6 +216,15 @@ class AiperBinarySensor(AiperEntity, BinarySensorEntity):
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
+        if self.entity_description.warning_mask is not None:
+            warning = self.entity_state("scuba_s3_warning_code")
+            observed_at = warning.attributes.get("observed_at") if warning is not None else None
+            return (
+                super().available
+                and device_online(self.coordinator, self._sn) is True
+                and isinstance(observed_at, datetime)
+                and dt_util.utcnow() - observed_at <= MQTT_LIVE_STATE_TTL
+            )
         state = self.entity_state(self.entity_description.key)
         return super().available and state is not None and state.value is not None
 

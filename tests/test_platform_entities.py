@@ -2,22 +2,26 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from datetime import timedelta
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.aiper import AiperConfigEntry, AiperRuntimeData, binary_sensor, button, select, sensor, switch
 from custom_components.aiper.api import AiperApi
 from custom_components.aiper.const import DOMAIN
 from custom_components.aiper.controller import AiperDeviceController
-from custom_components.aiper.coordinator import AiperDataUpdateCoordinator
+from custom_components.aiper.coordinator import MQTT_LIVE_STATE_TTL, AiperDataUpdateCoordinator
 from custom_components.aiper.profiles import Capability, derive_device_profile
-from custom_components.aiper.state import normalize_device_state
+from custom_components.aiper.state import EntityState, normalize_device_state
 
 
 @dataclass
@@ -394,6 +398,48 @@ async def test_estimated_cleaning_time_factory_is_model_agnostic_when_capability
 
     assert estimate.unique_id == "SN123_estimated_cleaning_time"
     assert estimate.native_value == 74
+
+
+@pytest.mark.asyncio
+async def test_scuba_s3_health_entities_match_live_catalog(hass: HomeAssistant) -> None:
+    entry, coordinator = _hass_with_device(hass, {"model": "Scuba_S3", "online": True})
+    entities = await _setup_platform(binary_sensor, hass, entry)
+    by_category = {
+        8: _entity_by_key(entities, "action_module_problem"),
+        9: _entity_by_key(entities, "cleaning_module_problem"),
+        11: _entity_by_key(entities, "power_module_problem"),
+    }
+    health = set(by_category.values())
+    published = {
+        entity
+        for entity in entities
+        if isinstance(entity, binary_sensor.AiperBinarySensor)
+        and entity.entity_description.capability == Capability.SCUBA_S3_HEALTH
+    }
+    assert published == health
+    assert all(not entity.available and entity.is_on is None for entity in health)
+    assert all(not entity.entity_registry_enabled_default for entity in health)
+    assert all(entity.entity_category == EntityCategory.DIAGNOSTIC for entity in health)
+
+    now = dt_util.utcnow()
+    state = coordinator.data["SN123"]
+    catalog = json.loads((Path(__file__).parent / "fixtures/scuba_s3_alarm_catalog_issue_59.json").read_text())
+    combinations = [
+        *((int(row["errorCode"], 16), {row["alarmModel"]} & by_category.keys()) for row in catalog["entries"]),
+        (0, set()),
+        (0x2 | 0x10 | 0x200 | 0x10000, {8, 9, 11}),
+    ]
+    for mask, affected in combinations:
+        state["scuba_s3_warning_code"] = EntityState(mask, {"observed_at": now})
+        assert all(entity.available for entity in health)
+        assert {category for category, entity in by_category.items() if entity.is_on} == affected
+
+    state["online"] = EntityState(False)
+    assert all(not entity.available for entity in health)
+    state["online"] = EntityState(True)
+    stale = now - MQTT_LIVE_STATE_TTL - timedelta(seconds=1)
+    state["scuba_s3_warning_code"] = EntityState(0, {"observed_at": stale})
+    assert all(not entity.available for entity in health)
 
 
 @pytest.mark.asyncio

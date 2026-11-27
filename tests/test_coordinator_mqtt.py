@@ -38,6 +38,61 @@ def test_delta_topic_only_applies_clean_path() -> None:
     assert coordinator.data[SN]["running"].value is not True
 
 
+def test_scuba_s3_warning_uses_its_own_report_time() -> None:
+    coordinator = _coordinator(model="Scuba_S3")
+    now = dt_util.utcnow().replace(microsecond=0)
+    older = now - timedelta(minutes=20)
+    path = f"$aws/things/{SN}/shadow"
+
+    # A newly downloaded shadow cannot refresh an old warning.
+    coordinator._on_shadow_update(
+        SN,
+        {
+            "_topic": f"{path}/get/accepted",
+            "timestamp": now.timestamp(),
+            "state": {"reported": {"Machine": {"warn_code": 0x80002}}},
+            "metadata": {"reported": {"Machine": {"warn_code": {"timestamp": older.timestamp()}}}},
+        },
+    )
+    state = coordinator.data[SN]["scuba_s3_warning_code"]
+    assert (state.value, state.attributes["observed_at"]) == (0x80002, older)
+    assert coordinator.data[SN]["warning"].value == "e524290"
+
+    coordinator._on_shadow_update(
+        SN,
+        {
+            "_topic": f"{path}/update/accepted",
+            "timestamp": now.timestamp(),
+            "state": {"reported": {"Machine": {"warn_code": 0}}},
+        },
+    )
+    cleared = coordinator.data[SN]["scuba_s3_warning_code"]
+    assert (cleared.value, cleared.attributes["observed_at"]) == (0, now)
+
+    for report in (
+        {"_topic": f"{path}/get/accepted", "state": {"reported": {"Machine": {"warn_code": 4}}}},
+        {
+            "_topic": f"{path}/update/documents",
+            "current": {
+                "state": {"reported": {"machine": {"warn_code": 4}}},
+                "metadata": {"reported": {"machine": {"warn_code": {"timestamp": older.timestamp()}}}},
+            },
+        },
+        {"Machine": {"status": 2}},
+        {"Machine": {"warn_code": True}},
+        {"Machine": {"warn_code": -1}},
+    ):
+        coordinator._on_shadow_update(SN, report)
+        assert coordinator.data[SN]["scuba_s3_warning_code"] == cleared
+
+    coordinator._on_shadow_update(SN, {"type": "Machine", "data": {"report": "+WARN:1,512"}})
+    assert coordinator.data[SN]["scuba_s3_warning_code"].value == 0x200
+
+    other = _coordinator(model="Scuba_X1")
+    other._on_shadow_update(SN, {"Machine": {"warn_code": 2}})
+    assert "scuba_s3_warning_code" not in other.data[SN]
+
+
 def test_documents_topic_uses_reported_state_and_desired_clean_path() -> None:
     coordinator = _coordinator()
 

@@ -52,6 +52,7 @@ class Capability(StrEnum):
     ESTIMATED_CLEANING_TIME = "estimated_cleaning_time"
     REPORT_SECTIONS = "report_sections"
     CLEANING_COMPLETION = "cleaning_completion"
+    SCUBA_S3_HEALTH = "scuba_s3_health"
 
 
 SURFER_MODEL_MARKERS = (DeviceFamily.SURFER.value,)
@@ -134,7 +135,7 @@ SCUBA_S3_CAPABILITIES = SCUBA_CAPABILITIES - frozenset(
         Capability.CHARGE_TYPE,
         Capability.PROPELLER,
     }
-)
+) | frozenset({Capability.SCUBA_S3_HEALTH})
 
 # The Scuba V3 identifies itself as ``Scuba_V3``. Two independent field reports
 # (issues #38 and #49, integration 1.4.0/1.5.0) show an MQTT Machine shadow with

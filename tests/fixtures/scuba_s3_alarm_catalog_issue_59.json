@@ -1,0 +1,18 @@
+{
+  "model": "Scuba_S3",
+  "ok": true,
+  "entries": [
+    {"errorCode": "0x10", "alarmModel": 9},
+    {"errorCode": "0x10000", "alarmModel": 4},
+    {"errorCode": "0x2", "alarmModel": 8},
+    {"errorCode": "0x200", "alarmModel": 11},
+    {"errorCode": "0x4", "alarmModel": 8},
+    {"errorCode": "0x40", "alarmModel": 11},
+    {"errorCode": "0x400", "alarmModel": 11},
+    {"errorCode": "0x8", "alarmModel": 9},
+    {"errorCode": "0x80", "alarmModel": 11},
+    {"errorCode": "0x80000", "alarmModel": 4}
+  ],
+  "skipped_entries": 0,
+  "skipped_shapes": {}
+}

@@ -280,6 +280,15 @@
       }
     },
     "binary_sensor": {
+      "action_module_problem": {
+        "name": "Probleem met actiemodule"
+      },
+      "cleaning_module_problem": {
+        "name": "Probleem met reinigingsmodule"
+      },
+      "power_module_problem": {
+        "name": "Probleem met voedingsmodule"
+      },
       "online": {
         "name": "Online"
       },

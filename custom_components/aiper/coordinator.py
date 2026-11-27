@@ -38,6 +38,7 @@ from .coordinator_parsing import (
     _ensure_utc_aware,
     _finished_task_summary,
     _machine_from_reports,
+    _machine_warning_time,
     _merge_discovery_metadata,
     _parse_cleaning_history,
     _parse_consumables,
@@ -853,6 +854,24 @@ class AiperDataUpdateCoordinator(DataUpdateCoordinator[DevicesState]):
                     topic=topic,
                 )
             updates = merge_device_state(updates, normalize_machine_update(raw_device, machine, current_state))
+
+        warning_code = machine.get("warn_code")
+        if model_key(raw_device) == SCUBA_S3_MODEL and type(warning_code) is int and 0 <= warning_code < (1 << 63):
+            warning_time = _machine_warning_time(data)
+            if warning_time is None and (
+                not isinstance(topic, str)
+                or "/shadow/" not in topic
+                or (topic.endswith("/shadow/update/accepted") and mqtt_observed_at_explicit)
+            ):
+                warning_time = mqtt_observed_at
+
+            previous = (current_state or {}).get("scuba_s3_warning_code")
+            if (
+                warning_time is not None
+                and warning_time <= mqtt_received_at + LIVE_REFRESH_INTERVAL
+                and (previous is None or warning_time >= previous.attributes["observed_at"])
+            ):
+                updates["scuba_s3_warning_code"] = EntityState(warning_code, {"observed_at": warning_time})
 
         netstat: dict[str, Any] = {}
         if "NetStat" in payload and isinstance(payload.get("NetStat"), dict):

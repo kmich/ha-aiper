@@ -215,6 +215,19 @@ def _device_report_time(data: dict[str, Any], latest_allowed: datetime) -> datet
     return latest
 
 
+def _machine_warning_time(data: dict[str, Any]) -> datetime | None:
+    """Read the warning field's own timestamp from AWS shadow metadata."""
+    envelope = data.get("current", data)
+    metadata = envelope.get("metadata") if isinstance(envelope, dict) else None
+    reported = metadata.get("reported") if isinstance(metadata, dict) else None
+    machine = reported.get("Machine", reported.get("machine")) if isinstance(reported, dict) else None
+    warning = machine.get("warn_code") if isinstance(machine, dict) else None
+    timestamp = warning.get("timestamp") if isinstance(warning, dict) else None
+    if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool) and timestamp > 0:
+        return _parse_dt(timestamp)
+    return None
+
+
 def _machine_from_reports(payload: dict[str, Any]) -> dict[str, Any]:
     """Map ``*Report`` shadow sections onto Machine-style fields.
 

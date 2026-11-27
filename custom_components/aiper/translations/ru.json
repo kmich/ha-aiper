@@ -280,6 +280,15 @@
       }
     },
     "binary_sensor": {
+      "action_module_problem": {
+        "name": "Неисправность модуля движения"
+      },
+      "cleaning_module_problem": {
+        "name": "Неисправность модуля очистки"
+      },
+      "power_module_problem": {
+        "name": "Неисправность модуля питания"
+      },
       "online": {
         "name": "В сети"
       },

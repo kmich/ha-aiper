@@ -81,6 +81,7 @@ EXPECTED_PROFILES: dict[str, dict[str, Any]] = {
             "mqtt_shadow",
             "online",
             "roller_brush",
+            "scuba_s3_health",
             "status",
             "warning",
             "wifi",

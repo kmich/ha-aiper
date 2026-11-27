@@ -280,6 +280,15 @@
       }
     },
     "binary_sensor": {
+      "action_module_problem": {
+        "name": "Störung im Aktionsmodul"
+      },
+      "cleaning_module_problem": {
+        "name": "Störung im Reinigungsmodul"
+      },
+      "power_module_problem": {
+        "name": "Störung im Stromversorgungsmodul"
+      },
       "online": {
         "name": "Online"
       },

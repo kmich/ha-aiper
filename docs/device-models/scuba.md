@@ -48,6 +48,18 @@ count, and the saved schedule. Home Assistant displays **Scheduled** when a
 history record identifies a scheduled run and omits cleaning-area details.
 In this case the owner reported **Floor** in the app. [Live capture](https://github.com/kmich/ha-aiper/issues/59#issuecomment-7203015536)
 
+### Scuba S3 device health
+
+Enable the optional **Action module problem**, **Cleaning module problem**,
+and **Power module problem** diagnostic binary sensors on the S3 device page.
+They use the cleaner's MQTT warning bits and can indicate several faults at
+once. They are unavailable while the device is offline or when its latest
+warning report is missing or older than ten minutes.
+
+The live alarm catalog verified the three groups. It had no Perception entries
+and included two codes without a matching module on the S3 app screen. Those
+codes remain visible on the overall **Warning** sensor. [Live catalog](https://github.com/kmich/ha-aiper/issues/59#issuecomment-7214190570)
+
 ## Known
 
 Scuba devices use the normal Aiper account, REST, Cognito, AWS IoT, and shadow

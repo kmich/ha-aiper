@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- Optional **Action module problem**, **Cleaning module problem**, and
+  **Power module problem** diagnostic binary sensors for the Scuba S3.
+  They use fresh MQTT warning reports and the model's live alarm catalog.
+  Other warning codes still appear on the overall Warning sensor.
+  Thanks to [@toddc1976](https://github.com/toddc1976) for testing and capturing
+  the [S3 alarm catalog](https://github.com/kmich/ha-aiper/issues/59#issuecomment-7214190570).
+
 ## [2.0.0] - 2026-11-26
 
 ### Added
